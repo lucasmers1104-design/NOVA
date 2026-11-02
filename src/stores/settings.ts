@@ -49,6 +49,12 @@ export interface Settings {
   newsFeeds: NewsFeed[];
   /** Shows the desktop wallpaper behind the glass, like macOS. */
   wallpaperBackdrop: boolean;
+  /** GitHub "owner/repo" or HTTPS URL; empty means the built-in default. */
+  updateSource: string;
+  /** Check at every start and install found updates after a short countdown. */
+  autoUpdate: boolean;
+  /** Version that last ran; used to announce completed updates. */
+  lastSeenVersion: string;
 }
 
 interface SettingsActions {
@@ -70,6 +76,9 @@ interface SettingsActions {
   addNewsFeed: (feed: NewsFeed) => void;
   removeNewsFeed: (url: string) => void;
   setWallpaperBackdrop: (enabled: boolean) => void;
+  setUpdateSource: (source: string) => void;
+  setAutoUpdate: (enabled: boolean) => void;
+  setLastSeenVersion: (version: string) => void;
   resetSettings: () => void;
 }
 
@@ -90,6 +99,9 @@ export function defaultSettings(): Settings {
     weatherFahrenheit: false,
     newsFeeds: [],
     wallpaperBackdrop: true,
+    updateSource: "",
+    autoUpdate: true,
+    lastSeenVersion: "",
   };
 }
 
@@ -160,6 +172,9 @@ export function sanitizeSettings(input: unknown): Partial<Settings> {
   const feeds = sanitizeFeeds(raw.newsFeeds);
   if (feeds) out.newsFeeds = feeds;
   if (typeof raw.wallpaperBackdrop === "boolean") out.wallpaperBackdrop = raw.wallpaperBackdrop;
+  if (typeof raw.updateSource === "string") out.updateSource = raw.updateSource.slice(0, 200);
+  if (typeof raw.autoUpdate === "boolean") out.autoUpdate = raw.autoUpdate;
+  if (typeof raw.lastSeenVersion === "string" && /^[0-9A-Za-z.+-]{0,32}$/.test(raw.lastSeenVersion)) out.lastSeenVersion = raw.lastSeenVersion;
   return out;
 }
 
@@ -197,7 +212,11 @@ export const useSettings = create<Settings & SettingsActions>()(
         set((s) => (s.newsFeeds.some((f) => f.url === feed.url) ? s : { newsFeeds: [...s.newsFeeds, feed].slice(0, MAX_NEWS_FEEDS) })),
       removeNewsFeed: (url) => set((s) => ({ newsFeeds: s.newsFeeds.filter((f) => f.url !== url) })),
       setWallpaperBackdrop: (wallpaperBackdrop) => set({ wallpaperBackdrop }),
-      resetSettings: () => set(defaultSettings()),
+      setUpdateSource: (source) => set({ updateSource: source.slice(0, 200) }),
+      setAutoUpdate: (autoUpdate) => set({ autoUpdate }),
+      setLastSeenVersion: (lastSeenVersion) => set({ lastSeenVersion }),
+      // Reset keeps lastSeenVersion so it doesn't trigger a false "updated" notice.
+      resetSettings: () => set((s) => ({ ...defaultSettings(), lastSeenVersion: s.lastSeenVersion })),
     }),
     {
       name: SETTINGS_STORAGE_KEY,
@@ -222,6 +241,9 @@ export const useSettings = create<Settings & SettingsActions>()(
         weatherFahrenheit: s.weatherFahrenheit,
         newsFeeds: s.newsFeeds,
         wallpaperBackdrop: s.wallpaperBackdrop,
+        updateSource: s.updateSource,
+        autoUpdate: s.autoUpdate,
+        lastSeenVersion: s.lastSeenVersion,
       }),
       merge: (persisted, current) => ({ ...current, ...sanitizeSettings(persisted) }),
     },

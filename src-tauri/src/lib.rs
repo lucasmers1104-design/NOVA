@@ -9,6 +9,7 @@ mod media;
 mod shell;
 mod storage;
 mod system;
+mod updates;
 mod wallpaper;
 
 use std::sync::atomic::Ordering;
@@ -28,10 +29,12 @@ pub fn run() {
         )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(system::SystemMonitor::new())
         .manage(apps::AppCatalog::default())
         .manage(ai::ChatRequests::default())
         .manage(desktop::DesktopState::default())
+        .manage(updates::PendingUpdate::default())
         .setup(|app| {
             let database = match app.path().app_data_dir() {
                 Ok(dir) => match std::fs::create_dir_all(&dir) {
@@ -116,6 +119,8 @@ pub fn run() {
             desktop::desktop_set_close_to_tray,
             desktop::autostart_get,
             desktop::autostart_set,
+            updates::update_check,
+            updates::update_install,
         ])
         .run(tauri::generate_context!())
         .expect("error while running NOVA");

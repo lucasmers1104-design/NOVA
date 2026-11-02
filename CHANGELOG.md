@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.0 — 2026-11-02
+
+### Added
+- Automatic updates: NOVA checks for a new version at every start (also when started with Windows), shows a 15-second notice, then downloads, verifies, installs and reopens by itself.
+- Settings → Updates: installed version, update source (your GitHub repository), automatic updates on/off, and "Check now".
+- A notice after each update confirms the new version.
+- Signed releases: installers in `releases/` with a `latest.json` manifest; `npm run release` builds and publishes them.
+
 ## 1.0.0 — 2026-11-02
 
 First complete release: all eight roadmap milestones.

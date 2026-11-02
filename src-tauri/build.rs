@@ -56,6 +56,8 @@ fn main() {
         "desktop_set_close_to_tray",
         "autostart_get",
         "autostart_set",
+        "update_check",
+        "update_install",
     ])))
     .expect("failed to run tauri-build");
 }

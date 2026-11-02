@@ -10,6 +10,7 @@ import { CommandPalette } from "@/features/command-palette/CommandPalette";
 import { useDesktopSync } from "@/features/desktop/useDesktopSync";
 import { NotificationCenter, Toaster } from "@/features/notifications/NotificationUI";
 import { useReminders } from "@/features/productivity/reminders";
+import { UpdateBanner, useStartupUpdates } from "@/features/updates/UpdateUI";
 import { type MotionPreference, useSettings } from "@/stores/settings";
 import { useUi } from "@/stores/ui";
 import { ROUTES } from "./routes";
@@ -27,6 +28,7 @@ export function AppShell() {
   useGlobalShortcuts();
   useReminders();
   useDesktopSync();
+  useStartupUpdates();
   const route = useUi((s) => s.route);
   const motionPreference = useSettings((s) => s.motion);
   const mainRef = useRef<HTMLElement>(null);
@@ -63,6 +65,7 @@ export function AppShell() {
         <CommandPalette />
         <NotificationCenter />
         <Toaster />
+        <UpdateBanner />
       </div>
     </MotionConfig>
   );

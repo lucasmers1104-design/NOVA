@@ -4,7 +4,7 @@ _Everything. Connected._
 
 NOVA is a local-first Windows desktop command center with a macOS-inspired "liquid glass" interface. It combines a customizable widget dashboard, real-time system monitoring, an app launcher, media controls, tasks and notes, a multi-provider AI assistant, a file hub and live information in one app.
 
-**Status:** Version 1.0.0. All eight roadmap milestones are complete; see [docs/ROADMAP.md](docs/ROADMAP.md) and [CHANGELOG.md](CHANGELOG.md).
+**Status:** Version 1.1.0. All eight roadmap milestones are complete; see [docs/ROADMAP.md](docs/ROADMAP.md) and [CHANGELOG.md](CHANGELOG.md).
 
 ## Features
 
@@ -21,6 +21,12 @@ NOVA is a local-first Windows desktop command center with a macOS-inspired "liqu
 | **Widget Studio** | Browse 15 widgets, preview them live with settings, and add them to any layout. |
 | **Profiles** | Gaming, Productivity, Creative, Minimal and custom profiles switch layout, accent and appearance together. |
 | **Everywhere** | Command palette (Ctrl+K) over pages, apps, tasks, widgets and profiles; notification center; adaptive accent (presets, custom, or matching your wallpaper); tray icon; opt-in start with Windows and close to tray. |
+
+## Download & updates
+
+- **Install:** download `releases/NOVA_<version>_x64-setup.exe` from this repository and run it. Windows SmartScreen asks once, because the installer is unsigned.
+- **Updates:** NOVA checks the repository at every start, including starts with Windows. New versions install after a short notice, and NOVA reopens by itself. You can configure this in Settings → Updates.
+- **Publishing a version:** `npm run release`; see [docs/RELEASE.md](docs/RELEASE.md).
 
 ## Run it
 
@@ -43,7 +49,8 @@ npm run desktop
 | Command | What it does |
 | --- | --- |
 | `npm run desktop` | Desktop app in development mode with hot reload. |
-| `npm run desktop:build` | Release build plus the NSIS installer in `src-tauri/target/release/bundle/nsis/`. See [docs/RELEASE.md](docs/RELEASE.md). |
+| `npm run release` | Signed release build and publish into `releases/` (installer, signature, `latest.json`). See [docs/RELEASE.md](docs/RELEASE.md). |
+| `npm run desktop:build` | Release build plus the NSIS installer in `src-tauri/target/release/bundle/nsis/`. |
 | `npm run dev` | Browser-only preview at <http://localhost:1420>. Native features show a clear "desktop runtime required" state. |
 | `npm test` | Frontend unit and UI tests (Vitest + Testing Library). |
 | `npm run typecheck` | Strict TypeScript checks. |
@@ -76,7 +83,10 @@ src-tauri/                   Rust / Tauri 2 host
 ├─ src/live.rs, http.rs      Open-Meteo weather, RSS/Atom parsing, the single HTTP client
 ├─ src/files.rs              Scoped folder listing, search, recent items
 ├─ src/desktop.rs            Tray, close to tray, start with Windows
-└─ capabilities/, build.rs   One explicit permission per command (53 commands)
+├─ src/updates.rs            Signed self-updates (Tauri updater, configurable source)
+└─ capabilities/, build.rs   One explicit permission per command (55 commands)
+releases/                    Signed installers + latest.json (update channel)
+scripts/release.mjs          Build, sign and publish a release
 docs/                        Roadmap, release guide, plugin & agent API design
 ```
 
@@ -93,7 +103,7 @@ docs/                        Roadmap, release guide, plugin & agent API design
 
 ## Security & privacy
 
-- 53 app commands, each declared in `build.rs` and granted individually in `capabilities/default.json`; plugin permissions are limited to `dialog:allow-open` and `notification:default`. Strict CSP: no remote scripts, styles or connections from the webview.
-- No analytics or telemetry. Network connections happen only for what you set up: weather (Open-Meteo, coordinates only), news feeds you add, and AI providers when you send a message. Settings → Privacy lists the active ones live.
+- 55 app commands, each declared in `build.rs` and granted individually in `capabilities/default.json`; plugin permissions are limited to `dialog:allow-open` and `notification:default`. Strict CSP: no remote scripts, styles or connections from the webview.
+- No analytics or telemetry. Network connections happen only for what you set up: weather (Open-Meteo, coordinates only), news feeds you add, AI providers when you send a message, and update checks against your release repository at startup (can be turned off). Settings → Privacy lists the active ones live.
 - Background behavior (tray on close, start with Windows) is off until you enable it.
 - Data: `%APPDATA%\dev.nova.commandcenter\nova.db`; keys: Windows Credential Manager (`NOVA:ai:*`).

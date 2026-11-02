@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { getTauriVersion, getVersion } from "@tauri-apps/api/app";
-import { Activity, Check, Globe, Info, Keyboard, KeyRound, LayoutDashboard, Layers, type LucideIcon, Palette, PanelLeft, Plug, Power, RotateCcw, ShieldCheck, TriangleAlert } from "lucide-react";
+import { Activity, Check, CloudDownload, Globe, Info, Keyboard, KeyRound, LayoutDashboard, Layers, type LucideIcon, Palette, PanelLeft, Plug, Power, RotateCcw, ShieldCheck, TriangleAlert } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { SHORTCUTS } from "@/app/shortcuts";
 import { NovaMark } from "@/components/brand/NovaMark";
@@ -15,7 +15,7 @@ import { callNative, isDesktop } from "@/lib/native";
 import { useStorageHealth } from "@/lib/persistence";
 import { type MotionPreference, REFRESH_INTERVALS_MS, useSettings } from "@/stores/settings";
 import { AccentSettings } from "./AccentSettings";
-import { AiProviderSettings, IntegrationsSettings, ProfilesSettings, StartupSettings, useExternalConnections } from "./ExtraSettings";
+import { AiProviderSettings, IntegrationsSettings, ProfilesSettings, StartupSettings, UpdatesSettings, useExternalConnections } from "./ExtraSettings";
 import { NavigationSettings } from "./NavigationSettings";
 import { SettingRow, SettingsSection } from "./SettingsLayout";
 
@@ -27,6 +27,7 @@ const SECTIONS: readonly { id: string; label: string; icon: LucideIcon }[] = [
   { id: "ai", label: "AI providers", icon: KeyRound },
   { id: "integrations", label: "Integrations", icon: Plug },
   { id: "startup", label: "Startup", icon: Power },
+  { id: "updates", label: "Updates", icon: CloudDownload },
   { id: "system", label: "System", icon: Activity },
   { id: "shortcuts", label: "Keyboard shortcuts", icon: Keyboard },
   { id: "privacy", label: "Privacy", icon: ShieldCheck },
@@ -80,6 +81,7 @@ export default function SettingsPage() {
           <AiProviderSettings />
           <IntegrationsSettings />
           <StartupSettings />
+          <UpdatesSettings />
           <SystemSection />
           <ShortcutsSection />
           <PrivacySection />
@@ -289,7 +291,7 @@ function AboutSection() {
         </div>
       </div>
       <SettingRow label="Version" description={runtime ? `Desktop runtime · Tauri ${runtime.tauri}` : "Browser preview — native features are unavailable."}>
-        <span className="text-[13px] font-medium text-fg tabular-nums">{runtime?.version ?? "1.0.0"}</span>
+        <span className="text-[13px] font-medium text-fg tabular-nums">{runtime?.version ?? "1.1.0"}</span>
       </SettingRow>
       <SettingRow
         label="Local database"

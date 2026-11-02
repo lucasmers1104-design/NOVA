@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, Check, ExternalLink, KeyRound, Layers, Plug, Plus, Power, RefreshCw, Trash } from "lucide-react";
+import { Bell, Check, CloudDownload, ExternalLink, KeyRound, Layers, Plug, Plus, Power, RefreshCw, Trash } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { Badge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
@@ -10,6 +10,7 @@ import { useDashboard } from "@/features/dashboard/store";
 import { placeLabel } from "@/features/live/api";
 import { notifyError } from "@/features/notifications/store";
 import { PROFILE_ICONS, useProfiles } from "@/features/profiles/store";
+import { DEFAULT_UPDATE_SOURCE, effectiveUpdateSource, useUpdates } from "@/features/updates/store";
 import { cn } from "@/lib/cn";
 import { callNative, isDesktop } from "@/lib/native";
 import { useSettings } from "@/stores/settings";
@@ -252,6 +253,82 @@ export function IntegrationsSettings() {
   );
 }
 
+export function UpdatesSettings() {
+  const updateSource = useSettings((s) => s.updateSource);
+  const setUpdateSource = useSettings((s) => s.setUpdateSource);
+  const autoUpdate = useSettings((s) => s.autoUpdate);
+  const setAutoUpdate = useSettings((s) => s.setAutoUpdate);
+  const status = useUpdates((s) => s.status);
+  const info = useUpdates((s) => s.info);
+  const error = useUpdates((s) => s.error);
+  const check = useUpdates((s) => s.check);
+  const desktop = isDesktop();
+  const { data: version } = useQuery({
+    queryKey: ["app", "version"],
+    queryFn: async () => (desktop ? (await import("@tauri-apps/api/app")).getVersion() : null),
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+
+  const result =
+    status === "checking"
+      ? "Checking…"
+      : status === "upToDate"
+        ? "NOVA is up to date."
+        : status === "available" && info
+          ? `Version ${info.version} is available.`
+          : status === "error"
+            ? error
+            : null;
+
+  return (
+    <SettingsSection
+      id="updates"
+      title="Updates"
+      description="Signed updates from your release repository. NOVA verifies every download before installing it."
+      icon={CloudDownload}
+    >
+      <SettingRow label="Installed version" description={desktop ? "Updates keep your settings, layouts and data." : "Updates are available in the desktop app."}>
+        <span className="text-[13px] font-semibold text-fg tabular-nums">{version ?? "—"}</span>
+      </SettingRow>
+      <SettingRow
+        label="Update source"
+        description={
+          <>
+            Your public GitHub repository as <span className="font-mono">owner/name</span> — NOVA reads <span className="font-mono">releases/latest.json</span> from its
+            main branch.{DEFAULT_UPDATE_SOURCE ? ` Leave empty to use ${DEFAULT_UPDATE_SOURCE}.` : ""}
+          </>
+        }
+      >
+        <label className="flex h-9 w-60 items-center rounded-full border border-line bg-black/25 px-3 focus-within:border-line-strong">
+          <span className="sr-only">Update source</span>
+          <input
+            value={updateSource}
+            onChange={(e) => setUpdateSource(e.target.value)}
+            placeholder={DEFAULT_UPDATE_SOURCE || "owner/repository"}
+            spellCheck={false}
+            className="h-full w-full bg-transparent font-mono text-[12.5px] text-fg outline-none select-text placeholder:text-fg-subtle"
+          />
+        </label>
+      </SettingRow>
+      <SettingRow label="Update automatically" description="Checks every time NOVA starts — also when it starts with Windows — and installs new versions after a 15-second notice. NOVA closes and reopens by itself.">
+        <Switch label="Update automatically" checked={autoUpdate} onChange={setAutoUpdate} />
+      </SettingRow>
+      <div className="flex items-center justify-between gap-4 pt-4">
+        <p className={cn("text-[12.5px]", status === "error" ? "text-warning" : "text-fg-muted")}>{result}</p>
+        <Button
+          size="sm"
+          variant="secondary"
+          icon={<RefreshCw size={13} className={status === "checking" ? "animate-spin" : ""} />}
+          disabled={!desktop || !effectiveUpdateSource() || status === "checking" || status === "downloading" || status === "installing"}
+          onClick={() => void check({ automatic: false })}
+        >
+          Check now
+        </Button>
+      </div>
+    </SettingsSection>
+  );
+}
+
 /** Lists every external connection that is currently enabled. */
 export function useExternalConnections(): string[] {
   const place = useSettings((s) => s.weatherPlace);
@@ -267,5 +344,11 @@ export function useExternalConnections(): string[] {
     }
   }
   for (const provider of PROVIDERS) if (keys?.[provider.id]) list.push(`AI: ${provider.name} — only when you send a message`);
+  const updateSource = useSettings((s) => s.updateSource.trim()) || DEFAULT_UPDATE_SOURCE;
+  const autoUpdate = useSettings((s) => s.autoUpdate);
+  if (updateSource) {
+    const host = updateSource.includes("://") ? updateSource.replace(/^https?:\/\//, "").split("/")[0] : `raw.githubusercontent.com/${updateSource}`;
+    list.push(`Updates: ${host} — ${autoUpdate ? "at every start" : "only when you check"}`);
+  }
   return list;
 }

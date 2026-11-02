@@ -1,36 +1,58 @@
 # Releasing NOVA
 
-## Versioning
+NOVA updates itself from a public GitHub repository. Every release is a signed NSIS installer in `releases/` plus a `releases/latest.json` manifest. Installed apps check that manifest at every start (also when started with Windows). When a newer version exists, they download it, verify its signature, close, update and reopen by themselves.
 
-The version lives in `package.json` (Tauri reads it via `"version": "../package.json"`) and in `src-tauri/Cargo.toml`. Bump both together, following semantic versioning, and add an entry to `CHANGELOG.md`.
+## One-time setup
 
-## Pre-release checks
+1. **Signing key.** It lives outside the repository at `%USERPROFILE%\.nova\updater\nova-updater.key`; the public key is in `src-tauri/tauri.conf.json`.
+   - **Back the private key up** (password manager or USB stick). Without it you can't sign updates, and existing installations can't update anymore.
+   - Never commit it. To create a new pair: `npx tauri signer generate -w "%USERPROFILE%\.nova\updater\nova-updater.key"`. Installed apps keep trusting only the old public key until they are reinstalled.
+2. **Public GitHub repository.** Create one, then connect and push:
 
-```bash
-npm run check
-```
+   ```bash
+   git remote add origin https://github.com/<owner>/<name>.git
+   ```
 
-This runs strict TypeScript, all frontend tests, `cargo check` and all Rust tests. Also run `cargo clippy --all-targets` in `src-tauri`; it is expected to be warning-free.
+   ```bash
+   git push -u origin main
+   ```
 
-## Build the installer
+   It must be public: the app downloads `releases/` without logging in.
+3. **Update source.** Set `DEFAULT_UPDATE_SOURCE` in `src/features/updates/store.ts` to `"<owner>/<name>"` so new installations update out of the box. Existing installations can also enter it in Settings → Updates.
 
-```bash
-npm run desktop:build
-```
+## Publishing a new version (e.g. 1.0.0 → 1.1.0)
 
-- Builds the frontend (`npm run build`), then an optimized Rust release binary (LTO, single codegen unit — expect 15–30 minutes on a dual-core laptop).
-- Produces `src-tauri/target/release/bundle/nsis/NOVA_<version>_x64-setup.exe`.
-- On first use the Tauri bundler downloads the NSIS toolchain from Tauri's official release repository.
+1. Bump the version in `package.json` and `src-tauri/Cargo.toml`, and add a `## 1.1.0 — date` section to `CHANGELOG.md` (its bullets become the update notes).
+2. Check: `npm run check`, plus `cargo clippy --all-targets` in `src-tauri`.
+3. Build, sign and publish into `releases/`:
 
-## Clean-machine test
+   ```bash
+   npm run release
+   ```
 
-1. Copy the setup `.exe` to a Windows 10/11 machine without NOVA, and run it. WebView2 is present on current Windows; the installer bootstraps it otherwise.
-2. Launch NOVA from the Start menu and check:
-   - Home shows live CPU/memory; Customize can move and resize widgets.
-   - System lists processes; Apps launches an app; Productivity saves a task across a restart.
-   - Settings → Privacy lists no external connections until you set any up.
-3. Uninstall from Windows Settings. The local database in `%APPDATA%\dev.nova.commandcenter` is kept, so reinstalling restores your data; delete that folder to remove all data.
+   The script reads the repository from the `origin` remote, or takes `--repo owner/name`. It writes `releases/NOVA_<version>_x64-setup.exe`, its `.sig` and `latest.json`. The optimized build takes 5–15 minutes.
+4. Commit and push:
 
-## Code signing
+   ```bash
+   git add -A
+   ```
 
-The installer is unsigned, so Windows SmartScreen will warn on first run. For public distribution, sign `nova.exe` and the installer with an Authenticode certificate (`bundle.windows.certificateThumbprint` in `tauri.conf.json`).
+   ```bash
+   git commit -m "Release 1.1.0"
+   ```
+
+   ```bash
+   git push
+   ```
+
+   Within a minute or two, every NOVA with automatic updates on picks it up at its next start (or via Settings → Updates → Check now).
+
+To refresh only `latest.json` (for example after creating the GitHub repository), run `npm run release -- --repo owner/name --skip-build`.
+
+## Installing on another PC
+
+Open the repository on GitHub, then `releases/` → `NOVA_<version>_x64-setup.exe` → **Download raw file**, and run it. The installer is unsigned, so Windows SmartScreen asks for confirmation the first time ("More info" → "Run anyway").
+
+## Testing updates locally
+
+`npm run release -- --local-test --base-url http://127.0.0.1:8765 --out <folder>` builds a variant that also accepts a plain-http server on localhost. Install it, publish a higher version into a folder served on port 8765, and set Settings → Updates → source to `http://127.0.0.1:8765/latest.json`. Production builds only ever accept HTTPS sources.

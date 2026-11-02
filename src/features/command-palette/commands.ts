@@ -1,10 +1,11 @@
-import { AppWindow, Blocks, CircleCheck, LayoutGrid, Layers, ListTodo, type LucideIcon, PanelLeft, Palette, SlidersHorizontal, Wallpaper } from "lucide-react";
+import { AppWindow, Blocks, RefreshCw, CircleCheck, LayoutGrid, Layers, ListTodo, type LucideIcon, PanelLeft, Palette, SlidersHorizontal, Wallpaper } from "lucide-react";
 import { queryClient } from "@/app/queryClient";
 import { type AppEntry, appKeys, useAppPreferences } from "@/features/apps/api";
 import { notify, notifyError } from "@/features/notifications/store";
 import { useProductivity } from "@/features/productivity/store";
 import { PROFILE_ICONS, useProfiles } from "@/features/profiles/store";
-import { callNative } from "@/lib/native";
+import { useUpdates } from "@/features/updates/store";
+import { callNative, isDesktop as isDesktopRuntime } from "@/lib/native";
 import { WIDGETS } from "@/widgets/registry";
 import { NAV_ITEMS } from "@/app/navigation";
 import { shortcutKeys } from "@/app/shortcuts";
@@ -188,6 +189,23 @@ export function buildCommands(): Command[] {
     },
   }));
 
+  const maintenance: Command[] = isDesktopRuntime()
+    ? [
+        {
+          id: "app.check-updates",
+          title: "Check for updates",
+          subtitle: "Look for a newer NOVA version now",
+          group: "Layout",
+          icon: RefreshCw,
+          keywords: ["update", "version", "upgrade", "release"],
+          run: () => {
+            useUi.getState().navigate("settings");
+            void useUpdates.getState().check({ automatic: false });
+          },
+        },
+      ]
+    : [];
+
   const create: Command[] = [
     {
       id: "task.new",
@@ -200,5 +218,5 @@ export function buildCommands(): Command[] {
     },
   ];
 
-  return [...navigation, ...dashboardCommands, ...profiles, ...layout, ...appearance, ...create, ...apps, ...tasks, ...widgets];
+  return [...navigation, ...dashboardCommands, ...profiles, ...layout, ...maintenance, ...appearance, ...create, ...apps, ...tasks, ...widgets];
 }
