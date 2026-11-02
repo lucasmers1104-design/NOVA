@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-productivity-load"
+description = "Enables the productivity_load command without any pre-configured scope."
+commands.allow = ["productivity_load"]
+
+[[permission]]
+identifier = "deny-productivity-load"
+description = "Denies the productivity_load command without any pre-configured scope."
+commands.deny = ["productivity_load"]

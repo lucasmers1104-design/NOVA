@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-system-processes"
+description = "Enables the system_processes command without any pre-configured scope."
+commands.allow = ["system_processes"]
+
+[[permission]]
+identifier = "deny-system-processes"
+description = "Denies the system_processes command without any pre-configured scope."
+commands.deny = ["system_processes"]

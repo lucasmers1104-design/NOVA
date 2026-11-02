@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-ai-conversation-messages"
+description = "Enables the ai_conversation_messages command without any pre-configured scope."
+commands.allow = ["ai_conversation_messages"]
+
+[[permission]]
+identifier = "deny-ai-conversation-messages"
+description = "Denies the ai_conversation_messages command without any pre-configured scope."
+commands.deny = ["ai_conversation_messages"]

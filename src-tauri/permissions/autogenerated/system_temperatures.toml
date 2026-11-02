@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-system-temperatures"
+description = "Enables the system_temperatures command without any pre-configured scope."
+commands.allow = ["system_temperatures"]
+
+[[permission]]
+identifier = "deny-system-temperatures"
+description = "Denies the system_temperatures command without any pre-configured scope."
+commands.deny = ["system_temperatures"]

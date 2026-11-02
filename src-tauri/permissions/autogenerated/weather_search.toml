@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-weather-search"
+description = "Enables the weather_search command without any pre-configured scope."
+commands.allow = ["weather_search"]
+
+[[permission]]
+identifier = "deny-weather-search"
+description = "Denies the weather_search command without any pre-configured scope."
+commands.deny = ["weather_search"]

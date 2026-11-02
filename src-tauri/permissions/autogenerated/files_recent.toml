@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-files-recent"
+description = "Enables the files_recent command without any pre-configured scope."
+commands.allow = ["files_recent"]
+
+[[permission]]
+identifier = "deny-files-recent"
+description = "Denies the files_recent command without any pre-configured scope."
+commands.deny = ["files_recent"]

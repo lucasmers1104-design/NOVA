@@ -1,0 +1,327 @@
+import { useQuery } from "@tanstack/react-query";
+import { getTauriVersion, getVersion } from "@tauri-apps/api/app";
+import { Activity, Check, Globe, Info, Keyboard, KeyRound, LayoutDashboard, Layers, type LucideIcon, Palette, PanelLeft, Plug, Power, RotateCcw, ShieldCheck, TriangleAlert } from "lucide-react";
+import { useEffect, useId, useState } from "react";
+import { SHORTCUTS } from "@/app/shortcuts";
+import { NovaMark } from "@/components/brand/NovaMark";
+import { Page, PageHeader } from "@/components/layout/PageHeader";
+import { Kbd } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
+import { Switch } from "@/components/ui/Switch";
+import { useSystemInfo } from "@/features/system/api";
+import { cn } from "@/lib/cn";
+import { callNative, isDesktop } from "@/lib/native";
+import { useStorageHealth } from "@/lib/persistence";
+import { type MotionPreference, REFRESH_INTERVALS_MS, useSettings } from "@/stores/settings";
+import { AccentSettings } from "./AccentSettings";
+import { AiProviderSettings, IntegrationsSettings, ProfilesSettings, StartupSettings, useExternalConnections } from "./ExtraSettings";
+import { NavigationSettings } from "./NavigationSettings";
+import { SettingRow, SettingsSection } from "./SettingsLayout";
+
+const SECTIONS: readonly { id: string; label: string; icon: LucideIcon }[] = [
+  { id: "appearance", label: "Appearance", icon: Palette },
+  { id: "profiles", label: "Profiles", icon: Layers },
+  { id: "navigation", label: "Navigation", icon: PanelLeft },
+  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { id: "ai", label: "AI providers", icon: KeyRound },
+  { id: "integrations", label: "Integrations", icon: Plug },
+  { id: "startup", label: "Startup", icon: Power },
+  { id: "system", label: "System", icon: Activity },
+  { id: "shortcuts", label: "Keyboard shortcuts", icon: Keyboard },
+  { id: "privacy", label: "Privacy", icon: ShieldCheck },
+  { id: "about", label: "About NOVA", icon: Info },
+];
+
+const MOTION_OPTIONS = [
+  { value: "system", label: "System" },
+  { value: "reduced", label: "Reduced" },
+  { value: "full", label: "Full" },
+] as const satisfies readonly { value: MotionPreference; label: string }[];
+
+const REFRESH_OPTIONS = REFRESH_INTERVALS_MS.map((ms) => ({ value: ms, label: `${ms / 1000}s` }));
+
+export default function SettingsPage() {
+  const active = useActiveSection();
+
+  const jumpTo = (id: string) => {
+    const reduce = document.documentElement.dataset.motion === "reduced";
+    document.getElementById(`settings-${id}`)?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+  };
+
+  return (
+    <Page>
+      <PageHeader title="Settings" description="Personalize NOVA. Changes are saved automatically on this PC." />
+      <div className="grid grid-cols-[200px_minmax(0,1fr)] items-start gap-8">
+        <nav aria-label="Settings sections" className="sticky top-0 space-y-0.5">
+          {SECTIONS.map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => jumpTo(id)}
+              aria-current={active === id ? "true" : undefined}
+              className={cn(
+                "flex h-9 w-full items-center gap-2.5 rounded-control px-3 text-left text-[13px] font-medium transition-colors",
+                active === id ? "bg-white/[0.07] text-fg" : "text-fg-muted hover:bg-white/[0.04] hover:text-fg",
+              )}
+            >
+              <Icon size={15} className={active === id ? "text-accent-text" : "text-fg-subtle"} aria-hidden />
+              {label}
+            </button>
+          ))}
+        </nav>
+
+        <div className="max-w-3xl space-y-5">
+          <StorageWarning />
+          <AppearanceSection />
+          <ProfilesSettings />
+          <NavigationSettings />
+          <DashboardSection />
+          <AiProviderSettings />
+          <IntegrationsSettings />
+          <StartupSettings />
+          <SystemSection />
+          <ShortcutsSection />
+          <PrivacySection />
+          <AboutSection />
+        </div>
+      </div>
+    </Page>
+  );
+}
+
+/** Highlights the section nearest the top of the scroll container. */
+function useActiveSection(): string {
+  const [active, setActive] = useState<string>(SECTIONS[0]!.id);
+  useEffect(() => {
+    const root = document.getElementById("main");
+    if (!root || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+        if (visible) setActive(visible.target.id.replace("settings-", ""));
+      },
+      { root, rootMargin: "0px 0px -65% 0px" },
+    );
+    for (const { id } of SECTIONS) {
+      const el = document.getElementById(`settings-${id}`);
+      if (el) observer.observe(el);
+    }
+    return () => observer.disconnect();
+  }, []);
+  return active;
+}
+
+function AppearanceSection() {
+  const transparency = useSettings((s) => s.transparency);
+  const setTransparency = useSettings((s) => s.setTransparency);
+  const motion = useSettings((s) => s.motion);
+  const setMotion = useSettings((s) => s.setMotion);
+  const wallpaperBackdrop = useSettings((s) => s.wallpaperBackdrop);
+  const setWallpaperBackdrop = useSettings((s) => s.setWallpaperBackdrop);
+
+  return (
+    <SettingsSection id="appearance" title="Appearance" description="Accent color, surfaces and motion." icon={Palette}>
+      <AccentSettings />
+      <SettingRow label="Transparency effects" description="Frosted-glass surfaces. Turn off for smoother performance on integrated graphics.">
+        <Switch label="Transparency effects" checked={transparency} onChange={setTransparency} />
+      </SettingRow>
+      <SettingRow label="Wallpaper backdrop" description="Shows your desktop wallpaper softly behind NOVA's glass, like macOS. Needs transparency effects.">
+        <Switch label="Wallpaper backdrop" checked={wallpaperBackdrop} disabled={!transparency} onChange={setWallpaperBackdrop} />
+      </SettingRow>
+      <SettingRow label="Motion" description="“System” follows the Windows animation setting.">
+        <SegmentedControl label="Motion" value={motion} options={MOTION_OPTIONS} onChange={setMotion} />
+      </SettingRow>
+    </SettingsSection>
+  );
+}
+
+function DashboardSection() {
+  const displayName = useSettings((s) => s.displayName);
+  const setDisplayName = useSettings((s) => s.setDisplayName);
+  const use24HourClock = useSettings((s) => s.use24HourClock);
+  const setUse24HourClock = useSettings((s) => s.setUse24HourClock);
+  const { data: info } = useSystemInfo();
+  const nameId = useId();
+
+  return (
+    <SettingsSection id="dashboard" title="Dashboard" description="How Home greets you and tells time." icon={LayoutDashboard}>
+      <SettingRow
+        label="Display name"
+        htmlFor={nameId}
+        description={info?.userName ? `Leave empty to use your Windows account name (${info.userName}).` : "Used in greetings on Home."}
+      >
+        <input
+          id={nameId}
+          value={displayName}
+          onChange={(event) => setDisplayName(event.target.value)}
+          placeholder={info?.userName ?? "Your name"}
+          maxLength={40}
+          className="h-9 w-56 rounded-control border border-line bg-black/25 px-3 text-[13px] text-fg outline-none select-text placeholder:text-fg-subtle focus:border-line-strong"
+        />
+      </SettingRow>
+      <SettingRow label="24-hour clock" description="Show times as 18:30 instead of 6:30 PM.">
+        <Switch label="24-hour clock" checked={use24HourClock} onChange={setUse24HourClock} />
+      </SettingRow>
+    </SettingsSection>
+  );
+}
+
+function SystemSection() {
+  const refreshIntervalMs = useSettings((s) => s.refreshIntervalMs);
+  const setRefreshInterval = useSettings((s) => s.setRefreshInterval);
+
+  return (
+    <SettingsSection id="system" title="System" description="Live metric collection." icon={Activity}>
+      <SettingRow
+        label="Refresh interval"
+        description="How often CPU and memory update. Shorter intervals use slightly more CPU; polling pauses while NOVA is minimized."
+      >
+        <SegmentedControl label="Refresh interval" value={refreshIntervalMs} options={REFRESH_OPTIONS} onChange={setRefreshInterval} />
+      </SettingRow>
+    </SettingsSection>
+  );
+}
+
+function ShortcutsSection() {
+  return (
+    <SettingsSection id="shortcuts" title="Keyboard shortcuts" description="Available everywhere in NOVA." icon={Keyboard}>
+      {SHORTCUTS.map((shortcut) => (
+        <div key={shortcut.id} className="flex items-center justify-between py-3 text-[13px] first:pt-0 last:pb-0">
+          <span className="text-fg">{shortcut.description}</span>
+          <span className="flex gap-1">
+            {shortcut.keys.map((key) => (
+              <Kbd key={key}>{key}</Kbd>
+            ))}
+          </span>
+        </div>
+      ))}
+    </SettingsSection>
+  );
+}
+
+/** Shown only when the local database failed; settings then persist in WebView storage instead. */
+function StorageWarning() {
+  const error = useStorageHealth((s) => s.error);
+  if (!error) return null;
+  return (
+    <div role="alert" className="flex items-start gap-3 rounded-widget border border-warning/30 bg-warning/10 p-4 text-[13px]">
+      <TriangleAlert size={17} className="mt-0.5 shrink-0 text-warning" aria-hidden />
+      <div>
+        <p className="font-medium text-fg">NOVA's database is unavailable</p>
+        <p className="mt-0.5 text-fg-muted">Settings are being kept in temporary WebView storage instead. Details: {error}</p>
+      </div>
+    </div>
+  );
+}
+
+const PRIVACY_FACTS = [
+  "Settings, layouts, tasks, notes and chats are stored in a local database on this PC.",
+  "No analytics, telemetry or tracking of any kind.",
+  "System metrics, apps, files and media are read locally and never leave your device.",
+  "AI keys live in Windows Credential Manager; only text you type is sent, to the provider you chose.",
+  "Wallpaper colors are sampled on this PC.",
+];
+
+interface StorageStatus {
+  available: boolean;
+  path: string | null;
+  schemaVersion: number | null;
+  error: string | null;
+}
+
+function PrivacySection() {
+  const connections = useExternalConnections();
+  return (
+    <SettingsSection id="privacy" title="Privacy" description="NOVA is local-first by design." icon={ShieldCheck}>
+      <div className="mb-4 rounded-[14px] border border-line bg-black/20 p-4">
+        <p className="flex items-center gap-2 text-[13px] font-medium text-fg">
+          <Globe size={14} className="text-accent-text" aria-hidden /> External connections
+        </p>
+        {connections.length === 0 ? (
+          <p className="mt-1 text-[12.5px] text-fg-muted">None. NOVA currently makes no network connections.</p>
+        ) : (
+          <ul className="mt-2 space-y-1 text-[12.5px] text-fg-muted">
+            {connections.map((c) => (
+              <li key={c}>• {c}</li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <ul className="space-y-2.5">
+        {PRIVACY_FACTS.map((fact) => (
+          <li key={fact} className="flex items-start gap-2.5 text-[13px] text-fg-muted">
+            <Check size={15} className="mt-0.5 shrink-0 text-success" aria-hidden />
+            {fact}
+          </li>
+        ))}
+      </ul>
+    </SettingsSection>
+  );
+}
+
+function AboutSection() {
+  const resetSettings = useSettings((s) => s.resetSettings);
+  const [confirming, setConfirming] = useState(false);
+  const { data: runtime } = useQuery({
+    queryKey: ["app", "runtime"],
+    queryFn: async () => (isDesktop() ? { version: await getVersion(), tauri: await getTauriVersion() } : null),
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+  const { data: storage } = useQuery({
+    queryKey: ["app", "storage"],
+    queryFn: () => (isDesktop() ? callNative<StorageStatus>("storage_status") : null),
+  });
+
+  useEffect(() => {
+    if (!confirming) return;
+    const timer = window.setTimeout(() => setConfirming(false), 4000);
+    return () => window.clearTimeout(timer);
+  }, [confirming]);
+
+  return (
+    <SettingsSection id="about" title="About NOVA" icon={Info}>
+      <div className="flex items-center gap-4 pb-4">
+        <NovaMark size={48} />
+        <div>
+          <p className="text-[15px] font-semibold tracking-[0.16em] text-fg">NOVA</p>
+          <p className="text-[12.5px] text-fg-muted">Your Personal Command Center · Everything. Connected.</p>
+        </div>
+      </div>
+      <SettingRow label="Version" description={runtime ? `Desktop runtime · Tauri ${runtime.tauri}` : "Browser preview — native features are unavailable."}>
+        <span className="text-[13px] font-medium text-fg tabular-nums">{runtime?.version ?? "1.0.0"}</span>
+      </SettingRow>
+      <SettingRow
+        label="Local database"
+        description={
+          storage ? (
+            <span className="break-all select-text">{storage.path ?? "No data folder available"}</span>
+          ) : (
+            "Browser preview — data is kept in this browser's storage."
+          )
+        }
+      >
+        <span className={cn("text-[13px] font-medium tabular-nums", storage?.available === false ? "text-warning" : "text-fg")}>
+          {storage ? (storage.available ? `Schema v${storage.schemaVersion}` : "Unavailable") : "—"}
+        </span>
+      </SettingRow>
+      <SettingRow label="Reset settings" description="Restore appearance, navigation, dashboard and system preferences. Dashboard layouts are kept.">
+        <Button
+          size="sm"
+          variant={confirming ? "danger" : "secondary"}
+          icon={<RotateCcw size={14} aria-hidden />}
+          onClick={() => {
+            if (confirming) {
+              resetSettings();
+              setConfirming(false);
+            } else {
+              setConfirming(true);
+            }
+          }}
+        >
+          {confirming ? "Click again to reset" : "Reset…"}
+        </Button>
+      </SettingRow>
+    </SettingsSection>
+  );
+}

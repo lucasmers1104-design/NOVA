@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-apps-list"
+description = "Enables the apps_list command without any pre-configured scope."
+commands.allow = ["apps_list"]
+
+[[permission]]
+identifier = "deny-apps-list"
+description = "Denies the apps_list command without any pre-configured scope."
+commands.deny = ["apps_list"]

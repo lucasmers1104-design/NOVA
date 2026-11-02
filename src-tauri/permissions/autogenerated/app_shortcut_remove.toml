@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-app-shortcut-remove"
+description = "Enables the app_shortcut_remove command without any pre-configured scope."
+commands.allow = ["app_shortcut_remove"]
+
+[[permission]]
+identifier = "deny-app-shortcut-remove"
+description = "Denies the app_shortcut_remove command without any pre-configured scope."
+commands.deny = ["app_shortcut_remove"]

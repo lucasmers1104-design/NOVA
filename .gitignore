@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Frontend build output
+dist/
+
+# Tauri / Rust
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# Local environment and secrets — never commit API keys
+.env
+.env.*
+!.env.example
+
+# Editors & OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.log
+Thumbs.db
+.DS_Store
+
+# Test coverage
+coverage/

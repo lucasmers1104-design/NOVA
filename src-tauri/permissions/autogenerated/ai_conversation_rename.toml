@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-ai-conversation-rename"
+description = "Enables the ai_conversation_rename command without any pre-configured scope."
+commands.allow = ["ai_conversation_rename"]
+
+[[permission]]
+identifier = "deny-ai-conversation-rename"
+description = "Denies the ai_conversation_rename command without any pre-configured scope."
+commands.deny = ["ai_conversation_rename"]

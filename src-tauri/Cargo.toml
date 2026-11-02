@@ -1,0 +1,65 @@
+[package]
+name = "nova"
+version = "1.0.0"
+description = "NOVA — Your Personal Command Center"
+authors = ["Luca Warmers"]
+edition = "2021"
+rust-version = "1.85"
+
+[lib]
+# Desktop-only for now: a plain rlib keeps link times short. Add
+# "staticlib"/"cdylib" here if mobile targets are ever introduced.
+name = "nova_lib"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-window-state = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sysinfo = { version = "0.40", default-features = false, features = ["system", "disk", "gpu", "network", "component"] }
+# Bundled SQLite: no system library required on the user's machine.
+rusqlite = { version = "0.41", features = ["bundled"] }
+# Windows' own TLS stack (Schannel) instead of bundling a crypto library.
+reqwest = { version = "0.13", default-features = false, features = ["native-tls"] }
+url = "2"
+quick-xml = "0.42"
+png = "0.18"
+base64 = "0.23"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.62", features = [
+    "Foundation",
+    "Media_Control",
+    "Storage_Streams",
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Media_Audio",
+    "Win32_Media_Audio_Endpoints",
+    "Win32_Security",
+    "Win32_Security_Credentials",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Registry",
+    "Win32_System_Variant",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[profile.dev]
+# Smaller debug info noticeably shortens link times on modest hardware.
+debug = "line-tables-only"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

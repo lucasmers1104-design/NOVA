@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-settings-delete"
+description = "Enables the settings_delete command without any pre-configured scope."
+commands.allow = ["settings_delete"]
+
+[[permission]]
+identifier = "deny-settings-delete"
+description = "Denies the settings_delete command without any pre-configured scope."
+commands.deny = ["settings_delete"]
