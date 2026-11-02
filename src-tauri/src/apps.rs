@@ -115,7 +115,7 @@ pub fn scan_start_menu() -> Catalog {
 }
 
 impl AppCatalog {
-    fn scanned(&self, refresh: bool) -> CommandResult<Catalog> {
+    pub(crate) fn scanned(&self, refresh: bool) -> CommandResult<Catalog> {
         let mut guard = self.scanned.lock().map_err(|_| "app catalog lock poisoned".to_string())?;
         if refresh || guard.is_none() {
             *guard = Some(scan_start_menu());
@@ -123,7 +123,7 @@ impl AppCatalog {
         Ok(guard.clone().unwrap_or_default())
     }
 
-    fn resolve(&self, db: &Database, id: &str) -> CommandResult<PathBuf> {
+    pub(crate) fn resolve(&self, db: &Database, id: &str) -> CommandResult<PathBuf> {
         if let Some(path) = self.scanned(false)?.1.get(id) {
             return Ok(path.clone());
         }

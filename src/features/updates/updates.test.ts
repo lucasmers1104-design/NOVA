@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as native from "@/lib/native";
 import { defaultSettings, sanitizeSettings, useSettings } from "@/stores/settings";
-import { AUTO_INSTALL_DELAY_S, effectiveUpdateSource, useUpdates } from "./store";
+import { AUTO_INSTALL_DELAY_S, DEFAULT_UPDATE_SOURCE, effectiveUpdateSource, useUpdates } from "./store";
 
 const UPDATE = { version: "1.1.0", currentVersion: "1.0.0", notes: "Faster startup" };
 
@@ -62,11 +62,13 @@ describe("updates", () => {
     expect(useUpdates.getState()).toMatchObject({ status: "error", error: "offline" });
   });
 
-  it("asks for a source before checking", async () => {
-    useSettings.setState({ updateSource: "" });
-    expect(effectiveUpdateSource()).toBe("");
+  it("checks NOVA's own repository when no source is set", async () => {
+    const call = vi.spyOn(native, "callNative").mockResolvedValue(null);
+    useSettings.setState({ updateSource: "  " });
+    expect(effectiveUpdateSource()).toBe(DEFAULT_UPDATE_SOURCE);
+    expect(DEFAULT_UPDATE_SOURCE).toMatch(/^[\w.-]+\/[\w.-]+$/);
     await useUpdates.getState().check({ automatic: false });
-    expect(useUpdates.getState().status).toBe("error");
+    expect(call).toHaveBeenCalledWith("update_check", { source: DEFAULT_UPDATE_SOURCE });
   });
 
   it("validates persisted update settings", () => {

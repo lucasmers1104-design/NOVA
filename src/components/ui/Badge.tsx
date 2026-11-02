@@ -25,9 +25,13 @@ export function Badge({ tone = "neutral", children, className }: { tone?: Tone; 
   );
 }
 
-/** Pulsing dot indicating a live data feed. */
+/**
+ * Dot indicating a live data feed. It pulses a few times, then rests: a
+ * running animation makes the whole glass window recomposite every frame
+ * (measured ~6 % CPU on a dual-core laptop for two dots).
+ */
 export function LiveDot({ className }: { className?: string }) {
-  return <span aria-hidden className={cn("size-1.5 rounded-full bg-success animate-[nova-pulse_2s_ease-in-out_infinite]", className)} />;
+  return <span aria-hidden className={cn("size-1.5 rounded-full bg-success animate-[nova-pulse_2s_ease-in-out_3]", className)} />;
 }
 
 export function Kbd({ children }: { children: ReactNode }) {

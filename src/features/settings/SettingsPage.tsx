@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { getTauriVersion, getVersion } from "@tauri-apps/api/app";
-import { Activity, Check, CloudDownload, Globe, Info, Keyboard, KeyRound, LayoutDashboard, Layers, type LucideIcon, Palette, PanelLeft, Plug, Power, RotateCcw, ShieldCheck, TriangleAlert } from "lucide-react";
+import { Activity, AudioLines, Check, CloudDownload, FolderSearch, Globe, Info, Keyboard, KeyRound, LayoutDashboard, Layers, type LucideIcon, Palette, PanelLeft, Plug, Power, RotateCcw, ShieldCheck, Sparkles, TriangleAlert } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { SHORTCUTS } from "@/app/shortcuts";
 import { NovaMark } from "@/components/brand/NovaMark";
@@ -9,11 +9,14 @@ import { Kbd } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { Switch } from "@/components/ui/Switch";
+import { AgentSettings, AssistantHistoryRow, FinderSettings } from "@/features/nova-assistant/AgentSettings";
+import { AssistantSettings } from "@/features/nova-assistant/AssistantSettings";
 import { useSystemInfo } from "@/features/system/api";
 import { cn } from "@/lib/cn";
 import { callNative, isDesktop } from "@/lib/native";
 import { useStorageHealth } from "@/lib/persistence";
 import { type MotionPreference, REFRESH_INTERVALS_MS, useSettings } from "@/stores/settings";
+import { useUi } from "@/stores/ui";
 import { AccentSettings } from "./AccentSettings";
 import { AiProviderSettings, IntegrationsSettings, ProfilesSettings, StartupSettings, UpdatesSettings, useExternalConnections } from "./ExtraSettings";
 import { NavigationSettings } from "./NavigationSettings";
@@ -24,6 +27,9 @@ const SECTIONS: readonly { id: string; label: string; icon: LucideIcon }[] = [
   { id: "profiles", label: "Profiles", icon: Layers },
   { id: "navigation", label: "Navigation", icon: PanelLeft },
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { id: "assistant", label: "NOVA AI assistant", icon: Sparkles },
+  { id: "assistant-brain", label: "Assistant model & voice", icon: AudioLines },
+  { id: "finder", label: "NOVA Finder", icon: FolderSearch },
   { id: "ai", label: "AI providers", icon: KeyRound },
   { id: "integrations", label: "Integrations", icon: Plug },
   { id: "startup", label: "Startup", icon: Power },
@@ -44,11 +50,24 @@ const REFRESH_OPTIONS = REFRESH_INTERVALS_MS.map((ms) => ({ value: ms, label: `$
 
 export default function SettingsPage() {
   const active = useActiveSection();
+  const requestedSection = useUi((s) => s.settingsSection);
+  const clearSettingsSection = useUi((s) => s.clearSettingsSection);
 
   const jumpTo = (id: string) => {
     const reduce = document.documentElement.dataset.motion === "reduced";
     document.getElementById(`settings-${id}`)?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
   };
+
+  // Opened from elsewhere (e.g. the NOVA AI panel) at a specific section.
+  useEffect(() => {
+    if (!requestedSection) return;
+    // Cleared inside the frame: clearing first would re-run this effect and cancel the jump.
+    const frame = requestAnimationFrame(() => {
+      jumpTo(requestedSection);
+      clearSettingsSection();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [requestedSection, clearSettingsSection]);
 
   return (
     <Page>
@@ -78,6 +97,9 @@ export default function SettingsPage() {
           <ProfilesSettings />
           <NavigationSettings />
           <DashboardSection />
+          <AssistantSettings />
+          <AgentSettings />
+          <FinderSettings />
           <AiProviderSettings />
           <IntegrationsSettings />
           <StartupSettings />
@@ -221,8 +243,10 @@ const PRIVACY_FACTS = [
   "Settings, layouts, tasks, notes and chats are stored in a local database on this PC.",
   "No analytics, telemetry or tracking of any kind.",
   "System metrics, apps, files and media are read locally and never leave your device.",
-  "AI keys live in Windows Credential Manager; only text you type is sent, to the provider you chose.",
+  "AI keys live in Windows Credential Manager. Only your messages — and screenshots or files when you share them — go to the provider you chose.",
   "Wallpaper colors are sampled on this PC.",
+  "The NOVA AI dot never uses the microphone or captures your screen in the background. Changes to files always wait for your OK.",
+  "Voice input uses Windows speech recognition, only while the microphone button is active.",
 ];
 
 interface StorageStatus {
@@ -258,6 +282,9 @@ function PrivacySection() {
           </li>
         ))}
       </ul>
+      <div className="mt-5 border-t border-line pt-4">
+        <AssistantHistoryRow />
+      </div>
     </SettingsSection>
   );
 }
@@ -291,7 +318,7 @@ function AboutSection() {
         </div>
       </div>
       <SettingRow label="Version" description={runtime ? `Desktop runtime · Tauri ${runtime.tauri}` : "Browser preview — native features are unavailable."}>
-        <span className="text-[13px] font-medium text-fg tabular-nums">{runtime?.version ?? "1.1.0"}</span>
+        <span className="text-[13px] font-medium text-fg tabular-nums">{runtime?.version ?? __NOVA_VERSION__}</span>
       </SettingRow>
       <SettingRow
         label="Local database"

@@ -18,7 +18,7 @@ NOVA updates itself from a public GitHub repository. Every release is a signed N
    ```
 
    It must be public: the app downloads `releases/` without logging in.
-3. **Update source.** Set `DEFAULT_UPDATE_SOURCE` in `src/features/updates/store.ts` to `"<owner>/<name>"` so new installations update out of the box. Existing installations can also enter it in Settings → Updates.
+3. **Update source.** `DEFAULT_UPDATE_SOURCE` in `src/features/updates/store.ts` is `"lucasmers1104-design/NOVA"`, so installations from 1.2.0 on update out of the box. Version 1.1.0 had no default: enter `lucasmers1104-design/NOVA` once in Settings → Updates there.
 
 ## Publishing a new version (e.g. 1.0.0 → 1.1.0)
 

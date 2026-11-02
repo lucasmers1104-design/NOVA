@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-voice-open-settings"
+description = "Enables the voice_open_settings command without any pre-configured scope."
+commands.allow = ["voice_open_settings"]
+
+[[permission]]
+identifier = "deny-voice-open-settings"
+description = "Denies the voice_open_settings command without any pre-configured scope."
+commands.deny = ["voice_open_settings"]

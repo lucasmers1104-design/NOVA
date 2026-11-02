@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-assistant-attach-file"
+description = "Enables the assistant_attach_file command without any pre-configured scope."
+commands.allow = ["assistant_attach_file"]
+
+[[permission]]
+identifier = "deny-assistant-attach-file"
+description = "Denies the assistant_attach_file command without any pre-configured scope."
+commands.deny = ["assistant_attach_file"]

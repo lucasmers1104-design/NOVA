@@ -1,4 +1,4 @@
-import { AppWindow, Blocks, RefreshCw, CircleCheck, LayoutGrid, Layers, ListTodo, type LucideIcon, PanelLeft, Palette, SlidersHorizontal, Wallpaper } from "lucide-react";
+import { AppWindow, Blocks, RefreshCw, CircleCheck, LayoutGrid, Layers, ListTodo, type LucideIcon, PanelLeft, Palette, SlidersHorizontal, Sparkles, Wallpaper } from "lucide-react";
 import { queryClient } from "@/app/queryClient";
 import { type AppEntry, appKeys, useAppPreferences } from "@/features/apps/api";
 import { notify, notifyError } from "@/features/notifications/store";
@@ -191,6 +191,15 @@ export function buildCommands(): Command[] {
 
   const maintenance: Command[] = isDesktopRuntime()
     ? [
+        {
+          id: "assistant.toggle",
+          title: "Talk to NOVA AI",
+          subtitle: "Open the floating assistant",
+          group: "Layout",
+          icon: Sparkles,
+          keywords: ["assistant", "ai", "dot", "nova", "chat", "help"],
+          run: () => void callNative("assistant_toggle").catch((error: unknown) => notifyError("Couldn't open NOVA AI", error)),
+        },
         {
           id: "app.check-updates",
           title: "Check for updates",

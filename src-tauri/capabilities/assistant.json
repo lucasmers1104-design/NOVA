@@ -1,0 +1,39 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "assistant",
+  "description": "NOVA AI dot and panel: show, expand and collapse, converse, confirm actions, take screenshots the user asks for, attach a file the user picks, and open NOVA. File and system access happens only through NOVA AI's validated tools in Rust; no direct file, system or settings-write access.",
+  "windows": [
+    "dot",
+    "assistant"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "allow-assistant-status",
+    "allow-assistant-toggle",
+    "allow-assistant-collapse",
+    "allow-assistant-panel-hidden",
+    "allow-assistant-dot-ready",
+    "allow-assistant-panel-ready",
+    "allow-assistant-dot-menu",
+    "allow-assistant-open-main",
+    "allow-assistant-appearance",
+    "allow-assistant-send",
+    "allow-assistant-cancel",
+    "allow-assistant-confirm",
+    "allow-assistant-reset",
+    "allow-assistant-capture-targets",
+    "allow-assistant-capture",
+    "allow-assistant-attach-file",
+    "allow-assistant-clear-attachments",
+    "allow-assistant-open-path",
+    "allow-assistant-agent-status",
+    "allow-assistant-actions",
+    "allow-finder-status",
+    "allow-finder-add-standard-folders",
+    "allow-assistant-agent-configure",
+    "allow-voice-listen",
+    "allow-voice-stop",
+    "allow-voice-open-settings"
+  ]
+}

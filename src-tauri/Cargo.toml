@@ -1,6 +1,6 @@
 [package]
 name = "nova"
-version = "1.1.0"
+version = "1.2.0"
 description = "NOVA — Your Personal Command Center"
 authors = ["Luca Warmers"]
 edition = "2021"
@@ -32,23 +32,34 @@ url = "2"
 quick-xml = "0.42"
 png = "0.18"
 base64 = "0.23"
+tauri-plugin-global-shortcut = "2"
+tokio = { version = "1", features = ["sync", "macros", "time"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+windows-future = "0.3"
 windows = { version = "0.62", features = [
     "Foundation",
+    "Globalization",
+    "Media_SpeechRecognition",
     "Media_Control",
     "Storage_Streams",
     "Win32_Foundation",
+    "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
     "Win32_Media_Audio",
     "Win32_Media_Audio_Endpoints",
     "Win32_Security",
     "Win32_Security_Credentials",
+    "Win32_UI_Accessibility",
+    "Win32_Storage_Xps",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
     "Win32_System_Registry",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
     "Win32_System_Variant",
+    "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
     "Win32_UI_Shell_Common",
     "Win32_UI_WindowsAndMessaging",

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-assistant-agent-status"
+description = "Enables the assistant_agent_status command without any pre-configured scope."
+commands.allow = ["assistant_agent_status"]
+
+[[permission]]
+identifier = "deny-assistant-agent-status"
+description = "Denies the assistant_agent_status command without any pre-configured scope."
+commands.deny = ["assistant_agent_status"]

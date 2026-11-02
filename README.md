@@ -4,7 +4,7 @@ _Everything. Connected._
 
 NOVA is a local-first Windows desktop command center with a macOS-inspired "liquid glass" interface. It combines a customizable widget dashboard, real-time system monitoring, an app launcher, media controls, tasks and notes, a multi-provider AI assistant, a file hub and live information in one app.
 
-**Status:** Version 1.1.0. All eight roadmap milestones are complete; see [docs/ROADMAP.md](docs/ROADMAP.md) and [CHANGELOG.md](CHANGELOG.md).
+**Status:** Version 1.2.0. All eight roadmap milestones and the eight NOVA AI assistant milestones are complete; see [docs/ROADMAP.md](docs/ROADMAP.md) and [CHANGELOG.md](CHANGELOG.md).
 
 ## Features
 
@@ -14,6 +14,7 @@ NOVA is a local-first Windows desktop command center with a macOS-inspired "liqu
 | **System** | Live CPU (per core), memory, GPU utilization and VRAM (when the driver reports them), network throughput, storage, temperatures (only if exposed) and processes. |
 | **Apps** | Start menu discovery with real icons, search, favorites, recents, custom apps added through the native picker, and one-click launch. |
 | **NOVA AI** | Anthropic, OpenAI and Google Gemini behind one interface. Streaming replies, Markdown and code blocks, conversation history. Keys are stored in Windows Credential Manager. |
+| **NOVA AI assistant** | A floating glass dot above the taskbar opens NOVA AI from anywhere (click, or Ctrl+Alt+N). Talk or type: it finds files (NOVA Finder), opens apps and files, writes PDF/TXT/Markdown/HTML documents, looks at your screen when you share it, and speaks its answers. Changes wait for your OK; everything it does is logged locally. Without an AI key it still finds files and opens apps. See [the assistant roadmap](docs/ROADMAP.md#nova-ai--the-desktop-assistant). |
 | **Productivity** | Tasks with priorities, due dates, reminders and projects; Markdown notes; calendar; daily overview. |
 | **Media** | Whatever Windows reports as playing (Spotify, browsers, Media Player…): artwork, position, the controls that player supports, system volume, and history. |
 | **Files** | Standard folders, favorite folders, recent files, a scoped browser and search. Files open with their Windows associations. Read-only. |
@@ -70,6 +71,7 @@ src/                         React + TypeScript frontend
 │  ├─ productivity, ai       Stores, models and pages
 │  ├─ files, live, studio    Pages and helpers
 │  ├─ profiles, settings     Workspace profiles; settings sections
+│  ├─ nova-assistant         Dot and panel (own entries: dot.html, assistant.html), conversation, voice, settings
 │  └─ notifications, desktop Notification center, toasts; tray/startup sync
 ├─ widgets/                  Registry (15 widgets), config schemas, frame, boundary
 ├─ stores/                   Persisted settings, session UI state
@@ -84,7 +86,12 @@ src-tauri/                   Rust / Tauri 2 host
 ├─ src/files.rs              Scoped folder listing, search, recent items
 ├─ src/desktop.rs            Tray, close to tray, start with Windows
 ├─ src/updates.rs            Signed self-updates (Tauri updater, configurable source)
-└─ capabilities/, build.rs   One explicit permission per command (55 commands)
+├─ src/assistant.rs          NOVA AI dot and panel windows, multi-monitor placement, global shortcut, fullscreen
+├─ src/agent/                NOVA AI: provider streaming with tools and images, tool registry, local mode
+├─ src/finder.rs             NOVA Finder: incremental background index and search (SQLite FTS5)
+├─ src/documents.rs          PDF / TXT / Markdown / HTML documents in DocumentsNOVA Workspace
+├─ src/capture.rs, voice.rs  Screenshots (own windows excluded), Windows speech recognition
+└─ capabilities/, build.rs   One explicit permission per command (89 commands)
 releases/                    Signed installers + latest.json (update channel)
 scripts/release.mjs          Build, sign and publish a release
 docs/                        Roadmap, release guide, plugin & agent API design
@@ -100,10 +107,11 @@ docs/                        Roadmap, release guide, plugin & agent API design
 - **Scoped OS access.** Apps launch only by id (scanned or user-added). Files open only inside standard folders, favorites or Recent. Links open only over http(s). No shell is ever spawned with user input.
 - **Liquid glass on modest hardware.** The backdrop (optionally your wallpaper, pre-scaled to 960 px) is static. Glass uses `backdrop-filter`, a light-from-above rim and inner highlights, with no per-frame effects. Transparency can be turned off for opaque, faster surfaces.
 - **Efficient polling.** TanStack Query intervals pause when the window is hidden or the data isn't on screen. Processes, sensors and weather each poll at their own slower rates.
+- **The assistant lives in two tiny windows.** The dot is its own transparent window just larger than the dot, so it never blocks the desktop; the panel is a second window that animates in and out instead of resizing one. Rust places both from each monitor's work area and scale. The dot page has no Tailwind or animation library, and its glow breathes only in short bursts because any running animation makes a transparent window composite every frame.
 
 ## Security & privacy
 
-- 55 app commands, each declared in `build.rs` and granted individually in `capabilities/default.json`; plugin permissions are limited to `dialog:allow-open` and `notification:default`. Strict CSP: no remote scripts, styles or connections from the webview.
-- No analytics or telemetry. Network connections happen only for what you set up: weather (Open-Meteo, coordinates only), news feeds you add, AI providers when you send a message, and update checks against your release repository at startup (can be turned off). Settings → Privacy lists the active ones live.
-- Background behavior (tray on close, start with Windows) is off until you enable it.
+- 89 app commands, each declared in `build.rs` and granted individually: `capabilities/default.json` for the main window, `capabilities/assistant.json` for the dot and panel (conversation, confirmations, screenshots and voice the user starts; no direct file, system or settings-write access — files are reached only through NOVA AI's validated tools in Rust). Plugin permissions are limited to `dialog:allow-open`, `notification:default` and window dragging for the dot. Strict CSP: no remote scripts, styles or connections from the webview.
+- No analytics or telemetry. Network connections happen only for what you set up: weather (Open-Meteo, coordinates only), news feeds you add, AI providers when you send a message (including screenshots and files you share with NOVA AI), Windows online speech recognition while you talk to NOVA, and update checks against your release repository at startup (can be turned off). Settings → Privacy lists the active ones live.
+- Background behavior (tray on close, background assistant, start with Windows) is off until you enable it. NOVA AI uses the microphone only while you hold a conversation by voice, takes screenshots only when you share the screen or allow it, keeps conversations in memory only, and asks before creating, moving, renaming or deleting anything (deleting goes to the Recycle Bin). File actions are limited to your own folders.
 - Data: `%APPDATA%\dev.nova.commandcenter\nova.db`; keys: Windows Credential Manager (`NOVA:ai:*`).

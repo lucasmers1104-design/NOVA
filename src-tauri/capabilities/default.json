@@ -67,6 +67,21 @@
     "allow-autostart-get",
     "allow-autostart-set",
     "allow-update-check",
-    "allow-update-install"
+    "allow-update-install",
+    "allow-assistant-status",
+    "allow-assistant-configure",
+    "allow-assistant-reset-position",
+    "allow-assistant-toggle",
+    "allow-assistant-agent-status",
+    "allow-assistant-agent-configure",
+    "allow-assistant-actions",
+    "allow-assistant-clear-history",
+    "allow-finder-status",
+    "allow-finder-pick-folder",
+    "allow-finder-add-standard-folders",
+    "allow-finder-remove-folder",
+    "allow-finder-set-content",
+    "allow-finder-reindex",
+    "allow-finder-search"
   ]
 }

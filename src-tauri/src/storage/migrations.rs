@@ -113,6 +113,53 @@ pub const MIGRATIONS: &[Migration] = &[
         CREATE INDEX idx_ai_messages_conversation ON ai_messages(conversation_id, created_at);
     "#,
     },
+    Migration {
+        version: 3,
+        name: "assistant_usage_actions_file_index",
+        sql: r#"
+        CREATE TABLE ai_usage (
+            id            INTEGER PRIMARY KEY,
+            at            INTEGER NOT NULL,
+            provider      TEXT NOT NULL,
+            model         TEXT NOT NULL,
+            input_tokens  INTEGER NOT NULL,
+            output_tokens INTEGER NOT NULL,
+            -- Estimated US dollars × 1,000,000; NULL when NOVA has no price for the model.
+            cost_micros   INTEGER
+        );
+        CREATE INDEX idx_ai_usage_at ON ai_usage(at);
+
+        CREATE TABLE assistant_actions (
+            id      INTEGER PRIMARY KEY,
+            at      INTEGER NOT NULL,
+            tool    TEXT NOT NULL,
+            title   TEXT NOT NULL,
+            risk    TEXT NOT NULL CHECK (risk IN ('safe', 'confirm', 'high')),
+            status  TEXT NOT NULL CHECK (status IN ('done', 'failed', 'declined')),
+            detail  TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX idx_assistant_actions_at ON assistant_actions(at);
+
+        CREATE TABLE file_index (
+            id        INTEGER PRIMARY KEY,
+            path      TEXT NOT NULL UNIQUE,
+            root      TEXT NOT NULL,
+            name      TEXT NOT NULL,
+            ext       TEXT NOT NULL,
+            folder    TEXT NOT NULL,
+            kind      TEXT NOT NULL,
+            size      INTEGER NOT NULL,
+            modified  INTEGER NOT NULL,
+            created   INTEGER NOT NULL,
+            has_text  INTEGER NOT NULL DEFAULT 0,
+            seen      INTEGER NOT NULL
+        );
+        CREATE INDEX idx_file_index_root ON file_index(root);
+        CREATE INDEX idx_file_index_modified ON file_index(modified);
+        -- rowid = file_index.id. Names, folders and (for text files) the first part of the content.
+        CREATE VIRTUAL TABLE file_index_fts USING fts5(name, folder, body, tokenize = 'unicode61 remove_diacritics 2');
+    "#,
+    },
 ];
 
 #[cfg(test)]
@@ -177,6 +224,10 @@ mod tests {
             "notes",
             "ai_conversations",
             "ai_messages",
+            "ai_usage",
+            "assistant_actions",
+            "file_index",
+            "file_index_fts",
         ] {
             assert!(table_exists(&conn, table), "missing table {table}");
         }

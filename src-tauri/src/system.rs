@@ -339,6 +339,11 @@ fn unix_millis() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
+/// Static info plus a live sample, for NOVA AI's `system_info` tool.
+pub(crate) fn overview(monitor: &SystemMonitor) -> CommandResult<serde_json::Value> {
+    monitor.with_monitor(|m| serde_json::json!({ "info": collect_info(&m.sys), "now": collect_snapshot(m) }))
+}
+
 #[tauri::command]
 pub async fn system_info(monitor: tauri::State<'_, SystemMonitor>) -> CommandResult<SystemInfo> {
     monitor.with_monitor(|m| collect_info(&m.sys))

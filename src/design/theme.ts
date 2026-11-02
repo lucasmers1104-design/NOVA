@@ -1,15 +1,9 @@
 import { useEffect, useMemo } from "react";
-import { useSettings, type Settings } from "@/stores/settings";
-import { type AccentTokens, applyAccentTokens, deriveAccentTokens, resolveAccentColor } from "./accent";
+import { useSettings } from "@/stores/settings";
+import { type AccentTokens, deriveAccentTokens, resolveAccentColor } from "./accent";
+import { applyTheme } from "./themeDom";
 
-type ThemeSettings = Pick<Settings, "accent" | "transparency" | "motion">;
-
-/** Writes theme-related settings onto <html> as CSS variables and data attributes. */
-export function applyTheme(settings: ThemeSettings, root: HTMLElement = document.documentElement): void {
-  applyAccentTokens(deriveAccentTokens(resolveAccentColor(settings.accent)), root);
-  root.dataset.glass = settings.transparency ? "on" : "off";
-  root.dataset.motion = settings.motion;
-}
+export { applyTheme };
 
 /**
  * Resolved accent colors for places CSS variables cannot reach, such as SVG

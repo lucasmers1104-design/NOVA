@@ -1,8 +1,13 @@
+mod agent;
 mod ai;
 mod apps;
+mod assistant;
+mod capture;
 mod credentials;
 mod desktop;
+mod documents;
 mod files;
+mod finder;
 mod http;
 mod live;
 mod media;
@@ -10,11 +15,13 @@ mod shell;
 mod storage;
 mod system;
 mod updates;
+mod voice;
 mod wallpaper;
 
 use std::sync::atomic::Ordering;
 
 use tauri::{Manager, WindowEvent};
+use tauri_plugin_global_shortcut::ShortcutState;
 use tauri_plugin_window_state::StateFlags;
 
 pub fn run() {
@@ -25,11 +32,26 @@ pub fn run() {
             tauri_plugin_window_state::Builder::default()
                 // Visibility is NOVA's decision (tray / background start), not a restored state.
                 .with_state_flags(StateFlags::all() & !StateFlags::VISIBLE)
+                // The assistant windows are placed by NOVA, relative to the screen they're on.
+                .with_denylist(&[assistant::DOT_LABEL, assistant::PANEL_LABEL])
                 .build(),
         )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    if event.state == ShortcutState::Pressed {
+                        assistant::on_shortcut(app);
+                    }
+                })
+                .build(),
+        )
+        .manage(assistant::AssistantState::default())
+        .manage(agent::AgentState::default())
+        .manage(finder::FinderState::default())
+        .manage(voice::VoiceState::default())
         .manage(system::SystemMonitor::new())
         .manage(apps::AppCatalog::default())
         .manage(ai::ChatRequests::default())
@@ -44,26 +66,56 @@ pub fn run() {
                 Err(e) => storage::Database::unavailable(format!("no app data directory: {e}")),
             };
             let close_to_tray = desktop::load_preferences(&database);
+            let assistant_prefs = assistant::load_prefs(&database);
+            agent::init(app.handle(), agent::load_prefs(&database));
+            let finder_prefs = finder::load_prefs(&database);
             app.state::<desktop::DesktopState>().close_to_tray.store(close_to_tray, Ordering::Relaxed);
             app.manage(database);
             desktop::create_tray(app.handle())?;
+            app.handle().on_menu_event(assistant::on_menu_event);
 
-            // Launched by "Start with Windows": stay in the tray if the user chose close-to-tray.
-            if close_to_tray && std::env::args().any(|arg| arg == desktop::BACKGROUND_FLAG) {
+            // Launched by "Start with Windows": stay in the background if the user chose
+            // close-to-tray or the background assistant.
+            let background_start = std::env::args().any(|arg| arg == desktop::BACKGROUND_FLAG);
+            if background_start && (close_to_tray || assistant_prefs.background) {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.hide();
+                    desktop::set_page_visible(&window, false);
                 }
             }
+            assistant::init(app.handle(), assistant_prefs);
+            finder::init(app.handle(), finder_prefs);
+            capture::watch_foreground();
             Ok(())
         })
-        .on_window_event(|window, event| {
-            if let WindowEvent::CloseRequested { api, .. } = event {
+        .on_window_event(|window, event| match (window.label(), event) {
+            ("main", WindowEvent::CloseRequested { api, .. }) => {
+                let app = window.app_handle();
                 let to_tray = window.state::<desktop::DesktopState>().close_to_tray.load(Ordering::Relaxed);
-                if window.label() == "main" && to_tray {
-                    api.prevent_close();
+                api.prevent_close();
+                if to_tray || assistant::runs_in_background(app) {
                     let _ = window.hide();
+                    if let Some(main) = app.get_webview_window("main") {
+                        desktop::set_page_visible(&main, false);
+                    }
+                } else {
+                    // Quit for real: the assistant windows would otherwise keep NOVA alive.
+                    app.exit(0);
                 }
             }
+            // Minimized: stop rendering and polling until it's restored.
+            ("main", WindowEvent::Resized(_)) => {
+                if let (Ok(minimized), Some(main)) = (window.is_minimized(), window.app_handle().get_webview_window("main")) {
+                    desktop::set_page_visible(&main, !minimized);
+                }
+            }
+            (assistant::PANEL_LABEL, WindowEvent::CloseRequested { api, .. }) => {
+                // Alt+F4 on the panel collapses it; the window is reused.
+                api.prevent_close();
+                assistant::request_collapse(window.app_handle());
+            }
+            (assistant::DOT_LABEL, WindowEvent::Moved(position)) => assistant::on_dot_moved(window.app_handle(), *position),
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             system::system_info,
@@ -121,6 +173,40 @@ pub fn run() {
             desktop::autostart_set,
             updates::update_check,
             updates::update_install,
+            assistant::assistant_status,
+            assistant::assistant_configure,
+            assistant::assistant_reset_position,
+            assistant::assistant_toggle,
+            assistant::assistant_collapse,
+            assistant::assistant_panel_hidden,
+            assistant::assistant_dot_ready,
+            assistant::assistant_panel_ready,
+            assistant::assistant_dot_menu,
+            assistant::assistant_open_main,
+            assistant::assistant_appearance,
+            agent::assistant_send,
+            agent::assistant_cancel,
+            agent::assistant_confirm,
+            agent::assistant_reset,
+            agent::assistant_capture_targets,
+            agent::assistant_capture,
+            agent::assistant_attach_file,
+            agent::assistant_clear_attachments,
+            agent::assistant_open_path,
+            agent::assistant_agent_status,
+            agent::assistant_agent_configure,
+            agent::assistant_actions,
+            agent::assistant_clear_history,
+            finder::finder_status,
+            finder::finder_pick_folder,
+            finder::finder_add_standard_folders,
+            finder::finder_remove_folder,
+            finder::finder_set_content,
+            finder::finder_reindex,
+            finder::finder_search,
+            voice::voice_listen,
+            voice::voice_stop,
+            voice::voice_open_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running NOVA");

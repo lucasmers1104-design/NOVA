@@ -1,0 +1,145 @@
+/*
+ * The NOVA orb: a small glass sphere lit by the accent color. Used by the
+ * floating dot and the panel header. Plain CSS (no Tailwind) so the dot
+ * window stays tiny.
+ */
+.nova-orb {
+  position: relative;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background:
+    radial-gradient(circle at 32% 24%, rgb(255 255 255 / 0.5), rgb(255 255 255 / 0) 36%),
+    radial-gradient(circle at 50% 115%, color-mix(in srgb, var(--nova-accent-secondary) 80%, white) 0%, rgb(0 0 0 / 0) 58%),
+    linear-gradient(150deg, var(--nova-accent) 0%, color-mix(in srgb, var(--nova-accent-secondary) 70%, #0b0d17) 100%);
+  box-shadow:
+    inset 0 1px 1px rgb(255 255 255 / 0.5),
+    inset 0 -5px 10px rgb(10 12 24 / 0.35),
+    0 0 0 1px rgb(255 255 255 / 0.12),
+    0 6px 14px -4px rgb(0 0 0 / 0.55);
+}
+
+.nova-orb > svg {
+  width: 48%;
+  height: 48%;
+  filter: drop-shadow(0 1px 1.5px rgb(0 0 0 / 0.35));
+}
+
+/*
+ * Status rings (panel header). Animations run only while NOVA AI is active,
+ * and use transform and opacity only.
+ */
+.nova-orb-status {
+  position: relative;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.nova-orb-status > .nova-orb {
+  position: absolute;
+  inset: 0;
+}
+
+.nova-orb-status::before,
+.nova-orb-status::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  opacity: 0;
+  transition: opacity 200ms ease;
+  pointer-events: none;
+}
+
+/* Thinking and analyzing: a rotating arc. */
+.nova-orb-status:is([data-state="thinking"], [data-state="analyzingScreen"], [data-state="processing"], [data-state="activating"])::after {
+  border-top-color: var(--nova-accent-text);
+  border-right-color: color-mix(in srgb, var(--nova-accent-secondary) 70%, transparent);
+  opacity: 1;
+  animation: nova-orb-spin 1.1s linear infinite;
+}
+
+/* Searching: a faster, thinner scan. */
+.nova-orb-status[data-state="searching"]::after {
+  border-width: 1.5px;
+  border-top-color: var(--nova-accent-text);
+  opacity: 1;
+  animation: nova-orb-spin 0.7s linear infinite;
+}
+
+/* Executing: a dashed progress ring. */
+.nova-orb-status[data-state="executing"]::after {
+  border-style: dashed;
+  border-color: var(--nova-accent-text);
+  opacity: 0.9;
+  animation: nova-orb-spin 2.4s linear infinite;
+}
+
+/* Listening and speaking: the ring follows the audio level (--level 0–1). */
+.nova-orb-status:is([data-state="listening"], [data-state="speaking"])::before {
+  border-color: var(--nova-accent-text);
+  opacity: calc(0.35 + var(--level, 0) * 0.65);
+  transform: scale(calc(1 + var(--level, 0) * 0.28));
+  transition:
+    transform 90ms ease-out,
+    opacity 90ms ease-out;
+}
+
+.nova-orb-status[data-state="listening"]::after {
+  border-color: color-mix(in srgb, var(--nova-accent-text) 40%, transparent);
+  opacity: 1;
+  animation: nova-orb-pulse 1.6s ease-out infinite;
+}
+
+.nova-orb-status[data-state="completed"]::before {
+  border-color: var(--color-success, #34d399);
+  opacity: 1;
+  animation: nova-orb-done 1.2s ease-out forwards;
+}
+
+.nova-orb-status[data-state="error"]::before {
+  border-color: var(--color-danger, #f87171);
+  opacity: 1;
+}
+
+@keyframes nova-orb-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes nova-orb-pulse {
+  from {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+  to {
+    transform: scale(1.45);
+    opacity: 0;
+  }
+}
+
+@keyframes nova-orb-done {
+  0% {
+    transform: scale(0.9);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1.25);
+    opacity: 0;
+  }
+}
+
+:root[data-motion="reduced"] .nova-orb-status::after,
+:root[data-motion="reduced"] .nova-orb-status::before {
+  animation: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) .nova-orb-status::after,
+  :root:not([data-motion="full"]) .nova-orb-status::before {
+    animation: none !important;
+  }
+}

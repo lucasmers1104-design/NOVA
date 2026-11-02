@@ -8,6 +8,7 @@ import { useThemeSync } from "@/design/theme";
 import { useWallpaperAccentSync } from "@/design/wallpaper";
 import { CommandPalette } from "@/features/command-palette/CommandPalette";
 import { useDesktopSync } from "@/features/desktop/useDesktopSync";
+import { useAssistantBridge } from "@/features/nova-assistant/useAssistantBridge";
 import { NotificationCenter, Toaster } from "@/features/notifications/NotificationUI";
 import { useReminders } from "@/features/productivity/reminders";
 import { UpdateBanner, useStartupUpdates } from "@/features/updates/UpdateUI";
@@ -28,6 +29,7 @@ export function AppShell() {
   useGlobalShortcuts();
   useReminders();
   useDesktopSync();
+  useAssistantBridge();
   useStartupUpdates();
   const route = useUi((s) => s.route);
   const motionPreference = useSettings((s) => s.motion);

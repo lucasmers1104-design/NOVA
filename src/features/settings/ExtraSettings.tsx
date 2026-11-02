@@ -343,7 +343,7 @@ export function useExternalConnections(): string[] {
       // Invalid URLs are never stored; ignore defensively.
     }
   }
-  for (const provider of PROVIDERS) if (keys?.[provider.id]) list.push(`AI: ${provider.name} — only when you send a message`);
+  for (const provider of PROVIDERS) if (keys?.[provider.id]) list.push(`AI: ${provider.name} — only when you send a message (NOVA AI includes screenshots and files you share)`);
   const updateSource = useSettings((s) => s.updateSource.trim()) || DEFAULT_UPDATE_SOURCE;
   const autoUpdate = useSettings((s) => s.autoUpdate);
   if (updateSource) {

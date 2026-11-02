@@ -12,6 +12,8 @@
 //   --notes TEXT        Release notes; defaults to this version's CHANGELOG section.
 //   --skip-build        Reuse the installer from the last build.
 //   --local-test        Build a test variant that accepts http://localhost update servers.
+//   --installer-only    Build and copy the signed installer without writing latest.json
+//                       (e.g. before the GitHub repository exists).
 //
 // The private signing key never enters the repository. It is read from
 // TAURI_SIGNING_PRIVATE_KEY_PATH, or %USERPROFILE%\.nova\updater\nova-updater.key.
@@ -67,7 +69,8 @@ function releaseNotes() {
     .join("\n");
 }
 
-const baseUrl = option("base-url")?.replace(/\/$/, "") ?? (() => {
+const installerOnly = flag("installer-only");
+const baseUrl = installerOnly ? null : option("base-url")?.replace(/\/$/, "") ?? (() => {
   const repo = resolveRepo();
   if (!repo) fail("No GitHub repository known. Pass --repo owner/name (or add a GitHub 'origin' remote).");
   return `https://raw.githubusercontent.com/${repo}/main/releases`;
@@ -102,6 +105,11 @@ if (!existsSync(installer) || !existsSync(signature)) fail(`Missing ${installerN
 mkdirSync(outDir, { recursive: true });
 copyFileSync(installer, join(outDir, installerName));
 copyFileSync(signature, join(outDir, `${installerName}.sig`));
+if (installerOnly) {
+  console.log(`\n✔ NOVA ${version} installer copied to ${outDir}`);
+  console.log("  latest.json was not written. Once the repository exists: npm run release -- --repo owner/name --skip-build\n");
+  process.exit(0);
+}
 
 const manifest = {
   version,

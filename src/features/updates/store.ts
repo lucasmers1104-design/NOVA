@@ -9,7 +9,7 @@ import { useSettings } from "@/stores/settings";
  * Settings → Updates: a public GitHub repository (owner/name) whose `releases/`
  * folder holds the installers and `latest.json`.
  */
-export const DEFAULT_UPDATE_SOURCE = "";
+export const DEFAULT_UPDATE_SOURCE = "lucasmers1104-design/NOVA";
 
 /** Seconds between "update found" and the automatic install. */
 export const AUTO_INSTALL_DELAY_S = 15;

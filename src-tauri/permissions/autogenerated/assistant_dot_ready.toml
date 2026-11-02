@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-assistant-dot-ready"
+description = "Enables the assistant_dot_ready command without any pre-configured scope."
+commands.allow = ["assistant_dot_ready"]
+
+[[permission]]
+identifier = "deny-assistant-dot-ready"
+description = "Denies the assistant_dot_ready command without any pre-configured scope."
+commands.deny = ["assistant_dot_ready"]

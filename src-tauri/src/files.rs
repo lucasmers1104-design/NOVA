@@ -18,24 +18,24 @@ const MAX_LIST: usize = 500;
 const MAX_RESULTS: usize = 100;
 const MAX_VISITED_DIRS: usize = 4000;
 const MAX_DEPTH: usize = 6;
-const SKIPPED_DIRS: &[&str] = &["node_modules", ".git", "$recycle.bin", "appdata", "target", ".cache"];
+pub(crate) const SKIPPED_DIRS: &[&str] = &["node_modules", ".git", "$recycle.bin", "appdata", "target", ".cache"];
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KnownFolder {
-    id: &'static str,
-    name: &'static str,
-    path: String,
+    pub(crate) id: &'static str,
+    pub(crate) name: &'static str,
+    pub(crate) path: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileEntry {
-    name: String,
-    path: String,
-    is_dir: bool,
-    size: u64,
-    modified_ms: u64,
+    pub(crate) name: String,
+    pub(crate) path: String,
+    pub(crate) is_dir: bool,
+    pub(crate) size: u64,
+    pub(crate) modified_ms: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -98,7 +98,7 @@ fn favorites(db: &Database) -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
-fn allowed_roots(db: &Database) -> Vec<PathBuf> {
+pub(crate) fn allowed_roots(db: &Database) -> Vec<PathBuf> {
     let mut roots: Vec<PathBuf> = known_folders().into_iter().map(|f| PathBuf::from(f.path)).collect();
     roots.extend(favorites(db));
     roots.into_iter().filter_map(|p| p.canonicalize().ok()).collect()
@@ -119,7 +119,7 @@ fn ensure_allowed(db: &Database, path: &Path) -> CommandResult<()> {
     }
 }
 
-fn is_hidden(meta: &std::fs::Metadata, name: &str) -> bool {
+pub(crate) fn is_hidden(meta: &std::fs::Metadata, name: &str) -> bool {
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;

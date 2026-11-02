@@ -32,10 +32,9 @@ pub enum Provider {
 }
 
 impl Provider {
-    #[cfg(test)]
     pub const ALL: [Provider; 3] = [Provider::Openai, Provider::Anthropic, Provider::Gemini];
 
-    fn id(self) -> &'static str {
+    pub(crate) fn id(self) -> &'static str {
         match self {
             Provider::Openai => "openai",
             Provider::Anthropic => "anthropic",
@@ -43,7 +42,7 @@ impl Provider {
         }
     }
 
-    fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             Provider::Openai => "OpenAI",
             Provider::Anthropic => "Anthropic",
@@ -55,7 +54,7 @@ impl Provider {
         format!("NOVA:ai:{}", self.id())
     }
 
-    fn api_key(self) -> CommandResult<String> {
+    pub(crate) fn api_key(self) -> CommandResult<String> {
         credentials::get(&self.credential_target())?
             .ok_or_else(|| format!("Add your {} API key in Settings → AI providers first.", self.label()))
     }
@@ -225,7 +224,7 @@ fn build_request(
 }
 
 /// `serde_json` body without enabling reqwest's `json` feature.
-trait JsonBody {
+pub(crate) trait JsonBody {
     fn json_body(self, body: &Value) -> Self;
 }
 

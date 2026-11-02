@@ -4,12 +4,15 @@
 //! storage command reports the reason and the frontend falls back to
 //! defaults. User data is never deleted to "recover".
 
+pub(crate) mod actions;
 pub(crate) mod conversations;
+pub(crate) mod file_index;
 mod kv;
 mod layouts;
 mod migrations;
 pub(crate) mod productivity;
 pub(crate) mod shortcuts;
+pub(crate) mod usage;
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -71,6 +74,11 @@ pub(crate) fn new_id(prefix: &str) -> String {
 /// Reads a raw settings value for Rust-side consumers (desktop preferences, file favorites).
 pub(crate) fn kv_get(conn: &mut Connection, key: &str) -> Result<Option<String>, StorageError> {
     kv::get(conn, key)
+}
+
+/// Writes a raw settings value owned by the Rust side (assistant preferences).
+pub(crate) fn kv_set(conn: &mut Connection, key: &str, value: &str) -> Result<(), StorageError> {
+    kv::set(conn, key, value)
 }
 
 /// `[A-Za-z0-9_-]{1,max_len}` — the shape of every id NOVA stores.

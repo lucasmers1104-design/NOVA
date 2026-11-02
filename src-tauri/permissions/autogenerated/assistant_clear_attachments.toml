@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-assistant-clear-attachments"
+description = "Enables the assistant_clear_attachments command without any pre-configured scope."
+commands.allow = ["assistant_clear_attachments"]
+
+[[permission]]
+identifier = "deny-assistant-clear-attachments"
+description = "Denies the assistant_clear_attachments command without any pre-configured scope."
+commands.deny = ["assistant_clear_attachments"]

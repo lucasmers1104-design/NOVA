@@ -40,13 +40,28 @@ pub fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
+        set_page_visible(&window, true);
     }
+}
+
+/// WebView2 keeps rendering, animating and running timers in minimized or
+/// hidden windows unless told the page isn't visible. Telling it also flips
+/// `document.visibilityState`, which pauses NOVA's polling and animations.
+pub fn set_page_visible<R: Runtime>(window: &tauri::WebviewWindow<R>, visible: bool) {
+    #[cfg(windows)]
+    let _ = window.with_webview(move |webview| {
+        // SAFETY: a plain COM call on this webview's own controller, on its UI thread.
+        let _ = unsafe { webview.controller().SetIsVisible(visible) };
+    });
+    #[cfg(not(windows))]
+    let _ = (window, visible);
 }
 
 pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Open NOVA", true, None::<&str>)?;
+    let talk = crate::assistant::tray_item(app)?;
     let quit = MenuItem::with_id(app, "quit", "Quit NOVA", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &PredefinedMenuItem::separator(app)?, &quit])?;
+    let menu = Menu::with_items(app, &[&open, &talk, &PredefinedMenuItem::separator(app)?, &quit])?;
     let mut builder = TrayIconBuilder::with_id("nova")
         .tooltip("NOVA")
         .menu(&menu)

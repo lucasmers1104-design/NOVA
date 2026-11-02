@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-assistant-open-main"
+description = "Enables the assistant_open_main command without any pre-configured scope."
+commands.allow = ["assistant_open_main"]
+
+[[permission]]
+identifier = "deny-assistant-open-main"
+description = "Denies the assistant_open_main command without any pre-configured scope."
+commands.deny = ["assistant_open_main"]

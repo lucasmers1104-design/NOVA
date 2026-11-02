@@ -1,0 +1,868 @@
+//! Provider-independent conversation model for NOVA AI, with request builders
+//! and streaming parsers for Anthropic, OpenAI and Google Gemini that support
+//! tool calls, images and usage reporting.
+
+use std::collections::BTreeMap;
+
+use serde_json::{json, Value};
+
+use crate::ai::{JsonBody, Provider, SseEvent};
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Part {
+    Text(String),
+    Image { media_type: String, data: String },
+    ToolCall { id: String, name: String, input: Value },
+    ToolResult { id: String, name: String, content: String, is_error: bool, image: Option<(String, String)> },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    User,
+    Assistant,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Message {
+    pub role: Role,
+    pub parts: Vec<Part>,
+    /// The provider's own assistant content (thinking blocks, signatures),
+    /// echoed back unchanged when the same provider continues the conversation.
+    pub native: Option<(Provider, Value)>,
+}
+
+impl Message {
+    pub fn user(parts: Vec<Part>) -> Self {
+        Self { role: Role::User, parts, native: None }
+    }
+}
+
+pub struct ToolSpec {
+    pub name: &'static str,
+    pub description: &'static str,
+    pub schema: Value,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Effort {
+    Low,
+    #[default]
+    Medium,
+    High,
+}
+
+impl Effort {
+    fn as_str(self) -> &'static str {
+        match self {
+            Effort::Low => "low",
+            Effort::Medium => "medium",
+            Effort::High => "high",
+        }
+    }
+}
+
+pub struct Request<'a> {
+    pub provider: Provider,
+    pub key: &'a str,
+    pub model: &'a str,
+    pub system: &'a str,
+    pub messages: &'a [Message],
+    pub tools: &'a [ToolSpec],
+    pub effort: Effort,
+}
+
+/// The models Anthropic's `output_config.effort` applies to.
+fn anthropic_supports_effort(model: &str) -> bool {
+    ["claude-fable-5", "claude-mythos-5", "claude-opus-5", "claude-sonnet-5", "claude-haiku-5", "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-opus-4-5", "claude-sonnet-4-6"]
+        .iter()
+        .any(|p| model.starts_with(p))
+}
+
+/// Models that accept server-side refusal fallbacks (`fallbacks: "default"`).
+fn anthropic_supports_fallbacks(model: &str) -> bool {
+    ["claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"].contains(&model)
+}
+
+pub const ANTHROPIC_FALLBACK_BETA: &str = "server-side-fallback-2026-07-01";
+
+/// Debug builds only: `NOVA_DEV_ANTHROPIC_URL` points NOVA AI at a local mock
+/// server for end-to-end tests without a real key. Release builds ignore it.
+pub fn dev_endpoint() -> Option<String> {
+    if cfg!(debug_assertions) {
+        std::env::var("NOVA_DEV_ANTHROPIC_URL").ok().filter(|u| u.starts_with("http://127.0.0.1:"))
+    } else {
+        None
+    }
+}
+
+fn data_url(media_type: &str, data: &str) -> String {
+    format!("data:{media_type};base64,{data}")
+}
+
+pub fn build(request: &Request<'_>) -> reqwest::RequestBuilder {
+    let client = crate::http::client();
+    match request.provider {
+        Provider::Anthropic => {
+            let mut body = json!({
+                "model": request.model,
+                "max_tokens": 32000,
+                "stream": true,
+                "system": request.system,
+                "messages": anthropic_messages(request.messages),
+            });
+            if !request.tools.is_empty() {
+                body["tools"] = request
+                    .tools
+                    .iter()
+                    .map(|t| json!({ "name": t.name, "description": t.description, "input_schema": t.schema, "eager_input_streaming": true }))
+                    .collect();
+            }
+            if anthropic_supports_effort(request.model) {
+                body["output_config"] = json!({ "effort": request.effort.as_str() });
+            }
+            let endpoint = dev_endpoint().unwrap_or_else(|| "https://api.anthropic.com/v1/messages".into());
+            let mut builder = client
+                .post(endpoint)
+                .header("x-api-key", request.key)
+                .header("anthropic-version", "2023-06-01");
+            if anthropic_supports_fallbacks(request.model) {
+                body["fallbacks"] = json!("default");
+                builder = builder.header("anthropic-beta", ANTHROPIC_FALLBACK_BETA);
+            }
+            builder.json_body(&body)
+        }
+        Provider::Openai => {
+            let mut messages = vec![json!({ "role": "system", "content": request.system })];
+            messages.extend(openai_messages(request.messages));
+            let mut body = json!({
+                "model": request.model,
+                "messages": messages,
+                "stream": true,
+                "stream_options": { "include_usage": true },
+            });
+            if !request.tools.is_empty() {
+                body["tools"] = request
+                    .tools
+                    .iter()
+                    .map(|t| json!({ "type": "function", "function": { "name": t.name, "description": t.description, "parameters": t.schema } }))
+                    .collect();
+            }
+            client.post("https://api.openai.com/v1/chat/completions").bearer_auth(request.key).json_body(&body)
+        }
+        Provider::Gemini => {
+            let model = request.model.strip_prefix("models/").unwrap_or(request.model);
+            let mut body = json!({
+                "contents": gemini_contents(request.messages),
+                "systemInstruction": { "parts": [{ "text": request.system }] },
+                "generationConfig": { "maxOutputTokens": 16384 },
+            });
+            if !request.tools.is_empty() {
+                body["tools"] = json!([{ "functionDeclarations": request
+                    .tools
+                    .iter()
+                    .map(|t| json!({ "name": t.name, "description": t.description, "parameters": t.schema }))
+                    .collect::<Vec<_>>() }]);
+            }
+            client
+                .post(format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?alt=sse"))
+                .header("x-goog-api-key", request.key)
+                .json_body(&body)
+        }
+    }
+}
+
+fn anthropic_messages(messages: &[Message]) -> Vec<Value> {
+    let mut out = Vec::new();
+    for message in messages {
+        match message.role {
+            Role::Assistant => {
+                let content = match &message.native {
+                    Some((Provider::Anthropic, native)) => native.clone(),
+                    _ => Value::Array(
+                        message
+                            .parts
+                            .iter()
+                            .filter_map(|p| match p {
+                                Part::Text(t) if !t.is_empty() => Some(json!({ "type": "text", "text": t })),
+                                Part::ToolCall { id, name, input } => Some(json!({ "type": "tool_use", "id": id, "name": name, "input": input })),
+                                _ => None,
+                            })
+                            .collect(),
+                    ),
+                };
+                if content.as_array().is_some_and(|a| !a.is_empty()) {
+                    out.push(json!({ "role": "assistant", "content": content }));
+                }
+            }
+            Role::User => {
+                // Tool results first, as the API requires.
+                let mut content: Vec<Value> = message
+                    .parts
+                    .iter()
+                    .filter_map(|p| match p {
+                        Part::ToolResult { id, content, is_error, image, .. } => {
+                            let mut blocks = vec![json!({ "type": "text", "text": content })];
+                            if let Some((media_type, data)) = image {
+                                blocks.push(json!({ "type": "image", "source": { "type": "base64", "media_type": media_type, "data": data } }));
+                            }
+                            Some(json!({ "type": "tool_result", "tool_use_id": id, "content": blocks, "is_error": is_error }))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                content.extend(message.parts.iter().filter_map(|p| match p {
+                    Part::Image { media_type, data } => Some(json!({ "type": "image", "source": { "type": "base64", "media_type": media_type, "data": data } })),
+                    Part::Text(t) if !t.is_empty() => Some(json!({ "type": "text", "text": t })),
+                    _ => None,
+                }));
+                if !content.is_empty() {
+                    out.push(json!({ "role": "user", "content": content }));
+                }
+            }
+        }
+    }
+    out
+}
+
+fn openai_messages(messages: &[Message]) -> Vec<Value> {
+    let mut out = Vec::new();
+    for message in messages {
+        match message.role {
+            Role::Assistant => {
+                let text: String = message.parts.iter().filter_map(|p| if let Part::Text(t) = p { Some(t.as_str()) } else { None }).collect();
+                let calls: Vec<Value> = message
+                    .parts
+                    .iter()
+                    .filter_map(|p| match p {
+                        Part::ToolCall { id, name, input } => {
+                            Some(json!({ "id": id, "type": "function", "function": { "name": name, "arguments": input.to_string() } }))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                let mut m = json!({ "role": "assistant", "content": if text.is_empty() { Value::Null } else { Value::String(text) } });
+                if !calls.is_empty() {
+                    m["tool_calls"] = Value::Array(calls);
+                }
+                if !m["content"].is_null() || m.get("tool_calls").is_some() {
+                    out.push(m);
+                }
+            }
+            Role::User => {
+                let mut tool_images = Vec::new();
+                for part in &message.parts {
+                    if let Part::ToolResult { id, content, image, .. } = part {
+                        out.push(json!({ "role": "tool", "tool_call_id": id, "content": content }));
+                        if let Some((media_type, data)) = image {
+                            tool_images.push(json!({ "type": "image_url", "image_url": { "url": data_url(media_type, data) } }));
+                        }
+                    }
+                }
+                let mut content: Vec<Value> = Vec::new();
+                if !tool_images.is_empty() {
+                    content.push(json!({ "type": "text", "text": "Screenshot returned by the look_at_screen tool:" }));
+                    content.extend(tool_images);
+                }
+                for part in &message.parts {
+                    match part {
+                        Part::Text(t) if !t.is_empty() => content.push(json!({ "type": "text", "text": t })),
+                        Part::Image { media_type, data } => content.push(json!({ "type": "image_url", "image_url": { "url": data_url(media_type, data) } })),
+                        _ => {}
+                    }
+                }
+                if !content.is_empty() {
+                    out.push(json!({ "role": "user", "content": content }));
+                }
+            }
+        }
+    }
+    out
+}
+
+fn gemini_contents(messages: &[Message]) -> Vec<Value> {
+    let mut out = Vec::new();
+    for message in messages {
+        let parts: Vec<Value> = match (message.role, &message.native) {
+            (Role::Assistant, Some((Provider::Gemini, Value::Array(native)))) => native.clone(),
+            (Role::Assistant, _) => message
+                .parts
+                .iter()
+                .filter_map(|p| match p {
+                    Part::Text(t) if !t.is_empty() => Some(json!({ "text": t })),
+                    Part::ToolCall { name, input, .. } => Some(json!({ "functionCall": { "name": name, "args": input } })),
+                    _ => None,
+                })
+                .collect(),
+            (Role::User, _) => {
+                let mut parts = Vec::new();
+                for part in &message.parts {
+                    if let Part::ToolResult { name, content, is_error, .. } = part {
+                        parts.push(json!({ "functionResponse": { "name": name, "response": { "content": content, "is_error": is_error } } }));
+                    }
+                }
+                for part in &message.parts {
+                    match part {
+                        Part::ToolResult { image: Some((media_type, data)), .. } | Part::Image { media_type, data } => {
+                            parts.push(json!({ "inlineData": { "mimeType": media_type, "data": data } }));
+                        }
+                        Part::Text(t) if !t.is_empty() => parts.push(json!({ "text": t })),
+                        _ => {}
+                    }
+                }
+                parts
+            }
+        };
+        if !parts.is_empty() {
+            out.push(json!({ "role": if message.role == Role::User { "user" } else { "model" }, "parts": parts }));
+        }
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Streaming responses
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Usage {
+    pub input: u64,
+    pub output: u64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Stop {
+    EndTurn,
+    ToolUse,
+    MaxTokens,
+    /// The model or a safety system declined; with a category when known.
+    Refusal(Option<String>),
+    Other(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    /// The parsed arguments, or the raw text when it wasn't valid JSON.
+    pub input: Result<Value, String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Turn {
+    pub text: String,
+    pub calls: Vec<ToolCall>,
+    pub native: Option<(Provider, Value)>,
+    pub stop: Stop,
+    pub usage: Usage,
+    pub model: Option<String>,
+}
+
+impl Turn {
+    pub fn message(&self) -> Message {
+        let mut parts = Vec::new();
+        if !self.text.is_empty() {
+            parts.push(Part::Text(self.text.clone()));
+        }
+        for call in &self.calls {
+            parts.push(Part::ToolCall { id: call.id.clone(), name: call.name.clone(), input: call.input.clone().unwrap_or_else(|_| json!({})) });
+        }
+        Message { role: Role::Assistant, parts, native: self.native.clone() }
+    }
+}
+
+/// Collects one streamed reply.
+pub struct Accumulator {
+    provider: Provider,
+    text: String,
+    stop: Option<Stop>,
+    usage: Usage,
+    model: Option<String>,
+    // Anthropic
+    blocks: Vec<Value>,
+    partial_json: BTreeMap<usize, String>,
+    invalid_inputs: BTreeMap<usize, String>,
+    // OpenAI: index → (id, name, arguments)
+    openai_calls: BTreeMap<u64, (String, String, String)>,
+    // Gemini
+    gemini_parts: Vec<Value>,
+    gemini_calls: Vec<ToolCall>,
+}
+
+impl Accumulator {
+    pub fn new(provider: Provider) -> Self {
+        Self {
+            provider,
+            text: String::new(),
+            stop: None,
+            usage: Usage::default(),
+            model: None,
+            blocks: Vec::new(),
+            partial_json: BTreeMap::new(),
+            invalid_inputs: BTreeMap::new(),
+            openai_calls: BTreeMap::new(),
+            gemini_parts: Vec::new(),
+            gemini_calls: Vec::new(),
+        }
+    }
+
+    /// Handles one event; returns text to show, or the provider's error.
+    pub fn push(&mut self, event: &SseEvent) -> Result<Option<String>, String> {
+        if event.data == "[DONE]" {
+            return Ok(None);
+        }
+        let Ok(value) = serde_json::from_str::<Value>(&event.data) else { return Ok(None) };
+        if let Some(message) = value["error"]["message"].as_str() {
+            return Err(message.to_string());
+        }
+        let shown = match self.provider {
+            Provider::Anthropic => self.anthropic(&value),
+            Provider::Openai => self.openai(&value),
+            Provider::Gemini => self.gemini(&value)?,
+        };
+        if let Some(text) = &shown {
+            self.text.push_str(text);
+        }
+        Ok(shown)
+    }
+
+    fn anthropic(&mut self, value: &Value) -> Option<String> {
+        match value["type"].as_str()? {
+            "message_start" => {
+                let usage = &value["message"]["usage"];
+                self.usage.input = ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"]
+                    .iter()
+                    .filter_map(|k| usage[*k].as_u64())
+                    .sum();
+                self.model = value["message"]["model"].as_str().map(str::to_string);
+                None
+            }
+            "content_block_start" => {
+                let index = value["index"].as_u64()? as usize;
+                if self.blocks.len() <= index {
+                    self.blocks.resize(index + 1, Value::Null);
+                }
+                self.blocks[index] = value["content_block"].clone();
+                if self.blocks[index]["type"] == "tool_use" {
+                    self.partial_json.insert(index, String::new());
+                }
+                None
+            }
+            "content_block_delta" => {
+                let index = value["index"].as_u64()? as usize;
+                let delta = &value["delta"];
+                let block = self.blocks.get_mut(index)?;
+                match delta["type"].as_str()? {
+                    "text_delta" => {
+                        let text = delta["text"].as_str()?.to_string();
+                        let joined = format!("{}{}", block["text"].as_str().unwrap_or(""), text);
+                        block["text"] = Value::String(joined);
+                        return Some(text);
+                    }
+                    "thinking_delta" => {
+                        let joined = format!("{}{}", block["thinking"].as_str().unwrap_or(""), delta["thinking"].as_str().unwrap_or(""));
+                        block["thinking"] = Value::String(joined);
+                    }
+                    "signature_delta" => block["signature"] = delta["signature"].clone(),
+                    "input_json_delta" => {
+                        if let Some(partial) = self.partial_json.get_mut(&index) {
+                            partial.push_str(delta["partial_json"].as_str().unwrap_or(""));
+                        }
+                    }
+                    _ => {}
+                }
+                None
+            }
+            "content_block_stop" => {
+                let index = value["index"].as_u64()? as usize;
+                if let Some(raw) = self.partial_json.remove(&index) {
+                    // Eager input streaming: the API doesn't validate the JSON, so parse strictly.
+                    let parsed = if raw.trim().is_empty() { Ok(json!({})) } else { serde_json::from_str::<Value>(&raw) };
+                    match parsed {
+                        Ok(input) if input.is_object() => self.blocks[index]["input"] = input,
+                        _ => {
+                            self.blocks[index]["input"] = json!({});
+                            self.invalid_inputs.insert(index, raw);
+                        }
+                    }
+                }
+                None
+            }
+            "message_delta" => {
+                if let Some(output) = value["usage"]["output_tokens"].as_u64() {
+                    self.usage.output = output;
+                }
+                if let Some(input) = value["usage"]["input_tokens"].as_u64() {
+                    self.usage.input = self.usage.input.max(input);
+                }
+                if let Some(reason) = value["delta"]["stop_reason"].as_str() {
+                    self.stop = Some(match reason {
+                        "end_turn" | "stop_sequence" => Stop::EndTurn,
+                        "tool_use" => Stop::ToolUse,
+                        "max_tokens" => Stop::MaxTokens,
+                        "refusal" => Stop::Refusal(value["delta"]["stop_details"]["category"].as_str().map(str::to_string)),
+                        other => Stop::Other(other.to_string()),
+                    });
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    fn openai(&mut self, value: &Value) -> Option<String> {
+        if let Some(model) = value["model"].as_str() {
+            self.model = Some(model.to_string());
+        }
+        if let Some(usage) = value.get("usage").filter(|u| u.is_object()) {
+            self.usage = Usage { input: usage["prompt_tokens"].as_u64().unwrap_or(0), output: usage["completion_tokens"].as_u64().unwrap_or(0) };
+        }
+        let choice = &value["choices"][0];
+        if let Some(calls) = choice["delta"]["tool_calls"].as_array() {
+            for call in calls {
+                let index = call["index"].as_u64().unwrap_or(0);
+                let entry = self.openai_calls.entry(index).or_default();
+                if let Some(id) = call["id"].as_str() {
+                    entry.0 = id.to_string();
+                }
+                if let Some(name) = call["function"]["name"].as_str() {
+                    entry.1.push_str(name);
+                }
+                if let Some(arguments) = call["function"]["arguments"].as_str() {
+                    entry.2.push_str(arguments);
+                }
+            }
+        }
+        if let Some(reason) = choice["finish_reason"].as_str() {
+            self.stop = Some(match reason {
+                "stop" => Stop::EndTurn,
+                "tool_calls" | "function_call" => Stop::ToolUse,
+                "length" => Stop::MaxTokens,
+                "content_filter" => Stop::Refusal(Some("content_filter".into())),
+                other => Stop::Other(other.to_string()),
+            });
+        }
+        choice["delta"]["content"].as_str().filter(|t| !t.is_empty()).map(str::to_string)
+    }
+
+    fn gemini(&mut self, value: &Value) -> Result<Option<String>, String> {
+        if let Some(reason) = value["promptFeedback"]["blockReason"].as_str() {
+            return Err(format!("Gemini blocked this request ({reason})"));
+        }
+        if let Some(model) = value["modelVersion"].as_str() {
+            self.model = Some(model.to_string());
+        }
+        let usage = &value["usageMetadata"];
+        if usage.is_object() {
+            self.usage = Usage {
+                input: usage["promptTokenCount"].as_u64().unwrap_or(0),
+                output: usage["candidatesTokenCount"].as_u64().unwrap_or(0) + usage["thoughtsTokenCount"].as_u64().unwrap_or(0),
+            };
+        }
+        let candidate = &value["candidates"][0];
+        let mut shown = String::new();
+        for part in candidate["content"]["parts"].as_array().into_iter().flatten() {
+            self.gemini_parts.push(part.clone());
+            if let Some(call) = part.get("functionCall") {
+                let id = call["id"].as_str().map(str::to_string).unwrap_or_else(|| format!("gemini-call-{}", self.gemini_calls.len() + 1));
+                let input = call.get("args").cloned().unwrap_or_else(|| json!({}));
+                self.gemini_calls.push(ToolCall { id, name: call["name"].as_str().unwrap_or_default().to_string(), input: Ok(input) });
+            } else if part["thought"] != true {
+                if let Some(text) = part["text"].as_str() {
+                    shown.push_str(text);
+                }
+            }
+        }
+        if let Some(reason) = candidate["finishReason"].as_str() {
+            self.stop = Some(match reason {
+                "STOP" => Stop::EndTurn,
+                "MAX_TOKENS" => Stop::MaxTokens,
+                "SAFETY" | "PROHIBITED_CONTENT" | "BLOCKLIST" | "SPII" | "RECITATION" => Stop::Refusal(Some(reason.to_lowercase())),
+                other => Stop::Other(other.to_string()),
+            });
+        }
+        Ok((!shown.is_empty()).then_some(shown))
+    }
+
+    pub fn finish(mut self) -> Turn {
+        let (calls, native) = match self.provider {
+            Provider::Anthropic => {
+                // After a mid-reply fallback, drop what the declined attempt left
+                // before the last `fallback` marker except its text (API rule).
+                if let Some(last) = self.blocks.iter().rposition(|b| b["type"] == "fallback") {
+                    let mut index = 0;
+                    self.blocks.retain(|b| {
+                        let keep = index >= last || matches!(b["type"].as_str(), Some("text") | Some("fallback"));
+                        index += 1;
+                        keep
+                    });
+                    self.invalid_inputs.clear();
+                }
+                let calls = self
+                    .blocks
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, b)| b["type"] == "tool_use")
+                    .map(|(i, b)| ToolCall {
+                        id: b["id"].as_str().unwrap_or_default().to_string(),
+                        name: b["name"].as_str().unwrap_or_default().to_string(),
+                        input: match self.invalid_inputs.get(&i) {
+                            Some(raw) => Err(raw.clone()),
+                            None => Ok(b["input"].clone()),
+                        },
+                    })
+                    .collect();
+                let blocks: Vec<Value> = self.blocks.into_iter().filter(|b| !b.is_null()).collect();
+                (calls, Some((Provider::Anthropic, Value::Array(blocks))))
+            }
+            Provider::Openai => {
+                let calls = self
+                    .openai_calls
+                    .into_values()
+                    .map(|(id, name, arguments)| ToolCall {
+                        id,
+                        name,
+                        input: if arguments.trim().is_empty() {
+                            Ok(json!({}))
+                        } else {
+                            serde_json::from_str::<Value>(&arguments).ok().filter(Value::is_object).ok_or(arguments)
+                        },
+                    })
+                    .collect();
+                (calls, None)
+            }
+            Provider::Gemini => (self.gemini_calls, Some((Provider::Gemini, Value::Array(self.gemini_parts)))),
+        };
+        let stop = match self.stop {
+            Some(Stop::EndTurn) | None if !calls.is_empty() => Stop::ToolUse,
+            Some(stop) => stop,
+            None => Stop::EndTurn,
+        };
+        Turn { text: self.text, calls, native, stop, usage: self.usage, model: self.model }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Prices
+// ---------------------------------------------------------------------------
+
+/// US dollars per million input / output tokens, from Anthropic's published
+/// prices (as of 2026-10-06). Other providers' prices change too often to
+/// hard-code, so NOVA shows their token counts without a cost estimate.
+const ANTHROPIC_PRICES: &[(&str, f64, f64)] = &[
+    ("claude-fable-5-1", 10.0, 50.0),
+    ("claude-fable-5", 10.0, 50.0),
+    ("claude-opus-5-5", 4.0, 20.0),
+    ("claude-opus-5", 5.0, 25.0),
+    ("claude-opus-4-8", 5.0, 25.0),
+    ("claude-opus-4-7", 5.0, 25.0),
+    ("claude-opus-4-6", 5.0, 25.0),
+    ("claude-sonnet-5-5", 2.0, 10.0),
+    ("claude-sonnet-5", 2.0, 10.0),
+    ("claude-sonnet-4-6", 3.0, 15.0),
+    ("claude-haiku-5-5", 0.10, 0.50),
+    ("claude-haiku-4-5", 1.0, 5.0),
+];
+
+/// Estimated cost in millionths of a US dollar, when NOVA knows the model's price.
+pub fn estimate_cost_micros(provider: Provider, model: &str, usage: Usage) -> Option<i64> {
+    if provider != Provider::Anthropic {
+        return None;
+    }
+    // Exact id, or a dated snapshot of it (claude-haiku-4-5-20251001).
+    let (_, mut input, mut output) = *ANTHROPIC_PRICES
+        .iter()
+        .find(|(id, ..)| model == *id || model.strip_prefix(id).is_some_and(|rest| rest.starts_with("-20")))?;
+    if model.starts_with("claude-haiku-5-5") && usage.input > 100_000 {
+        // Long prompts on Haiku 5.5 are billed at a higher rate.
+        (input, output) = (0.50, 2.50);
+    }
+    // $ per million tokens = micro-dollars per token.
+    Some((usage.input as f64 * input + usage.output as f64 * output).round() as i64)
+}
+
+pub const DEFAULT_ANTHROPIC_MODEL: &str = "claude-opus-5-5";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn feed(provider: Provider, events: &[&str]) -> (Vec<String>, Turn) {
+        let mut acc = Accumulator::new(provider);
+        let mut shown = Vec::new();
+        for data in events {
+            if let Some(text) = acc.push(&SseEvent { event: None, data: data.to_string() }).unwrap() {
+                shown.push(text);
+            }
+        }
+        (shown, acc.finish())
+    }
+
+    #[test]
+    fn parses_anthropic_text_thinking_and_tool_use() {
+        let (shown, turn) = feed(
+            Provider::Anthropic,
+            &[
+                r#"{"type":"message_start","message":{"model":"claude-opus-5-5","usage":{"input_tokens":120,"cache_read_input_tokens":30}}}"#,
+                r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}"#,
+                r#"{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig=="}}"#,
+                r#"{"type":"content_block_stop","index":0}"#,
+                r#"{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}"#,
+                r#"{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Ich suche "}}"#,
+                r#"{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"danach."}}"#,
+                r#"{"type":"content_block_stop","index":1}"#,
+                r#"{"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_1","name":"search_files","input":{}}}"#,
+                r#"{"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"text\": \"le"}}"#,
+                r#"{"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"go\"}"}}"#,
+                r#"{"type":"content_block_stop","index":2}"#,
+                r#"{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":42}}"#,
+                r#"{"type":"message_stop"}"#,
+            ],
+        );
+        assert_eq!(shown, ["Ich suche ", "danach."]);
+        assert_eq!(turn.text, "Ich suche danach.");
+        assert_eq!(turn.stop, Stop::ToolUse);
+        assert_eq!(turn.usage, Usage { input: 150, output: 42 });
+        assert_eq!(turn.calls, vec![ToolCall { id: "toolu_1".into(), name: "search_files".into(), input: Ok(json!({ "text": "lego" })) }]);
+        let native = &turn.native.as_ref().unwrap().1;
+        assert_eq!(native[0]["signature"], "sig==", "thinking blocks are kept for replay");
+        assert_eq!(native[2]["input"], json!({ "text": "lego" }));
+    }
+
+    #[test]
+    fn flags_invalid_tool_json_and_refusals() {
+        let (_, turn) = feed(
+            Provider::Anthropic,
+            &[
+                r#"{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t","name":"open_file","input":{}}}"#,
+                r#"{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\": \"C:\\x"}}"#,
+                r#"{"type":"content_block_stop","index":0}"#,
+                r#"{"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":5}}"#,
+            ],
+        );
+        assert!(turn.calls[0].input.is_err());
+        assert_eq!(turn.stop, Stop::MaxTokens);
+        let (_, refused) = feed(
+            Provider::Anthropic,
+            &[r#"{"type":"message_delta","delta":{"stop_reason":"refusal","stop_details":{"category":"cyber"}},"usage":{"output_tokens":0}}"#],
+        );
+        assert_eq!(refused.stop, Stop::Refusal(Some("cyber".into())));
+    }
+
+    #[test]
+    fn drops_declined_blocks_before_a_fallback_marker() {
+        let (_, turn) = feed(
+            Provider::Anthropic,
+            &[
+                r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}"#,
+                r#"{"type":"content_block_start","index":1,"content_block":{"type":"text","text":"Teil"}}"#,
+                r#"{"type":"content_block_start","index":2,"content_block":{"type":"fallback","model":"claude-opus-4-8"}}"#,
+                r#"{"type":"content_block_start","index":3,"content_block":{"type":"text","text":""}}"#,
+                r#"{"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" Rest"}}"#,
+                r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3}}"#,
+            ],
+        );
+        let types: Vec<&str> = turn.native.as_ref().unwrap().1.as_array().unwrap().iter().map(|b| b["type"].as_str().unwrap()).collect();
+        assert_eq!(types, ["text", "fallback", "text"]);
+    }
+
+    #[test]
+    fn parses_openai_tool_calls_across_chunks() {
+        let (shown, turn) = feed(
+            Provider::Openai,
+            &[
+                r#"{"model":"gpt-x","choices":[{"delta":{"role":"assistant","content":"Okay. "}}]}"#,
+                r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"open_app","arguments":"{\"na"}}]}}]}"#,
+                r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"me\":\"Spotify\"}"}}]}}]}"#,
+                r#"{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#,
+                r#"{"choices":[],"usage":{"prompt_tokens":80,"completion_tokens":12}}"#,
+                "[DONE]",
+            ],
+        );
+        assert_eq!(shown, ["Okay. "]);
+        assert_eq!(turn.stop, Stop::ToolUse);
+        assert_eq!(turn.usage, Usage { input: 80, output: 12 });
+        assert_eq!(turn.calls[0].input, Ok(json!({ "name": "Spotify" })));
+        assert_eq!(turn.model.as_deref(), Some("gpt-x"));
+    }
+
+    #[test]
+    fn parses_gemini_function_calls_and_keeps_raw_parts() {
+        let (shown, turn) = feed(
+            Provider::Gemini,
+            &[
+                r#"{"candidates":[{"content":{"parts":[{"text":"Moment."}],"role":"model"}}]}"#,
+                r#"{"candidates":[{"content":{"parts":[{"functionCall":{"name":"search_files","args":{"text":"drucker"}},"thoughtSignature":"abc"}],"role":"model"},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":50,"candidatesTokenCount":7,"thoughtsTokenCount":3}}"#,
+            ],
+        );
+        assert_eq!(shown, ["Moment."]);
+        assert_eq!(turn.stop, Stop::ToolUse, "a function call means tool use even with STOP");
+        assert_eq!(turn.usage, Usage { input: 50, output: 10 });
+        assert_eq!(turn.native.as_ref().unwrap().1[1]["thoughtSignature"], "abc");
+    }
+
+    fn sample_history() -> Vec<Message> {
+        vec![
+            Message::user(vec![Part::Image { media_type: "image/png".into(), data: "AAAA".into() }, Part::Text("Was siehst du?".into())]),
+            Message {
+                role: Role::Assistant,
+                parts: vec![Part::Text("Ich schaue.".into()), Part::ToolCall { id: "c1".into(), name: "search_files".into(), input: json!({ "text": "x" }) }],
+                native: None,
+            },
+            Message::user(vec![Part::ToolResult { id: "c1".into(), name: "search_files".into(), content: "2 files".into(), is_error: false, image: None }]),
+        ]
+    }
+
+    #[test]
+    fn builds_requests_for_every_provider_without_keys_in_urls() {
+        let tools = [ToolSpec { name: "search_files", description: "Search", schema: json!({ "type": "object", "properties": {} }) }];
+        let history = sample_history();
+        for provider in Provider::ALL {
+            let request = build(&Request { provider, key: "secret-key-1", model: "claude-opus-5-5", system: "Be NOVA", messages: &history, tools: &tools, effort: Effort::Low })
+                .build()
+                .unwrap();
+            assert!(!request.url().as_str().contains("secret-key-1"));
+            let body: Value = serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
+            let text = body.to_string();
+            assert!(text.contains("Be NOVA") && text.contains("search_files") && text.contains("AAAA"), "{provider:?}: {text}");
+            match provider {
+                Provider::Anthropic => {
+                    assert_eq!(body["output_config"]["effort"], "low");
+                    assert_eq!(body["fallbacks"], "default");
+                    assert_eq!(request.headers()["anthropic-beta"], ANTHROPIC_FALLBACK_BETA);
+                    assert_eq!(body["tools"][0]["eager_input_streaming"], true);
+                    assert_eq!(body["messages"][2]["content"][0]["type"], "tool_result");
+                }
+                Provider::Openai => {
+                    assert_eq!(body["messages"][3]["role"], "tool");
+                    assert_eq!(body["messages"][2]["tool_calls"][0]["function"]["arguments"], "{\"text\":\"x\"}");
+                }
+                Provider::Gemini => {
+                    assert_eq!(body["contents"][1]["parts"][1]["functionCall"]["name"], "search_files");
+                    assert_eq!(body["contents"][2]["parts"][0]["functionResponse"]["name"], "search_files");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn older_anthropic_models_get_no_effort_or_fallbacks() {
+        let request = build(&Request { provider: Provider::Anthropic, key: "k", model: "claude-haiku-4-5", system: "s", messages: &[], tools: &[], effort: Effort::High })
+            .build()
+            .unwrap();
+        let body: Value = serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
+        assert!(body.get("output_config").is_none() && body.get("fallbacks").is_none() && body.get("tools").is_none());
+        assert!(request.headers().get("anthropic-beta").is_none());
+    }
+
+    #[test]
+    fn estimates_costs_only_for_known_prices() {
+        let usage = Usage { input: 1_000_000, output: 100_000 };
+        assert_eq!(estimate_cost_micros(Provider::Anthropic, "claude-opus-5-5", usage), Some(6_000_000));
+        assert_eq!(estimate_cost_micros(Provider::Anthropic, "claude-opus-5", usage), Some(7_500_000));
+        assert_eq!(estimate_cost_micros(Provider::Anthropic, "claude-haiku-4-5-20251001", usage), Some(1_500_000));
+        assert_eq!(estimate_cost_micros(Provider::Anthropic, "claude-haiku-5-5", Usage { input: 200_000, output: 0 }), Some(100_000));
+        assert_eq!(estimate_cost_micros(Provider::Anthropic, "claude-unknown", usage), None);
+        assert_eq!(estimate_cost_micros(Provider::Openai, "gpt-x", usage), None);
+    }
+}

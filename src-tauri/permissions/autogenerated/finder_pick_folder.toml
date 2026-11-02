@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-finder-pick-folder"
+description = "Enables the finder_pick_folder command without any pre-configured scope."
+commands.allow = ["finder_pick_folder"]
+
+[[permission]]
+identifier = "deny-finder-pick-folder"
+description = "Denies the finder_pick_folder command without any pre-configured scope."
+commands.deny = ["finder_pick_folder"]

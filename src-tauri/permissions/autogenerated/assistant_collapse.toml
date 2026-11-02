@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-assistant-collapse"
+description = "Enables the assistant_collapse command without any pre-configured scope."
+commands.allow = ["assistant_collapse"]
+
+[[permission]]
+identifier = "deny-assistant-collapse"
+description = "Denies the assistant_collapse command without any pre-configured scope."
+commands.deny = ["assistant_collapse"]

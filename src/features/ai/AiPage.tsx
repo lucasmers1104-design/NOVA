@@ -123,10 +123,12 @@ export default function AiPage() {
 function ChatHeader({ hasKey }: { hasKey: boolean }) {
   const prefs = useAiPreferences();
   const { data: models, error, isFetching } = useModels(prefs.provider, hasKey);
+  // Without a key (or before the list loads) the suggested models are offered,
+  // so a model can be chosen up front; NOVA AI's assistant follows this choice too.
   const options = useMemo(() => {
-    const list = models?.map((m) => m.id) ?? providerInfo(prefs.provider).suggestedModels;
+    const list: { id: string; name: string }[] = models ?? providerInfo(prefs.provider).suggestedModels.map((id) => ({ id, name: id }));
     const current = prefs.models[prefs.provider];
-    return current && !list.includes(current) ? [current, ...list] : list;
+    return current && !list.some((m) => m.id === current) ? [{ id: current, name: current }, ...list] : list;
   }, [models, prefs.provider, prefs.models]);
 
   // Pick a sensible default once the provider's list is known.
@@ -159,14 +161,14 @@ function ChatHeader({ hasKey }: { hasKey: boolean }) {
         id="ai-model"
         value={prefs.models[prefs.provider]}
         onChange={(e) => prefs.setModel(prefs.provider, e.target.value)}
-        disabled={!hasKey || options.length === 0}
+        disabled={options.length === 0}
         className={cn(select, "max-w-56")}
         title={error ? `Couldn't load models: ${error instanceof Error ? error.message : String(error)}` : undefined}
       >
         {options.length === 0 && <option value="">{isFetching ? "Loading models…" : hasKey ? "No models found" : "Add a key first"}</option>}
         {options.map((m) => (
-          <option key={m} value={m}>
-            {m}
+          <option key={m.id} value={m.id}>
+            {m.name}
           </option>
         ))}
       </select>

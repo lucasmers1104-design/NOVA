@@ -58,8 +58,8 @@ export function Sidebar() {
           <p data-tauri-drag-region className="text-[15px] leading-none font-semibold tracking-[0.18em] text-fg">
             NOVA
           </p>
-          <p data-tauri-drag-region className="mt-1 text-[11px] leading-none whitespace-nowrap text-fg-subtle">
-            Command Center
+          <p data-tauri-drag-region className="mt-1 text-[11px] leading-none whitespace-nowrap text-fg-subtle" title={`Installed version: ${__NOVA_VERSION__}`}>
+            Command Center · v{__NOVA_VERSION__}
           </p>
         </div>
       </div>

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-finder-search"
+description = "Enables the finder_search command without any pre-configured scope."
+commands.allow = ["finder_search"]
+
+[[permission]]
+identifier = "deny-finder-search"
+description = "Denies the finder_search command without any pre-configured scope."
+commands.deny = ["finder_search"]

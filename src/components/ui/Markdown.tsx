@@ -73,7 +73,8 @@ export function parseBlocks(source: string): Block[] {
   return blocks;
 }
 
-const INLINE = /(`[^`]+`)|(\*\*[^*]+\*\*|__[^_]+__)|(~~[^~]+~~)|(\*[^*\s][^*]*\*|_[^_\s][^_]*_)|(\[[^\]]+\]\([^)\s]+\))/g;
+// Underscores only mark emphasis at word edges, so names like LEGO_Plan_v2.xlsx stay intact.
+const INLINE = /(`[^`]+`)|(\*\*[^*]+\*\*|(?<!\w)__[^_]+__(?!\w))|(~~[^~]+~~)|(\*[^*\s][^*]*\*|(?<!\w)_[^_\s][^_]*_(?!\w))|(\[[^\]]+\]\([^)\s]+\))/g;
 
 export function renderInline(text: string, keyPrefix = "i"): ReactNode[] {
   const nodes: ReactNode[] = [];

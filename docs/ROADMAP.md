@@ -49,6 +49,64 @@ Legend: ✅ done · ⬜ planned
 - ✅ Version 1.0.0, NSIS installer, release documentation
 - ✅ Liquid glass redesign: translucent layered glass, floating sidebar, capsule controls, wallpaper backdrop
 
+# NOVA AI — the desktop assistant
+
+"One dot. Your entire PC. One intelligent assistant." Built milestone by milestone; each one compiles, is tested and runs on its own.
+
+## A1 — Floating dot ✅
+- ✅ Two small transparent always-on-top windows: the dot (`dot.html`, no Tailwind or motion library) and the panel (`assistant.html`), placed by Rust (`src-tauri/src/assistant.rs`)
+- ✅ Glass orb in the accent color; idle breathing in short bursts (twice after settling, then once a minute: ~0.07 % CPU at rest instead of ~9 % for a constant animation); hover growth and halo; open ring; reduced motion
+- ✅ Click to expand/collapse; the panel grows out of the dot's corner, opens above or below and left or right depending on where the dot is, and shrinks to fit small screens; Esc, minimize and close collapse it
+- ✅ Position: four corners of the main display, or drag anywhere on any display (saved once the mouse button is released; off-screen positions fall back to the corner); three sizes; DPI-correct
+- ✅ Global shortcut (default Ctrl+Alt+N), recorder in Settings, conflicts with other apps reported instead of failing silently
+- ✅ Tray "Talk to NOVA", dot right-click menu (talk, open NOVA, settings, hide the dot), command palette entry
+- ✅ Opt-in background assistant: closing NOVA's window keeps the dot and shortcut; otherwise closing quits everything
+- ✅ Separate capability for the assistant windows: no file, system or settings-write access
+
+## A2 — Assistant interface ✅
+- ✅ Conversation with streaming Markdown replies, user bubbles with attachments, tool cards inline, error with retry, auto-scroll that respects reading
+- ✅ Eleven states (idle, activating, listening, processing, thinking, searching, analyzing screen, executing, speaking, completed, error) on the header orb and the dot; dot animations run only while busy
+- ✅ Input with attachments (file picker in Rust), screen sharing menu, push-to-talk, send/stop; Esc stops speech, then closes; new conversation; action history view
+- ✅ Footer: provider · model, spoken replies toggle, microphone and screen indicators
+
+## A3 — Voice ✅
+- ✅ Push-to-talk through Windows speech recognition (WinRT): live transcript, end-of-speech detection, level meter, stop early; language "same as Windows" or de-DE/de-AT/de-CH/en-US/en-GB
+- ✅ Clear failures with a button to the right Windows settings page (online speech recognition off, microphone blocked, language missing)
+- ✅ Spoken replies with the Windows voices (choice of voice, speed, volume, test), word-driven visualization, interrupt on Esc, stop, new input or the mic; replies to spoken questions are always spoken
+- ⚠️ Windows dictation needs "Online speech recognition" (Settings → Privacy → Speech); on the development PC it is off, so recognition itself is verified up to that error
+
+## A4 — AI provider ✅
+- ✅ Provider-independent conversation model (text, images, tool calls, tool results) with request builders and streaming parsers for Anthropic, OpenAI and Gemini, verified with recorded event fixtures
+- ✅ Anthropic: claude-opus-5-5 by default, adaptive thinking blocks replayed unchanged, `output_config.effort` (Fast/Balanced/Thorough), eager tool-input streaming with strict JSON validation, server-side refusal fallbacks, refusal and max-tokens handling
+- ✅ Session context kept append-only (thinking-safe); interrupted turns merge instead of editing history
+- ✅ Token usage per reply and per month, cost estimates from Anthropic's published prices (other providers: tokens only), optional monthly limit
+- ✅ End-to-end loop verified in the running app against a scripted local mock (debug builds only)
+
+## A5 — NOVA Vision ✅
+- ✅ Screenshots of a display or the window the user was in (tracked with a foreground event hook, no polling); NOVA's dot and panel are excluded from capture
+- ✅ Only on request: the screen button, or the `look_at_screen` tool after "Allow"; scaled to 1568 px, kept in memory for the conversation only
+- ✅ Prompting for visible facts vs. assumptions and step-by-step guidance
+
+## A6 — NOVA Finder ✅
+- ✅ User-chosen folders (native picker or the standard folders); nothing indexed by default
+- ✅ Incremental background index (size + modification time) at background CPU and I/O priority, hidden/system and cache folders skipped, refreshed at startup and when stale
+- ✅ SQLite FTS5 over names (split at _ - . and camelCase), folders and the beginning of text files; filters for type, extension, date, folder; any-word fallback; content excerpts only for real content matches
+- ✅ Result cards (open, show in folder, copy path), numbered for follow-ups; local mode understands "öffne die dritte"
+
+## A7 — Task execution ✅
+- ✅ Typed tool registry (13 tools) with argument validation in Rust; file access limited to the user's folders; programs and scripts never opened from files
+- ✅ Confirmation tiers: safe (search, open, list, apps, websites, system info), confirm (documents, folders, move, rename, screenshot), high (delete → Recycle Bin)
+- ✅ Documents: PDF (own writer, Windows-1252 Helvetica, wrapping, pages), TXT, Markdown, HTML in DocumentsNOVA Workspace; never overwrites; verified on disk
+- ✅ Local action history (done / failed / declined), viewable in the panel and clearable in Settings
+
+## A8 — Final polish ✅
+- ✅ Multi-monitor: dragged positions per display, fallback when a display disappears, DPI-correct placement
+- ✅ Optional "hide the dot in fullscreen apps" (shell notification state, checked only while enabled)
+- ✅ Accessibility: labelled controls, live status, alert dialogs for confirmations, keyboard paths, reduced motion
+- ✅ Settings for model, voice, Finder, limits and history; privacy facts and external connections updated
+- ✅ Version 1.2.0, signed installer
+- ⬜ Wake word ("Hey NOVA") and double-clap activation: not built — they need continuous microphone access and couldn't be verified on this PC; push-to-talk and the global shortcut cover activation
+
 ## Next ideas
 - Calendar sync adapters (Outlook, Google) behind explicit opt-in
 - AI agent mode with permission-gated tools (see [PLUGIN_API.md](PLUGIN_API.md#agents))

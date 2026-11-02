@@ -1,0 +1,1166 @@
+//! NOVA AI desktop assistant: the floating dot, the panel that expands from
+//! it, their placement across monitors, and the global shortcut.
+//!
+//! The dot and the panel are two small transparent always-on-top windows, so
+//! the dot never covers more of the desktop than itself and the panel can
+//! animate without resizing a window. Nothing in this module records audio or
+//! captures the screen.
+
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard};
+use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use tauri::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
+use tauri::{AppHandle, Emitter, Manager, Monitor, PhysicalPosition, PhysicalSize, Runtime, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Modifiers, Shortcut};
+use tauri_plugin_notification::NotificationExt;
+
+use crate::storage::Database;
+
+type CommandResult<T> = Result<T, String>;
+
+pub const DOT_LABEL: &str = "dot";
+pub const PANEL_LABEL: &str = "assistant";
+/// Ctrl+Alt+Space is often taken by other assistants; AltGr+N types nothing on common layouts.
+pub const DEFAULT_SHORTCUT: &str = "Ctrl+Alt+N";
+const PREFS_KEY: &str = "nova.assistant";
+const SETTINGS_KEY: &str = "nova.settings";
+const MAX_SHORTCUT_LEN: usize = 40;
+
+/// Room around the dot for its glow and hover growth (logical px).
+const DOT_MARGIN: f64 = 14.0;
+/// Visible gap between the dot and the edge of the work area.
+const EDGE_GAP: f64 = 18.0;
+/// Transparent room around the panel for its shadow.
+const PANEL_PAD: f64 = 16.0;
+/// Visible gap between the dot and the panel; at least `PANEL_PAD`, so the
+/// panel's shadow room never covers the dot and swallows its clicks.
+const PANEL_GAP: f64 = 18.0;
+const PANEL_WIDTH: f64 = 460.0;
+const PANEL_MAX_HEIGHT: f64 = 620.0;
+const PANEL_MIN_HEIGHT: f64 = 340.0;
+/// How long a dragged dot has to rest (button released) before it is saved.
+const DRAG_SETTLE: Duration = Duration::from_millis(250);
+/// The panel hides by itself if its exit animation never reports back.
+const COLLAPSE_FALLBACK: Duration = Duration::from_millis(600);
+
+const EVENT_EXPAND: &str = "assistant://expand";
+const EVENT_COLLAPSE: &str = "assistant://collapse";
+const EVENT_PANEL: &str = "assistant://panel";
+const EVENT_DOT: &str = "assistant://dot";
+const EVENT_PREFS: &str = "assistant://prefs";
+const EVENT_NAVIGATE: &str = "nova://navigate";
+
+// ---------------------------------------------------------------------------
+// Preferences
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Corner {
+    #[default]
+    BottomRight,
+    BottomLeft,
+    TopRight,
+    TopLeft,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DotSize {
+    Small,
+    #[default]
+    Medium,
+    Large,
+}
+
+impl DotSize {
+    fn diameter(self) -> f64 {
+        match self {
+            DotSize::Small => 44.0,
+            DotSize::Medium => 52.0,
+            DotSize::Large => 60.0,
+        }
+    }
+
+    /// Logical side of the dot window, glow room included.
+    fn window_side(self) -> f64 {
+        self.diameter() + 2.0 * DOT_MARGIN
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Point {
+    pub x: i32,
+    pub y: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AssistantPrefs {
+    /// Show the floating dot.
+    pub enabled: bool,
+    pub corner: Corner,
+    pub size: DotSize,
+    /// Global shortcut that opens and closes the panel; empty means none.
+    pub shortcut: String,
+    /// Keep NOVA running with the assistant when the main window is closed.
+    pub background: bool,
+    /// Hide the dot while a fullscreen app, game or presentation is in front.
+    pub hide_in_fullscreen: bool,
+    /// Where the user dragged the dot (physical top-left of its window). Overrides `corner`.
+    pub position: Option<Point>,
+}
+
+impl Default for AssistantPrefs {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            corner: Corner::default(),
+            size: DotSize::default(),
+            shortcut: DEFAULT_SHORTCUT.into(),
+            background: false,
+            hide_in_fullscreen: false,
+            position: None,
+        }
+    }
+}
+
+/// Reads the stored preferences; anything malformed falls back to defaults.
+pub fn load_prefs(db: &Database) -> AssistantPrefs {
+    db.with(|conn| crate::storage::kv_get(conn, PREFS_KEY))
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_str::<AssistantPrefs>(&raw).ok())
+        .map(|mut prefs| {
+            if prefs.shortcut.len() > MAX_SHORTCUT_LEN || parse_shortcut(&prefs.shortcut).is_err() {
+                prefs.shortcut = DEFAULT_SHORTCUT.into();
+            }
+            prefs
+        })
+        .unwrap_or_default()
+}
+
+fn save_prefs<R: Runtime>(app: &AppHandle<R>, prefs: &AssistantPrefs) {
+    let Ok(json) = serde_json::to_string(prefs) else { return };
+    if let Err(error) = app.state::<Database>().with(|conn| crate::storage::kv_set(conn, PREFS_KEY, &json)) {
+        eprintln!("[NOVA] could not save assistant preferences: {error}");
+    }
+}
+
+/// Validates a shortcut such as `Ctrl+Alt+Space`. It needs Ctrl, Alt or Win,
+/// so ordinary typing (letters, Shift+letter) is never intercepted.
+pub fn parse_shortcut(raw: &str) -> Result<Option<Shortcut>, String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    if raw.len() > MAX_SHORTCUT_LEN {
+        return Err("That shortcut is too long.".into());
+    }
+    let shortcut: Shortcut = raw.parse().map_err(|_| format!("“{raw}” isn't a shortcut NOVA understands."))?;
+    if !shortcut.mods.intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER) {
+        return Err("Combine a key with Ctrl, Alt or Win, so normal typing isn't intercepted.".into());
+    }
+    Ok(Some(shortcut))
+}
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+struct Inner {
+    prefs: AssistantPrefs,
+    registered: Option<Shortcut>,
+    shortcut_error: Option<String>,
+    /// Where NOVA last put the dot; a move to anywhere else is a user drag.
+    placed_at: Option<PhysicalPosition<i32>>,
+    /// Latest dragged position, saved once the drag settles.
+    dragged_to: Option<PhysicalPosition<i32>>,
+    /// The panel is shown, or will be as soon as its page has loaded.
+    panel_open: bool,
+    panel_loaded: bool,
+    panel_creating: bool,
+    /// The panel corner nearest the dot; the panel grows out of it.
+    panel_origin: Corner,
+}
+
+#[derive(Default)]
+pub struct AssistantState {
+    inner: Mutex<Inner>,
+    settling: AtomicBool,
+    drag_generation: AtomicU64,
+    collapse_generation: AtomicU64,
+    watching_fullscreen: AtomicBool,
+}
+
+impl AssistantState {
+    fn lock(&self) -> MutexGuard<'_, Inner> {
+        // A panic elsewhere must not take the assistant down with it.
+        self.inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+fn state<R: Runtime>(app: &AppHandle<R>) -> &AssistantState {
+    app.state::<AssistantState>().inner()
+}
+
+/// Whether closing the main window should keep NOVA running for the assistant.
+pub fn runs_in_background<R: Runtime>(app: &AppHandle<R>) -> bool {
+    state(app).lock().prefs.background
+}
+
+// ---------------------------------------------------------------------------
+// Geometry (physical pixels on the virtual desktop)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Rect {
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+}
+
+impl Rect {
+    fn right(self) -> i32 {
+        self.x + self.w
+    }
+    fn bottom(self) -> i32 {
+        self.y + self.h
+    }
+    fn center(self) -> (i32, i32) {
+        (self.x + self.w / 2, self.y + self.h / 2)
+    }
+    fn contains(self, (x, y): (i32, i32)) -> bool {
+        x >= self.x && x < self.right() && y >= self.y && y < self.bottom()
+    }
+}
+
+/// A monitor's work area (the desktop without the taskbar) and its scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Screen {
+    pub work: Rect,
+    pub scale: f64,
+}
+
+fn px(logical: f64, scale: f64) -> i32 {
+    (logical * scale).round() as i32
+}
+
+/// `value` limited to `lo..=hi`; `lo` wins if the range is empty.
+fn fit(value: i32, lo: i32, hi: i32) -> i32 {
+    value.min(hi).max(lo)
+}
+
+fn dot_side(screen: Screen, size: DotSize) -> i32 {
+    px(size.window_side(), screen.scale)
+}
+
+/// Top-left of the dot window in `corner` of the screen's work area.
+pub fn corner_position(screen: Screen, corner: Corner, size: DotSize) -> (i32, i32) {
+    let side = dot_side(screen, size);
+    let inset = px(EDGE_GAP - DOT_MARGIN, screen.scale);
+    let work = screen.work;
+    let (left, right) = (work.x + inset, work.right() - side - inset);
+    let (top, bottom) = (work.y + inset, work.bottom() - side - inset);
+    match corner {
+        Corner::BottomRight => (right, bottom),
+        Corner::BottomLeft => (left, bottom),
+        Corner::TopRight => (right, top),
+        Corner::TopLeft => (left, top),
+    }
+}
+
+/// Keeps a dragged dot on screen: its glow may overhang the work area, the dot may not.
+pub fn clamp_dot(screen: Screen, size: DotSize, (x, y): (i32, i32)) -> (i32, i32) {
+    let side = dot_side(screen, size);
+    let margin = px(DOT_MARGIN, screen.scale);
+    let work = screen.work;
+    (fit(x, work.x - margin, work.right() - side + margin), fit(y, work.y - margin, work.bottom() - side + margin))
+}
+
+fn screen_containing(screens: &[Screen], point: (i32, i32)) -> Option<Screen> {
+    screens.iter().copied().find(|s| s.work.contains(point))
+}
+
+/// The screen showing `point`, or the closest one (e.g. for a dot dropped on the taskbar).
+pub fn nearest_screen(screens: &[Screen], point: (i32, i32)) -> Option<Screen> {
+    screen_containing(screens, point).or_else(|| {
+        screens.iter().copied().min_by_key(|s| {
+            let dx = (s.work.x - point.0).max(point.0 - s.work.right()).max(0) as i64;
+            let dy = (s.work.y - point.1).max(point.1 - s.work.bottom()).max(0) as i64;
+            dx * dx + dy * dy
+        })
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PanelPlacement {
+    /// The panel window, shadow room included.
+    pub window: Rect,
+    /// The panel corner nearest the dot.
+    pub origin: Corner,
+}
+
+/// Opens the panel beside the dot: above it when the dot sits in the lower
+/// half of the screen, aligned with the dot's outer edge, always inside the
+/// work area.
+pub fn panel_placement(screen: Screen, dot_window: Rect) -> PanelPlacement {
+    let s = screen.scale;
+    let work = screen.work;
+    let margin = px(DOT_MARGIN, s);
+    let dot = Rect { x: dot_window.x + margin, y: dot_window.y + margin, w: dot_window.w - 2 * margin, h: dot_window.h - 2 * margin };
+    let (pad, gap) = (px(PANEL_PAD, s), px(PANEL_GAP, s));
+    let (dot_x, dot_y) = dot.center();
+    let (mid_x, mid_y) = work.center();
+    let opens_down = dot_y < mid_y;
+    let aligns_left = dot_x < mid_x;
+
+    let width = px(PANEL_WIDTH, s).min(work.w - 2 * pad);
+    let room = if opens_down { work.bottom() - pad - (dot.bottom() + gap) } else { dot.y - gap - (work.y + pad) };
+    let height = px(PANEL_MAX_HEIGHT, s).min(room).max(px(PANEL_MIN_HEIGHT, s).min(work.h - 2 * pad));
+
+    let x = if aligns_left { dot.x } else { dot.right() - width };
+    let y = if opens_down { dot.bottom() + gap } else { dot.y - gap - height };
+    let x = fit(x, work.x + pad, work.right() - pad - width);
+    let y = fit(y, work.y + pad, work.bottom() - pad - height);
+
+    let origin = match (opens_down, aligns_left) {
+        (true, true) => Corner::TopLeft,
+        (true, false) => Corner::TopRight,
+        (false, true) => Corner::BottomLeft,
+        (false, false) => Corner::BottomRight,
+    };
+    PanelPlacement { window: Rect { x: x - pad, y: y - pad, w: width + 2 * pad, h: height + 2 * pad }, origin }
+}
+
+fn screen_of(monitor: &Monitor) -> Screen {
+    let area = monitor.work_area();
+    Screen {
+        work: Rect { x: area.position.x, y: area.position.y, w: area.size.width as i32, h: area.size.height as i32 },
+        scale: monitor.scale_factor(),
+    }
+}
+
+fn screens<R: Runtime>(app: &AppHandle<R>) -> Vec<Screen> {
+    app.available_monitors().map(|monitors| monitors.iter().map(screen_of).collect()).unwrap_or_default()
+}
+
+fn primary_screen<R: Runtime>(app: &AppHandle<R>) -> Option<Screen> {
+    app.primary_monitor().ok().flatten().map(|m| screen_of(&m)).or_else(|| screens(app).into_iter().next())
+}
+
+/// Where the dot belongs: its dragged position while that is still on a
+/// connected screen, otherwise the chosen corner of the primary screen.
+fn dot_target<R: Runtime>(app: &AppHandle<R>, prefs: &AssistantPrefs) -> Option<(Screen, Rect)> {
+    let all = screens(app);
+    let dragged = prefs.position.and_then(|p| {
+        let half = px(prefs.size.window_side(), 1.0) / 2;
+        screen_containing(&all, (p.x + half, p.y + half)).map(|screen| (screen, clamp_dot(screen, prefs.size, (p.x, p.y))))
+    });
+    let (screen, (x, y)) = match dragged {
+        Some(found) => found,
+        None => {
+            let screen = primary_screen(app)?;
+            (screen, corner_position(screen, prefs.corner, prefs.size))
+        }
+    };
+    let side = dot_side(screen, prefs.size);
+    Some((screen, Rect { x, y, w: side, h: side }))
+}
+
+/// The dot's window rectangle: where it is, or where it would be while hidden.
+fn dot_rect<R: Runtime>(app: &AppHandle<R>) -> Option<(Screen, Rect)> {
+    if let Some(dot) = app.get_webview_window(DOT_LABEL) {
+        if let (Ok(pos), Ok(size)) = (dot.outer_position(), dot.outer_size()) {
+            let rect = Rect { x: pos.x, y: pos.y, w: size.width as i32, h: size.height as i32 };
+            if let Some(screen) = nearest_screen(&screens(app), rect.center()) {
+                return Some((screen, rect));
+            }
+        }
+    }
+    let prefs = state(app).lock().prefs.clone();
+    dot_target(app, &prefs)
+}
+
+// ---------------------------------------------------------------------------
+// Windows
+// ---------------------------------------------------------------------------
+
+/// The windows animate themselves; Windows' own show/hide animation would play on top.
+#[cfg(windows)]
+fn disable_system_animations<R: Runtime>(window: &WebviewWindow<R>) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_TRANSITIONS_FORCEDISABLED};
+    if let Ok(hwnd) = window.hwnd() {
+        let disabled: i32 = 1;
+        // SAFETY: valid window handle; the attribute value is a BOOL (i32) whose size is passed exactly.
+        let _ = unsafe {
+            DwmSetWindowAttribute(HWND(hwnd.0), DWMWA_TRANSITIONS_FORCEDISABLED, &disabled as *const i32 as *const _, size_of::<i32>() as u32)
+        };
+    }
+}
+
+#[cfg(not(windows))]
+fn disable_system_animations<R: Runtime>(_: &WebviewWindow<R>) {}
+
+/// Creates the dot window, hidden until its page reports ready. Must not run
+/// on the main thread's event handlers (WebView2 deadlocks there).
+fn create_dot<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
+    let size = state(app).lock().prefs.size;
+    let side = size.window_side();
+    let window = WebviewWindowBuilder::new(app, DOT_LABEL, WebviewUrl::App("dot.html".into()))
+        .title("NOVA AI")
+        .inner_size(side, side)
+        .resizable(false)
+        .maximizable(false)
+        .minimizable(false)
+        .decorations(false)
+        .transparent(true)
+        .shadow(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .focused(false)
+        .visible(false)
+        .build()?;
+    disable_system_animations(&window);
+    place_dot(app, &window);
+    Ok(())
+}
+
+fn place_dot<R: Runtime>(app: &AppHandle<R>, window: &WebviewWindow<R>) {
+    let prefs = state(app).lock().prefs.clone();
+    let Some((_, rect)) = dot_target(app, &prefs) else { return };
+    let pos = PhysicalPosition::new(rect.x, rect.y);
+    state(app).lock().placed_at = Some(pos);
+    // Moving first lets a DPI change between monitors happen before sizing; then pin the position again.
+    let _ = window.set_position(pos);
+    let _ = window.set_size(PhysicalSize::new(rect.w as u32, rect.h as u32));
+    let _ = window.set_position(pos);
+}
+
+fn create_panel<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<WebviewWindow<R>> {
+    let window = WebviewWindowBuilder::new(app, PANEL_LABEL, WebviewUrl::App("assistant.html".into()))
+        .title("NOVA AI")
+        .inner_size(PANEL_WIDTH + 2.0 * PANEL_PAD, PANEL_MAX_HEIGHT + 2.0 * PANEL_PAD)
+        .resizable(false)
+        .maximizable(false)
+        .minimizable(false)
+        .decorations(false)
+        .transparent(true)
+        .shadow(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .visible(false)
+        .build()?;
+    disable_system_animations(&window);
+    Ok(window)
+}
+
+fn position_panel<R: Runtime>(app: &AppHandle<R>, panel: &WebviewWindow<R>) -> Corner {
+    let Some((screen, dot)) = dot_rect(app) else { return Corner::default() };
+    let placement = panel_placement(screen, dot);
+    let rect = placement.window;
+    let pos = PhysicalPosition::new(rect.x, rect.y);
+    let _ = panel.set_position(pos);
+    let _ = panel.set_size(PhysicalSize::new(rect.w as u32, rect.h as u32));
+    let _ = panel.set_position(pos);
+    state(app).lock().panel_origin = placement.origin;
+    placement.origin
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExpandEvent {
+    origin: Corner,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CollapseEvent {
+    generation: u64,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PanelEvent {
+    open: bool,
+}
+
+fn show_panel<R: Runtime>(app: &AppHandle<R>, panel: &WebviewWindow<R>, origin: Corner) {
+    let _ = panel.show();
+    crate::desktop::set_page_visible(panel, true);
+    let _ = panel.set_focus();
+    let _ = app.emit_to(PANEL_LABEL, EVENT_EXPAND, ExpandEvent { origin });
+}
+
+/// Opens the panel next to the dot (creating it on first use).
+pub fn expand<R: Runtime>(app: &AppHandle<R>) {
+    let state = state(app);
+    state.collapse_generation.fetch_add(1, Ordering::SeqCst);
+    let (loaded, creating) = {
+        let mut inner = state.lock();
+        inner.panel_open = true;
+        (inner.panel_loaded, inner.panel_creating)
+    };
+    let _ = app.emit_to(DOT_LABEL, EVENT_PANEL, PanelEvent { open: true });
+    if let Some(panel) = app.get_webview_window(PANEL_LABEL) {
+        let origin = position_panel(app, &panel);
+        if loaded {
+            show_panel(app, &panel, origin);
+        }
+        return;
+    }
+    if creating {
+        return;
+    }
+    state.lock().panel_creating = true;
+    // Windows are created off the main thread (WebView2 deadlocks in event handlers).
+    // The panel shows itself once its page is ready: see `assistant_panel_ready`.
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let created = create_panel(&app);
+        self::state(&app).lock().panel_creating = false;
+        match created {
+            Ok(panel) => {
+                position_panel(&app, &panel);
+            }
+            Err(error) => {
+                eprintln!("[NOVA] assistant panel unavailable: {error}");
+                self::state(&app).lock().panel_open = false;
+                let _ = app.emit_to(DOT_LABEL, EVENT_PANEL, PanelEvent { open: false });
+            }
+        }
+    });
+}
+
+/// Asks the panel to play its exit animation; it then reports back through
+/// `assistant_panel_hidden`. Hides it anyway if it never does.
+pub fn request_collapse<R: Runtime>(app: &AppHandle<R>) {
+    let state = state(app);
+    if !state.lock().panel_open {
+        return;
+    }
+    let generation = state.collapse_generation.fetch_add(1, Ordering::SeqCst) + 1;
+    let _ = app.emit_to(PANEL_LABEL, EVENT_COLLAPSE, CollapseEvent { generation });
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(COLLAPSE_FALLBACK);
+        hide_panel(&app, generation);
+    });
+}
+
+/// Hides the panel unless it was reopened since `generation` was issued.
+fn hide_panel<R: Runtime>(app: &AppHandle<R>, generation: u64) {
+    let state = state(app);
+    if state.collapse_generation.load(Ordering::SeqCst) != generation {
+        return;
+    }
+    state.lock().panel_open = false;
+    if let Some(panel) = app.get_webview_window(PANEL_LABEL) {
+        let _ = panel.hide();
+        crate::desktop::set_page_visible(&panel, false);
+    }
+    let _ = app.emit_to(DOT_LABEL, EVENT_PANEL, PanelEvent { open: false });
+}
+
+/// Dot click, tray menu, command palette.
+pub fn toggle<R: Runtime>(app: &AppHandle<R>) {
+    if state(app).lock().panel_open {
+        request_collapse(app);
+    } else {
+        expand(app);
+    }
+}
+
+/// Global shortcut: opens the panel, focuses it if it lost focus, closes it otherwise.
+pub fn on_shortcut<R: Runtime>(app: &AppHandle<R>) {
+    let open = state(app).lock().panel_open;
+    match app.get_webview_window(PANEL_LABEL) {
+        Some(panel) if open && !panel.is_focused().unwrap_or(false) => {
+            let _ = panel.set_focus();
+        }
+        _ => toggle(app),
+    }
+}
+
+fn register_shortcut<R: Runtime>(app: &AppHandle<R>, shortcut: Option<Shortcut>) -> Result<(), String> {
+    let shortcuts = app.global_shortcut();
+    let previous = state(app).lock().registered.take();
+    if let Some(previous) = previous {
+        let _ = shortcuts.unregister(previous);
+    }
+    if let Some(shortcut) = shortcut {
+        shortcuts.register(shortcut).map_err(|_| "This shortcut is already used by another app. Choose a different one.".to_string())?;
+        state(app).lock().registered = Some(shortcut);
+    }
+    Ok(())
+}
+
+/// Startup: show the dot and register the shortcut according to the saved preferences.
+pub fn init<R: Runtime>(app: &AppHandle<R>, prefs: AssistantPrefs) {
+    let shortcut = parse_shortcut(&prefs.shortcut).ok().flatten();
+    let enabled = prefs.enabled;
+    state(app).lock().prefs = prefs;
+    if enabled {
+        if let Err(error) = create_dot(app) {
+            eprintln!("[NOVA] assistant dot unavailable: {error}");
+        }
+    }
+    let error = register_shortcut(app, shortcut).err();
+    state(app).lock().shortcut_error = error;
+    let watch = {
+        let inner = state(app).lock();
+        inner.prefs.enabled && inner.prefs.hide_in_fullscreen
+    };
+    if watch {
+        watch_fullscreen(app);
+    }
+}
+
+/// Whether Windows reports a fullscreen app, game or presentation in front.
+#[cfg(windows)]
+fn fullscreen_in_front() -> bool {
+    use windows::Win32::UI::Shell::{SHQueryUserNotificationState, QUNS_BUSY, QUNS_PRESENTATION_MODE, QUNS_RUNNING_D3D_FULL_SCREEN};
+    // SAFETY: a read-only query of the shell's notification state.
+    matches!(unsafe { SHQueryUserNotificationState() }, Ok(s) if s == QUNS_BUSY || s == QUNS_RUNNING_D3D_FULL_SCREEN || s == QUNS_PRESENTATION_MODE)
+}
+
+#[cfg(not(windows))]
+fn fullscreen_in_front() -> bool {
+    false
+}
+
+/// While "hide in fullscreen" is on, checks every two seconds (a cheap shell
+/// query) and hides or shows the dot. Stops when the option is turned off.
+fn watch_fullscreen<R: Runtime>(app: &AppHandle<R>) {
+    let assistant = state(app);
+    if assistant.watching_fullscreen.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let mut hidden = false;
+        loop {
+            let (enabled, open) = {
+                let inner = self::state(&app).lock();
+                (inner.prefs.enabled && inner.prefs.hide_in_fullscreen, inner.panel_open)
+            };
+            let hide = enabled && !open && fullscreen_in_front();
+            if hide != hidden {
+                if let Some(dot) = app.get_webview_window(DOT_LABEL) {
+                    let _ = if hide { dot.hide() } else { dot.show() };
+                }
+                hidden = hide;
+            }
+            if !enabled {
+                break;
+            }
+            std::thread::sleep(Duration::from_secs(2));
+        }
+        self::state(&app).watching_fullscreen.store(false, Ordering::SeqCst);
+    });
+}
+
+/// Brings the windows in line with changed preferences.
+fn apply<R: Runtime>(app: &AppHandle<R>, previous: &AssistantPrefs, prefs: &AssistantPrefs) {
+    if prefs.hide_in_fullscreen && prefs.enabled {
+        watch_fullscreen(app);
+    }
+    match (prefs.enabled, app.get_webview_window(DOT_LABEL)) {
+        (true, Some(dot)) => {
+            place_dot(app, &dot);
+            if previous.size != prefs.size {
+                let _ = app.emit_to(DOT_LABEL, EVENT_DOT, dot_view(app));
+            }
+        }
+        (true, None) => {
+            if let Err(error) = create_dot(app) {
+                eprintln!("[NOVA] assistant dot unavailable: {error}");
+            }
+        }
+        (false, Some(dot)) => {
+            let _ = dot.destroy();
+        }
+        (false, None) => {}
+    }
+    if state(app).lock().panel_open {
+        if let Some(panel) = app.get_webview_window(PANEL_LABEL) {
+            position_panel(app, &panel);
+        }
+    }
+}
+
+/// Called for every move of the dot window. Moves NOVA made itself are
+/// ignored; a drag is saved once the mouse button is up and the dot rests.
+pub fn on_dot_moved<R: Runtime>(app: &AppHandle<R>, pos: PhysicalPosition<i32>) {
+    let state = state(app);
+    {
+        let mut inner = state.lock();
+        if inner.placed_at.is_some_and(|placed| (placed.x - pos.x).abs() <= 2 && (placed.y - pos.y).abs() <= 2) {
+            return;
+        }
+        inner.dragged_to = Some(pos);
+    }
+    state.drag_generation.fetch_add(1, Ordering::SeqCst);
+    if state.settling.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let state = self::state(&app);
+        loop {
+            let seen = state.drag_generation.load(Ordering::SeqCst);
+            std::thread::sleep(DRAG_SETTLE);
+            if state.drag_generation.load(Ordering::SeqCst) == seen && !mouse_button_down() {
+                break;
+            }
+        }
+        state.settling.store(false, Ordering::SeqCst);
+        settle_drag(&app);
+    });
+}
+
+fn settle_drag<R: Runtime>(app: &AppHandle<R>) {
+    let (dragged, size) = {
+        let mut inner = state(app).lock();
+        (inner.dragged_to.take(), inner.prefs.size)
+    };
+    let Some(pos) = dragged else { return };
+    let all = screens(app);
+    let half = px(size.window_side(), 1.0) / 2;
+    let Some(screen) = nearest_screen(&all, (pos.x + half, pos.y + half)) else { return };
+    let (x, y) = clamp_dot(screen, size, (pos.x, pos.y));
+    let prefs = {
+        let mut inner = state(app).lock();
+        inner.prefs.position = Some(Point { x, y });
+        inner.prefs.clone()
+    };
+    save_prefs(app, &prefs);
+    if let Some(dot) = app.get_webview_window(DOT_LABEL) {
+        place_dot(app, &dot);
+    }
+    if state(app).lock().panel_open {
+        if let Some(panel) = app.get_webview_window(PANEL_LABEL) {
+            position_panel(app, &panel);
+        }
+    }
+    let _ = app.emit(EVENT_PREFS, status(app));
+}
+
+#[cfg(windows)]
+fn mouse_button_down() -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON};
+    // Both buttons: GetAsyncKeyState reports physical buttons, and left-handed setups swap them.
+    // SAFETY: reads global key state; no pointers involved.
+    unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) < 0 || GetAsyncKeyState(VK_RBUTTON.0 as i32) < 0 }
+}
+
+#[cfg(not(windows))]
+fn mouse_button_down() -> bool {
+    false
+}
+
+// ---------------------------------------------------------------------------
+// Menus
+// ---------------------------------------------------------------------------
+
+const MENU_TALK: &str = "assistant-talk";
+const MENU_OPEN: &str = "assistant-open";
+const MENU_SETTINGS: &str = "assistant-settings";
+const MENU_HIDE: &str = "assistant-hide";
+
+/// Handles the assistant's items in the tray and dot menus.
+pub fn on_menu_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
+    match event.id().as_ref() {
+        MENU_TALK => toggle(app),
+        MENU_OPEN => open_main(app, None),
+        MENU_SETTINGS => open_main(app, Some("assistant")),
+        MENU_HIDE => {
+            // Off the main thread: hiding destroys the window that owns this menu.
+            let app = app.clone();
+            std::thread::spawn(move || hide_dot(&app));
+        }
+        _ => {}
+    }
+}
+
+/// The tray's "Talk to NOVA" item.
+pub fn tray_item<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<MenuItem<R>> {
+    MenuItem::with_id(app, MENU_TALK, "Talk to NOVA", true, None::<&str>)
+}
+
+fn hide_dot<R: Runtime>(app: &AppHandle<R>) {
+    let (previous, prefs) = {
+        let mut inner = state(app).lock();
+        let previous = inner.prefs.clone();
+        inner.prefs.enabled = false;
+        (previous, inner.prefs.clone())
+    };
+    save_prefs(app, &prefs);
+    apply(app, &previous, &prefs);
+    let _ = app.emit(EVENT_PREFS, status(app));
+    let active = state(app).lock().registered.is_some();
+    let body = if active {
+        format!("Press {} to talk to NOVA, or turn the dot back on in Settings → Assistant.", prefs.shortcut)
+    } else {
+        "Turn it back on in Settings → Assistant.".to_string()
+    };
+    let _ = app.notification().builder().title("NOVA dot hidden").body(body).show();
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NavigateEvent {
+    route: &'static str,
+    section: &'static str,
+}
+
+fn open_main<R: Runtime>(app: &AppHandle<R>, section: Option<&'static str>) {
+    // The always-on-top panel would cover the window it opens.
+    request_collapse(app);
+    crate::desktop::show_main_window(app);
+    if let Some(section) = section {
+        let _ = app.emit_to("main", EVENT_NAVIGATE, NavigateEvent { route: "settings", section });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Commands
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssistantStatus {
+    enabled: bool,
+    corner: Corner,
+    size: DotSize,
+    shortcut: String,
+    background: bool,
+    hide_in_fullscreen: bool,
+    /// The dot sits where the user dragged it instead of in `corner`.
+    custom_position: bool,
+    /// Why the saved shortcut couldn't be registered at startup.
+    shortcut_error: Option<String>,
+    default_shortcut: &'static str,
+    panel_open: bool,
+}
+
+fn status<R: Runtime>(app: &AppHandle<R>) -> AssistantStatus {
+    let inner = state(app).lock();
+    AssistantStatus {
+        enabled: inner.prefs.enabled,
+        corner: inner.prefs.corner,
+        size: inner.prefs.size,
+        shortcut: inner.prefs.shortcut.clone(),
+        background: inner.prefs.background,
+        hide_in_fullscreen: inner.prefs.hide_in_fullscreen,
+        custom_position: inner.prefs.position.is_some(),
+        shortcut_error: inner.shortcut_error.clone(),
+        default_shortcut: DEFAULT_SHORTCUT,
+        panel_open: inner.panel_open,
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PrefsUpdate {
+    enabled: bool,
+    corner: Corner,
+    size: DotSize,
+    shortcut: String,
+    background: bool,
+    #[serde(default)]
+    hide_in_fullscreen: bool,
+}
+
+#[tauri::command]
+pub async fn assistant_status<R: Runtime>(app: AppHandle<R>) -> CommandResult<AssistantStatus> {
+    Ok(status(&app))
+}
+
+/// Applies new preferences. A shortcut that can't be registered is rejected
+/// and nothing changes; the previous shortcut stays active.
+#[tauri::command]
+pub async fn assistant_configure<R: Runtime>(app: AppHandle<R>, update: PrefsUpdate) -> CommandResult<AssistantStatus> {
+    let shortcut_text = update.shortcut.trim().to_string();
+    let shortcut = parse_shortcut(&shortcut_text)?;
+    let previous = state(&app).lock().prefs.clone();
+
+    if shortcut_text != previous.shortcut || state(&app).lock().shortcut_error.is_some() {
+        if let Err(error) = register_shortcut(&app, shortcut) {
+            let restored = register_shortcut(&app, parse_shortcut(&previous.shortcut).ok().flatten()).err();
+            state(&app).lock().shortcut_error = restored;
+            return Err(error);
+        }
+        state(&app).lock().shortcut_error = None;
+    }
+
+    let prefs = {
+        let mut inner = state(&app).lock();
+        let prefs = &mut inner.prefs;
+        // Picking a corner moves a dragged dot back into it.
+        if update.corner != prefs.corner {
+            prefs.position = None;
+        }
+        prefs.enabled = update.enabled;
+        prefs.corner = update.corner;
+        prefs.size = update.size;
+        prefs.shortcut = shortcut_text;
+        prefs.background = update.background;
+        prefs.hide_in_fullscreen = update.hide_in_fullscreen;
+        prefs.clone()
+    };
+    save_prefs(&app, &prefs);
+    apply(&app, &previous, &prefs);
+    let status = status(&app);
+    let _ = app.emit(EVENT_PREFS, status.clone());
+    Ok(status)
+}
+
+/// Moves a dragged dot back into its corner.
+#[tauri::command]
+pub async fn assistant_reset_position<R: Runtime>(app: AppHandle<R>) -> CommandResult<AssistantStatus> {
+    let prefs = {
+        let mut inner = state(&app).lock();
+        inner.prefs.position = None;
+        inner.prefs.clone()
+    };
+    save_prefs(&app, &prefs);
+    apply(&app, &prefs, &prefs);
+    let status = status(&app);
+    let _ = app.emit(EVENT_PREFS, status.clone());
+    Ok(status)
+}
+
+#[tauri::command]
+pub async fn assistant_toggle<R: Runtime>(app: AppHandle<R>) -> CommandResult<()> {
+    toggle(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn assistant_collapse<R: Runtime>(app: AppHandle<R>) -> CommandResult<()> {
+    request_collapse(&app);
+    Ok(())
+}
+
+/// The panel finished its exit animation for `generation`.
+#[tauri::command]
+pub async fn assistant_panel_hidden<R: Runtime>(app: AppHandle<R>, generation: u64) -> CommandResult<()> {
+    hide_panel(&app, generation);
+    Ok(())
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DotView {
+    size: DotSize,
+    panel_open: bool,
+}
+
+fn dot_view<R: Runtime>(app: &AppHandle<R>) -> DotView {
+    let inner = state(app).lock();
+    DotView { size: inner.prefs.size, panel_open: inner.panel_open }
+}
+
+/// The dot's page has loaded: show the window.
+#[tauri::command]
+pub async fn assistant_dot_ready<R: Runtime>(app: AppHandle<R>, window: WebviewWindow<R>) -> CommandResult<DotView> {
+    if window.label() != DOT_LABEL {
+        return Err("only the dot window can do this".into());
+    }
+    window.show().map_err(|e| e.to_string())?;
+    Ok(dot_view(&app))
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PanelView {
+    open: bool,
+    origin: Corner,
+}
+
+/// The panel's page has loaded: show it if it was requested meanwhile.
+#[tauri::command]
+pub async fn assistant_panel_ready<R: Runtime>(app: AppHandle<R>, window: WebviewWindow<R>) -> CommandResult<PanelView> {
+    if window.label() != PANEL_LABEL {
+        return Err("only the assistant panel can do this".into());
+    }
+    let (open, origin) = {
+        let mut inner = state(&app).lock();
+        inner.panel_loaded = true;
+        (inner.panel_open, inner.panel_origin)
+    };
+    if open {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+    Ok(PanelView { open, origin })
+}
+
+/// The dot's right-click menu. Synchronous so the menu runs on the main thread.
+#[tauri::command]
+pub fn assistant_dot_menu<R: Runtime>(app: AppHandle<R>, window: WebviewWindow<R>) -> CommandResult<()> {
+    let open = state(&app).lock().panel_open;
+    let build = || -> tauri::Result<Menu<R>> {
+        let talk = MenuItem::with_id(&app, MENU_TALK, if open { "Close NOVA AI" } else { "Talk to NOVA" }, true, None::<&str>)?;
+        let main = MenuItem::with_id(&app, MENU_OPEN, "Open NOVA", true, None::<&str>)?;
+        let settings = MenuItem::with_id(&app, MENU_SETTINGS, "Assistant settings…", true, None::<&str>)?;
+        let hide = MenuItem::with_id(&app, MENU_HIDE, "Hide the dot", true, None::<&str>)?;
+        Menu::with_items(&app, &[&talk, &main, &settings, &PredefinedMenuItem::separator(&app)?, &hide])
+    };
+    let menu = build().map_err(|e| e.to_string())?;
+    window.popup_menu(&menu).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn assistant_open_main<R: Runtime>(app: AppHandle<R>, section: Option<String>) -> CommandResult<()> {
+    let section = match section.as_deref() {
+        None => None,
+        Some("assistant") => Some("assistant"),
+        Some("ai") => Some("ai"),
+        Some(other) => return Err(format!("unknown settings section \"{other}\"")),
+    };
+    open_main(&app, section);
+    Ok(())
+}
+
+#[derive(Debug, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Appearance {
+    accent: Option<Value>,
+    transparency: Option<bool>,
+    motion: Option<String>,
+    display_name: Option<String>,
+}
+
+/// The appearance subset of the persisted settings document ({ state, version }).
+fn appearance_from(document: &Value) -> Appearance {
+    let settings = document.get("state").unwrap_or(document);
+    Appearance {
+        accent: settings.get("accent").filter(|v| v.is_object()).cloned(),
+        transparency: settings.get("transparency").and_then(Value::as_bool),
+        motion: settings.get("motion").and_then(Value::as_str).map(|m| m.chars().take(16).collect()),
+        display_name: settings.get("displayName").and_then(Value::as_str).map(|n| n.chars().take(40).collect()),
+    }
+}
+
+/// Accent, motion and name for the assistant windows, which don't get the
+/// full settings document.
+#[tauri::command]
+pub async fn assistant_appearance(db: tauri::State<'_, Database>) -> CommandResult<Appearance> {
+    let raw = db.with(|conn| crate::storage::kv_get(conn, SETTINGS_KEY))?;
+    Ok(raw.and_then(|r| serde_json::from_str::<Value>(&r).ok()).map(|doc| appearance_from(&doc)).unwrap_or_default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const HD: Screen = Screen { work: Rect { x: 0, y: 0, w: 1920, h: 1040 }, scale: 1.0 };
+    /// 1366×768 laptop at 125 % with a 40 px taskbar.
+    const LAPTOP: Screen = Screen { work: Rect { x: 0, y: 0, w: 1366, h: 728 }, scale: 1.25 };
+
+    #[test]
+    fn corners_keep_the_dot_inside_the_work_area() {
+        // 52 px dot + 2×14 px glow room = 80 px window, 4 px inset (18 px visible gap).
+        assert_eq!(corner_position(HD, Corner::BottomRight, DotSize::Medium), (1920 - 80 - 4, 1040 - 80 - 4));
+        assert_eq!(corner_position(HD, Corner::TopLeft, DotSize::Medium), (4, 4));
+        assert_eq!(corner_position(HD, Corner::BottomLeft, DotSize::Large), (4, 1040 - 88 - 4));
+        // Scaled: 80 × 1.25 = 100 px window, inset 5 px.
+        assert_eq!(corner_position(LAPTOP, Corner::TopRight, DotSize::Medium), (1366 - 100 - 5, 5));
+        let second = Screen { work: Rect { x: 1920, y: -200, w: 1280, h: 984 }, scale: 1.0 };
+        assert_eq!(corner_position(second, Corner::TopLeft, DotSize::Small), (1924, -196));
+    }
+
+    #[test]
+    fn dragged_dots_stay_on_screen() {
+        assert_eq!(clamp_dot(HD, DotSize::Medium, (500, 400)), (500, 400));
+        // The glow may overhang by 14 px, the dot itself may not.
+        assert_eq!(clamp_dot(HD, DotSize::Medium, (-60, 2000)), (-14, 1040 - 80 + 14));
+    }
+
+    #[test]
+    fn finds_the_screen_under_a_point() {
+        let right = Screen { work: Rect { x: 1920, y: 0, w: 1920, h: 1040 }, scale: 1.5 };
+        let all = [HD, right];
+        assert_eq!(nearest_screen(&all, (2500, 300)), Some(right));
+        // Dropped on the taskbar below the left screen's work area.
+        assert_eq!(nearest_screen(&all, (300, 1060)), Some(HD));
+        assert_eq!(nearest_screen(&[], (0, 0)), None);
+    }
+
+    #[test]
+    fn panel_opens_above_a_bottom_right_dot() {
+        let (x, y) = corner_position(HD, Corner::BottomRight, DotSize::Medium);
+        let dot = Rect { x, y, w: 80, h: 80 };
+        let placement = panel_placement(HD, dot);
+        let panel = placement.window;
+        assert_eq!(placement.origin, Corner::BottomRight);
+        assert_eq!((panel.w, panel.h), (460 + 32, 620 + 32));
+        // Visible panel: right edge flush with the dot, 18 px above the dot.
+        assert_eq!(panel.right() - 16, dot.right() - 14);
+        assert_eq!(panel.bottom() - 16, dot.y + 14 - 18);
+        // Its shadow room never reaches the dot itself.
+        assert!(panel.bottom() <= dot.y + 14);
+    }
+
+    #[test]
+    fn panel_opens_below_a_top_left_dot() {
+        let dot = Rect { x: 4, y: 4, w: 80, h: 80 };
+        let placement = panel_placement(HD, dot);
+        assert_eq!(placement.origin, Corner::TopLeft);
+        assert_eq!(placement.window.x + 16, dot.x + 14);
+        assert_eq!(placement.window.y + 16, dot.bottom() - 14 + 18);
+    }
+
+    #[test]
+    fn panel_shrinks_to_fit_small_screens() {
+        let (x, y) = corner_position(LAPTOP, Corner::BottomRight, DotSize::Medium);
+        let dot = Rect { x, y, w: 100, h: 100 };
+        let panel = panel_placement(LAPTOP, dot).window;
+        assert!(panel.y >= LAPTOP.work.y && panel.bottom() <= LAPTOP.work.bottom());
+        assert!(panel.x >= 0 && panel.right() <= LAPTOP.work.right());
+        assert!(panel.h < px(PANEL_MAX_HEIGHT + 2.0 * PANEL_PAD, 1.25));
+    }
+
+    #[test]
+    fn validates_shortcuts() {
+        assert!(parse_shortcut("Ctrl+Alt+Space").unwrap().is_some());
+        assert!(parse_shortcut("Super+Shift+N").unwrap().is_some());
+        assert_eq!(parse_shortcut("  ").unwrap(), None);
+        assert!(parse_shortcut("Shift+A").is_err());
+        assert!(parse_shortcut("A").is_err());
+        assert!(parse_shortcut("Ctrl+Nope").is_err());
+        assert!(parse_shortcut(&"Ctrl+".repeat(20)).is_err());
+    }
+
+    #[test]
+    fn preferences_fill_in_defaults() {
+        let prefs: AssistantPrefs = serde_json::from_str(r#"{"corner":"topLeft","position":{"x":-10,"y":20}}"#).unwrap();
+        assert_eq!(prefs.corner, Corner::TopLeft);
+        assert_eq!(prefs.position, Some(Point { x: -10, y: 20 }));
+        assert!(prefs.enabled && !prefs.background);
+        assert_eq!(prefs.shortcut, DEFAULT_SHORTCUT);
+        assert!(serde_json::from_str::<PrefsUpdate>(r#"{"enabled":true,"corner":"topLeft","size":"small","shortcut":"","background":false,"position":{"x":0,"y":0}}"#).is_err());
+    }
+
+    #[test]
+    fn appearance_reads_only_its_fields() {
+        let doc = serde_json::json!({
+            "state": { "accent": { "kind": "preset", "id": "blue" }, "motion": "reduced", "transparency": false, "displayName": "Luca", "weatherPlace": { "name": "Berlin" } },
+            "version": 1
+        });
+        let appearance = appearance_from(&doc);
+        assert_eq!(appearance.accent, Some(serde_json::json!({ "kind": "preset", "id": "blue" })));
+        assert_eq!(appearance.motion.as_deref(), Some("reduced"));
+        assert_eq!(appearance.transparency, Some(false));
+        assert_eq!(appearance.display_name.as_deref(), Some("Luca"));
+        assert_eq!(appearance_from(&serde_json::json!("garbage")), Appearance::default());
+    }
+}
