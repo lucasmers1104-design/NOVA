@@ -7,14 +7,16 @@ import { renderWithQuery } from "@/test/render";
 import * as api from "./api";
 import { sanitizeAppearance } from "./appearance";
 import { AssistantSettings } from "./AssistantSettings";
+import { WakeSettings } from "./WakeSettings";
 import { usageLine } from "./components/NovaConversation";
 import { BREATH_MS, NovaDot, REST_MS } from "./components/NovaDot";
 import { NovaPanel } from "./components/NovaPanel";
 import { reduceReply, replyText, useConversation } from "./conversation";
 import { displayedState } from "./panel/PanelApp";
 import { captureShortcut, shortcutLabels } from "./shortcut";
-import type { AgentEvent, AgentStatus, AssistantStatus, FinderStatus } from "./types";
+import { type AgentEvent, type AgentStatus, type AssistantStatus, DEFAULT_DOT_LOOK, type FinderStatus } from "./types";
 import { speakableText } from "./voice";
+import { describeHeard, listenerLabel, type WakeStatus } from "./wake";
 
 // The assistant windows talk over Tauri events, which need the native bridge.
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => {}), emit: vi.fn(async () => {}), emitTo: vi.fn(async () => {}) }));
@@ -63,7 +65,7 @@ describe("NovaDot", () => {
 
   it("toggles on click and announces its state", () => {
     const h = handlers();
-    const { rerender } = render(<NovaDot size="medium" open={false} {...h} />);
+    const { rerender } = render(<NovaDot look={DEFAULT_DOT_LOOK} open={false} {...h} />);
     const dot = screen.getByRole("button", { name: "Talk to NOVA" });
     expect(dot).toHaveAttribute("aria-expanded", "false");
     expect(dot).toHaveAttribute("title", "Talk to NOVA");
@@ -74,13 +76,13 @@ describe("NovaDot", () => {
     expect(h.onToggle).toHaveBeenCalledTimes(1);
     expect(h.onDragStart).not.toHaveBeenCalled();
 
-    rerender(<NovaDot size="large" open {...h} />);
+    rerender(<NovaDot look={DEFAULT_DOT_LOOK} open {...h} />);
     expect(screen.getByRole("button", { name: "Close NOVA AI" })).toHaveAttribute("aria-expanded", "true");
   });
 
   it("hands longer pointer travel to a window drag instead of toggling", () => {
     const h = handlers();
-    render(<NovaDot size="small" open={false} {...h} />);
+    render(<NovaDot look={DEFAULT_DOT_LOOK} open={false} {...h} />);
     const dot = screen.getByRole("button", { name: "Talk to NOVA" });
     fireEvent.pointerDown(dot, { button: 0, buttons: 1, screenX: 100, screenY: 100 });
     fireEvent.pointerMove(dot, { buttons: 1, screenX: 110, screenY: 100 });
@@ -91,7 +93,8 @@ describe("NovaDot", () => {
 
   it("breathes in short bursts and rests in between", () => {
     vi.useFakeTimers();
-    const { rerender } = render(<NovaDot size="medium" open={false} {...handlers()} />);
+    const breathing = { ...DEFAULT_DOT_LOOK, glow: true, breathe: true };
+    const { rerender } = render(<NovaDot look={breathing} open={false} {...handlers()} />);
     const dot = screen.getByRole("button", { name: "Talk to NOVA" });
     expect(dot).toHaveAttribute("data-breathing", "true");
     act(() => vi.advanceTimersByTime(2 * BREATH_MS));
@@ -101,15 +104,34 @@ describe("NovaDot", () => {
     act(() => vi.advanceTimersByTime(BREATH_MS));
     expect(dot).toHaveAttribute("data-breathing", "false");
     // While the panel is open the ring shows instead.
-    rerender(<NovaDot size="medium" open {...handlers()} />);
+    rerender(<NovaDot look={breathing} open {...handlers()} />);
     act(() => vi.advanceTimersByTime(REST_MS));
     expect(screen.getByRole("button", { name: "Close NOVA AI" })).toHaveAttribute("data-breathing", "false");
     vi.useRealTimers();
   });
 
+  it("stays still unless it glows and may breathe", () => {
+    render(<NovaDot look={DEFAULT_DOT_LOOK} open={false} {...handlers()} />);
+    expect(screen.getByRole("button", { name: "Talk to NOVA" })).toHaveAttribute("data-breathing", "false");
+  });
+
+  it("draws the chosen look", () => {
+    const look = { ...DEFAULT_DOT_LOOK, style: "ring" as const, diameter: 30, idleOpacity: 40, color: "white", icon: false, activity: false };
+    const { container } = render(<NovaDot look={look} open={false} state="thinking" {...handlers()} />);
+    const dot = screen.getByRole("button", { name: "Talk to NOVA" });
+    expect(dot).toHaveAttribute("data-style", "ring");
+    expect(dot).toHaveAttribute("data-light", "true");
+    expect(dot).toHaveAttribute("data-activity", "false");
+    expect(dot).toHaveAttribute("data-busy", "true");
+    expect(dot.style.getPropertyValue("--dot")).toBe("30px");
+    expect(dot.style.getPropertyValue("--idle")).toBe("0.4");
+    expect(container.querySelector(".nova-dot__glow")).toBeNull();
+    expect(container.querySelector("svg")).toBeNull();
+  });
+
   it("opens its menu on right-click and works from the keyboard", () => {
     const h = handlers();
-    render(<NovaDot size="medium" open={false} {...h} />);
+    render(<NovaDot look={DEFAULT_DOT_LOOK} open={false} {...h} />);
     const dot = screen.getByRole("button", { name: "Talk to NOVA" });
     fireEvent.contextMenu(dot);
     expect(h.onMenu).toHaveBeenCalledTimes(1);
@@ -137,8 +159,6 @@ function renderPanel(overrides: Partial<Parameters<typeof NovaPanel>[0]> = {}) {
   const props = {
     origin: "bottomRight" as const,
     name: "Luca",
-    shortcut: "Ctrl+Alt+N",
-    shortcutError: null,
     agent: AGENT,
     finder: NO_FOLDERS,
     state: "idle" as const,
@@ -164,31 +184,57 @@ describe("NovaPanel", () => {
     useConversation.setState({ items: [], state: "idle", detail: null, busy: false, attachments: [], lastPrompt: null });
   });
 
-  it("greets, offers setup and wires its header and footer", async () => {
+  it("greets quietly and keeps everything else in one menu", async () => {
     const user = userEvent.setup();
     const props = renderPanel();
     expect(screen.getByRole("dialog", { name: "NOVA AI" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(/, Luca$/);
-    expect(screen.getByText(/anywhere to open NOVA AI/)).toHaveTextContent("Press CtrlAltN anywhere");
-    expect(screen.getByText("Microphone off")).toBeInTheDocument();
+    expect(screen.getByText("How can I help?")).toBeInTheDocument();
+    // No footer, no row of header buttons.
+    expect(screen.queryByText("Microphone off")).toBeNull();
+    expect(screen.queryByRole("button", { name: "New conversation" })).toBeNull();
+    expect(screen.getAllByRole("button").filter((b) => b.closest("header"))).toHaveLength(2);
 
-    await user.click(screen.getByRole("button", { name: "Index my folders" }));
+    await user.click(screen.getByRole("button", { name: "Index my folders for smarter file search" }));
     expect(props.onIndexFolders).toHaveBeenCalledOnce();
-    await user.click(screen.getByRole("button", { name: "Minimize to the dot" }));
-    await user.click(screen.getByRole("button", { name: "Close (keeps the conversation)" }));
-    expect(props.onCollapse).toHaveBeenCalledTimes(2);
-    await user.click(screen.getByRole("button", { name: "Assistant settings" }));
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    expect(props.onCollapse).toHaveBeenCalledOnce();
+
+    await user.click(screen.getByRole("button", { name: "More" }));
+    expect(screen.getByRole("menuitemradio", { name: "Read replies aloud" })).toHaveAttribute("aria-checked", "false");
+    await user.click(screen.getByRole("menuitem", { name: "Assistant settings" }));
     expect(props.onOpenSettings).toHaveBeenCalledOnce();
-    await user.click(screen.getByRole("button", { name: "Anthropic · claude-opus-5-5" }));
+    await user.click(screen.getByRole("button", { name: "More" }));
+    await user.click(screen.getByRole("menuitem", { name: "Anthropic · claude-opus-5-5" }));
     expect(props.onOpenProviders).toHaveBeenCalledOnce();
+    await user.click(screen.getByRole("button", { name: "More" }));
+    await user.click(screen.getByRole("menuitemradio", { name: "Read replies aloud" }));
+    expect(props.onToggleSpeech).toHaveBeenCalledOnce();
   });
 
   it("explains local mode without a provider", async () => {
     const user = userEvent.setup();
     const props = renderPanel({ agent: { ...AGENT, activeProvider: null, activeModel: null } });
-    expect(screen.getByText(/Local mode: I can find files and open apps/)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Connect an AI provider" }));
+    expect(screen.getByText("I can find files and open apps for you.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Connect an AI provider for conversations and documents" }));
     expect(props.onOpenProviders).toHaveBeenCalledOnce();
+  });
+
+  it("puts files and screenshots behind one add button", async () => {
+    const user = userEvent.setup();
+    const targets = vi.spyOn(api, "captureTargets").mockResolvedValue({
+      screens: [{ index: 0, label: "Display 1", primary: true, width: 1920, height: 1080, current: true }],
+      window: "Untitled - Notepad",
+    });
+    renderPanel();
+    await user.click(screen.getByRole("button", { name: "Add a file or a screenshot" }));
+    const menu = await screen.findByRole("menu", { name: "Add" });
+    expect(menu).toHaveTextContent("Attach a file…");
+    expect(await screen.findByRole("menuitem", { name: /My screen/ })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Untitled - Notepad" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menu", { name: "Add" })).toBeNull();
+    targets.mockRestore();
   });
 
   it("streams a reply with tool results, asks before changes and shows usage", async () => {
@@ -234,6 +280,8 @@ describe("NovaPanel", () => {
     });
     await waitFor(() => expect(screen.getByText("claude-opus-5-5 · 1.2k in · 300 out · ≈ $0.0108")).toBeInTheDocument());
     expect(screen.getByText("Moved LEGO_v1.xlsx to the Recycle Bin")).toBeInTheDocument();
+    // A conversation can be started over from the header.
+    expect(screen.getByRole("button", { name: "New conversation" })).toBeInTheDocument();
   });
 
   it("shows errors with a retry", async () => {
@@ -292,8 +340,10 @@ describe("conversation helpers", () => {
 describe("AssistantSettings", () => {
   const STATUS: AssistantStatus = {
     enabled: true,
+    placement: "taskbar",
     corner: "bottomRight",
-    size: "medium",
+    look: DEFAULT_DOT_LOOK,
+    taskbarAvailable: true,
     shortcut: "Ctrl+Alt+Space",
     background: false,
     hideInFullscreen: false,
@@ -329,10 +379,13 @@ describe("AssistantSettings", () => {
     renderWithQuery(<AssistantSettings />);
     await user.click(await screen.findByRole("switch", { name: "Keep NOVA AI available when the window is closed" }));
     expect(call).toHaveBeenCalledWith("assistant_configure", {
-      update: { enabled: true, corner: "bottomRight", size: "medium", shortcut: "Ctrl+Alt+Space", background: true, hideInFullscreen: false },
+      update: { enabled: true, placement: "taskbar", corner: "bottomRight", look: DEFAULT_DOT_LOOK, shortcut: "Ctrl+Alt+Space", background: true, hideInFullscreen: false },
     });
-    await user.click(screen.getByRole("radio", { name: "Top left" }));
-    await waitFor(() => expect(call).toHaveBeenLastCalledWith("assistant_configure", { update: expect.objectContaining({ corner: "topLeft", background: true }) }));
+    // Corners appear once the dot leaves the taskbar.
+    expect(screen.queryByRole("radio", { name: "Top left" })).toBeNull();
+    await user.click(screen.getByRole("radio", { name: "In a corner" }));
+    await user.click(await screen.findByRole("radio", { name: "Top left" }));
+    await waitFor(() => expect(call).toHaveBeenLastCalledWith("assistant_configure", { update: expect.objectContaining({ placement: "corner", corner: "topLeft", background: true }) }));
   });
 
   it("records a new shortcut and shows why one was rejected", async () => {
@@ -354,8 +407,95 @@ describe("AssistantSettings", () => {
     status.customPosition = true;
     const user = userEvent.setup();
     renderWithQuery(<AssistantSettings />);
-    await user.click(await screen.findByRole("button", { name: "Move it back to the corner" }));
+    await user.click(await screen.findByRole("button", { name: "Put it back" }));
     expect(call).toHaveBeenCalledWith("assistant_reset_position");
-    expect(await screen.findByText(/A corner of your main display/)).toBeInTheDocument();
+    expect(await screen.findByText(/In the taskbar, right after your app buttons/)).toBeInTheDocument();
+  });
+
+  it("previews look changes at once and saves them", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderWithQuery(<AssistantSettings />);
+    await user.click(await screen.findByRole("radio", { name: "Ring" }));
+    expect(screen.getByRole("button", { name: "Talk to NOVA" })).toHaveAttribute("data-style", "ring");
+    await waitFor(() => expect(call).toHaveBeenLastCalledWith("assistant_configure", { update: expect.objectContaining({ look: expect.objectContaining({ style: "ring" }) }) }));
+
+    fireEvent.change(screen.getByRole("slider", { name: "Dot size" }), { target: { value: "40" } });
+    expect(screen.getByRole("button", { name: "Talk to NOVA" }).style.getPropertyValue("--dot")).toBe("40px");
+    act(() => vi.advanceTimersByTime(300));
+    await waitFor(() => expect(call).toHaveBeenLastCalledWith("assistant_configure", { update: expect.objectContaining({ look: expect.objectContaining({ style: "ring", diameter: 40 }) }) }));
+
+    await user.click(screen.getByRole("radio", { name: "White" }));
+    await waitFor(() => expect(status.look.color).toBe("white"));
+    await user.click(screen.getByRole("button", { name: "Back to the default look" }));
+    await waitFor(() => expect(status.look).toEqual(DEFAULT_DOT_LOOK));
+    vi.useRealTimers();
+  });
+});
+
+describe("WakeSettings", () => {
+  const OFF: WakeStatus = {
+    prefs: { phrase: false, phraseSensitivity: "strict", clap: false, clapSensitivity: "strict", afterWake: "listen", chime: true, pauseInFullscreen: true },
+    phrase: { state: "off" },
+    clap: { state: "off" },
+    dictation: false,
+    testing: false,
+  };
+  let status: WakeStatus;
+  let call: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    status = structuredClone(OFF);
+    vi.spyOn(native, "isDesktop").mockReturnValue(true);
+    call = vi.spyOn(native, "callNative").mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+      if (command === "wake_status") return status;
+      if (command === "wake_configure") {
+        const prefs = args?.prefs as WakeStatus["prefs"];
+        status = { ...status, prefs, clap: prefs.clap ? { state: "listening" } : { state: "off" } };
+        return status;
+      }
+      if (command === "wake_test") {
+        status = { ...status, testing: Boolean(args?.on) };
+        return status;
+      }
+      if (command === "voice_open_settings") return undefined;
+      throw new Error(`unexpected ${command}`);
+    });
+  });
+
+  it("turns on the double clap and shows that NOVA listens", async () => {
+    const user = userEvent.setup();
+    renderWithQuery(<WakeSettings />);
+    await user.click(await screen.findByRole("switch", { name: "Wake with a double clap" }));
+    expect(call).toHaveBeenCalledWith("wake_configure", { prefs: { ...OFF.prefs, clap: true } });
+    expect(await screen.findByRole("status")).toHaveTextContent("Listening");
+    expect(screen.getByRole("radio", { name: "Very precise" })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("explains that listening after waking needs online speech recognition", async () => {
+    const user = userEvent.setup();
+    renderWithQuery(<WakeSettings />);
+    await user.click(await screen.findByRole("button", { name: "Turn it on" }));
+    expect(call).toHaveBeenCalledWith("voice_open_settings", { page: "privacy-speech" });
+  });
+
+  it("runs a test that opens nothing", async () => {
+    const user = userEvent.setup();
+    renderWithQuery(<WakeSettings />);
+    await user.click(await screen.findByRole("button", { name: "Start test" }));
+    expect(call).toHaveBeenCalledWith("wake_test", { on: true });
+    expect(await screen.findByRole("meter", { name: "Microphone level" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Stop" }));
+    expect(call).toHaveBeenLastCalledWith("wake_test", { on: false });
+  });
+
+  it("describes what it heard", () => {
+    expect(describeHeard({ kind: "double", veto: null })).toEqual({ text: "Double clap — NOVA would open", tone: "good" });
+    expect(describeHeard({ kind: "double", veto: "typing" })?.tone).toBe("warn");
+    expect(describeHeard({ kind: "notAClap", levelDb: -20, reason: "tonal" })?.text).toMatch(/tone or a glass/);
+    expect(describeHeard({ kind: "phrase", text: "hey noah", confidence: "high", accepted: false })?.text).toBe("Heard “hey noah” (high) — ignored");
+    expect(describeHeard({ kind: "level", value: 0.4 })).toBeNull();
+    expect(listenerLabel({ state: "paused", reason: "dictation" })).toBe("Paused while you dictate");
+    expect(listenerLabel({ state: "unavailable", message: "No microphone was found.", settings: null })).toBe("No microphone was found.");
   });
 });

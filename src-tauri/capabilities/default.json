@@ -82,6 +82,10 @@
     "allow-finder-remove-folder",
     "allow-finder-set-content",
     "allow-finder-reindex",
-    "allow-finder-search"
+    "allow-finder-search",
+    "allow-wake-status",
+    "allow-wake-configure",
+    "allow-wake-test",
+    "allow-voice-open-settings"
   ]
 }

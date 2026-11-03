@@ -92,6 +92,10 @@ fn main() {
         "voice_listen",
         "voice_stop",
         "voice_open_settings",
+        "wake_status",
+        "wake_configure",
+        "wake_test",
+        "wake_set_speaking",
     ])))
     .expect("failed to run tauri-build");
 }

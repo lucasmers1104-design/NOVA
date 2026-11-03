@@ -1,10 +1,12 @@
+import "../orb.css";
+import "./nova-dot.css";
 import { type CSSProperties, useEffect, useRef, useState } from "react";
-import { type AssistantState, DOT_DIAMETER, type DotSize } from "../types";
+import type { AssistantState, DotLook } from "../types";
 import { Sparkle } from "./Sparkle";
 
 /** Pointer travel (px) that turns a press into a drag. */
 export const DRAG_THRESHOLD = 4;
-/** One breath of the idle glow; matches `nova-breathe` in dot.css. */
+/** One breath of the idle glow; matches `nova-breathe` in nova-dot.css. */
 export const BREATH_MS = 5000;
 /** Rest between breaths while idle. */
 export const REST_MS = 60_000;
@@ -37,8 +39,24 @@ export function useBreathing(active: boolean): boolean {
   return breathing;
 }
 
+/** Whether a look's color is light enough to need a dark sparkle. */
+export function isLightColor(color: string): boolean {
+  if (color === "white") return true;
+  const hex = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(color);
+  if (!hex) return false;
+  const [r = 0, g = 0, b = 0] = hex.slice(1).map((h) => parseInt(h, 16) / 255);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.62;
+}
+
+/** The CSS color for a look's `color` setting. */
+export function dotColor(color: string): string {
+  if (color === "white") return "#f3f4f8";
+  if (/^#[0-9a-f]{6}$/i.test(color)) return color;
+  return "var(--nova-accent)";
+}
+
 interface NovaDotProps {
-  size: DotSize;
+  look: DotLook;
   open: boolean;
   /** What NOVA AI is doing; animates the dot while it's busy. */
   state?: AssistantState;
@@ -51,20 +69,33 @@ interface NovaDotProps {
 }
 
 /** The floating NOVA dot: click to talk, drag to move, right-click for options. */
-export function NovaDot({ size, open, state = "idle", level = 0, onToggle, onMenu, onDragStart }: NovaDotProps) {
+export function NovaDot({ look, open, state = "idle", level = 0, onToggle, onMenu, onDragStart }: NovaDotProps) {
   const press = useRef<{ x: number; y: number } | null>(null);
   const resting = state === "idle" || state === "completed";
-  const breathing = useBreathing(!open && resting);
+  const breathing = useBreathing(look.breathe && look.glow && !open && resting);
   const label = open ? "Close NOVA AI" : "Talk to NOVA";
 
   return (
     <button
       type="button"
       className="nova-dot"
+      data-style={look.style}
+      data-tinted={look.color !== "accent"}
+      data-light={isLightColor(look.color)}
       data-open={open}
+      data-busy={!resting}
+      data-glow={look.glow}
+      data-activity={look.activity}
       data-breathing={breathing}
       data-state={state}
-      style={{ "--dot": `${DOT_DIAMETER[size]}px`, "--level": level } as CSSProperties}
+      style={
+        {
+          "--dot": `${look.diameter}px`,
+          "--dot-color": dotColor(look.color),
+          "--idle": look.idleOpacity / 100,
+          "--level": level,
+        } as CSSProperties
+      }
       aria-label={label}
       aria-expanded={open}
       title={label}
@@ -98,12 +129,11 @@ export function NovaDot({ size, open, state = "idle", level = 0, onToggle, onMen
         }
       }}
     >
-      <span className="nova-dot__glow" aria-hidden />
-      <span className="nova-dot__halo" aria-hidden />
+      {look.glow && <span className="nova-dot__glow" aria-hidden />}
       <span className="nova-dot__ring" aria-hidden />
       <span className="nova-dot__activity" aria-hidden />
-      <span className="nova-orb" aria-hidden>
-        <Sparkle />
+      <span className={look.style === "orb" ? "nova-dot__body nova-orb" : "nova-dot__body"} aria-hidden>
+        {look.icon && <Sparkle />}
       </span>
     </button>
   );

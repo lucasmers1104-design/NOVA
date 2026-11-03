@@ -259,6 +259,7 @@ pub fn watch_foreground() {
         if window.0.is_null() {
             return;
         }
+        crate::assistant::on_foreground(window.0 as isize);
         let mut pid = 0u32;
         // SAFETY: queries the owner of a window handle Windows just reported.
         unsafe { GetWindowThreadProcessId(window, Some(&mut pid)) };

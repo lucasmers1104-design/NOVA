@@ -6,7 +6,7 @@
 //! animate without resizing a window. Nothing in this module records audio or
 //! captures the screen.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -29,10 +29,12 @@ const PREFS_KEY: &str = "nova.assistant";
 const SETTINGS_KEY: &str = "nova.settings";
 const MAX_SHORTCUT_LEN: usize = 40;
 
-/// Room around the dot for its glow and hover growth (logical px).
-const DOT_MARGIN: f64 = 14.0;
-/// Visible gap between the dot and the edge of the work area.
-const EDGE_GAP: f64 = 18.0;
+/// Transparent room around the dot for hover growth and activity rings (logical px).
+const DOT_ROOM: f64 = 8.0;
+/// Extra room when the dot glows.
+const GLOW_ROOM: f64 = 10.0;
+/// Visible gap between the dot and the notification area when it sits in the taskbar.
+const TRAY_GAP: f64 = 8.0;
 /// Transparent room around the panel for its shadow.
 const PANEL_PAD: f64 = 16.0;
 /// Visible gap between the dot and the panel; at least `PANEL_PAD`, so the
@@ -52,6 +54,7 @@ const EVENT_PANEL: &str = "assistant://panel";
 const EVENT_DOT: &str = "assistant://dot";
 const EVENT_PREFS: &str = "assistant://prefs";
 const EVENT_NAVIGATE: &str = "nova://navigate";
+const EVENT_WAKE: &str = "assistant://wake";
 
 // ---------------------------------------------------------------------------
 // Preferences
@@ -67,27 +70,88 @@ pub enum Corner {
     TopLeft,
 }
 
+/// Where the dot lives until the user drags it somewhere else.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum DotSize {
-    Small,
+pub enum Placement {
+    /// In the taskbar, just left of the notification area.
     #[default]
-    Medium,
-    Large,
+    Taskbar,
+    /// In a corner of the desktop (`corner`).
+    Corner,
 }
 
-impl DotSize {
-    fn diameter(self) -> f64 {
-        match self {
-            DotSize::Small => 44.0,
-            DotSize::Medium => 52.0,
-            DotSize::Large => 60.0,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DotStyle {
+    /// A frosted-glass bead tinted with the dot's color.
+    #[default]
+    Glass,
+    /// The glossy NOVA orb.
+    Orb,
+    /// A flat dot of color.
+    Solid,
+    /// A thin ring.
+    Ring,
+}
+
+/// How the dot looks.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct DotLook {
+    pub style: DotStyle,
+    /// Logical px, 16–56.
+    pub diameter: u8,
+    /// Opacity at rest in percent (25–100); hovering or activity shows it fully.
+    pub idle_opacity: u8,
+    /// "accent", "white" or "#rrggbb".
+    pub color: String,
+    /// A soft glow around it.
+    pub glow: bool,
+    /// Breathes briefly now and then while idle.
+    pub breathe: bool,
+    /// The sparkle inside.
+    pub icon: bool,
+    /// Rings and colors while NOVA listens, thinks or works.
+    pub activity: bool,
+    /// Gap to the screen edges in a corner (logical px, 0–48).
+    pub edge_gap: u8,
+}
+
+impl Default for DotLook {
+    fn default() -> Self {
+        Self { style: DotStyle::Glass, diameter: 24, idle_opacity: 70, color: "accent".into(), glow: false, breathe: false, icon: true, activity: true, edge_gap: 12 }
+    }
+}
+
+fn valid_color(color: &str) -> bool {
+    color == "accent" || color == "white" || (color.len() == 7 && color.starts_with('#') && color[1..].chars().all(|c| c.is_ascii_hexdigit()))
+}
+
+impl DotLook {
+    /// The same look with every value limited to what the dot can show.
+    fn sanitized(mut self) -> Self {
+        self.diameter = self.diameter.clamp(16, 56);
+        self.idle_opacity = self.idle_opacity.clamp(25, 100);
+        self.edge_gap = self.edge_gap.min(48);
+        if !valid_color(&self.color) {
+            self.color = "accent".into();
+        }
+        self
+    }
+
+    /// Transparent room around the dot (logical px).
+    fn room(&self) -> f64 {
+        if self.glow {
+            DOT_ROOM + GLOW_ROOM
+        } else {
+            DOT_ROOM
         }
     }
 
-    /// Logical side of the dot window, glow room included.
-    fn window_side(self) -> f64 {
-        self.diameter() + 2.0 * DOT_MARGIN
+    /// Logical side of the dot window, room included.
+    fn window_side(&self) -> f64 {
+        self.diameter as f64 + 2.0 * self.room()
     }
 }
 
@@ -102,8 +166,9 @@ pub struct Point {
 pub struct AssistantPrefs {
     /// Show the floating dot.
     pub enabled: bool,
+    pub placement: Placement,
     pub corner: Corner,
-    pub size: DotSize,
+    pub look: DotLook,
     /// Global shortcut that opens and closes the panel; empty means none.
     pub shortcut: String,
     /// Keep NOVA running with the assistant when the main window is closed.
@@ -118,8 +183,9 @@ impl Default for AssistantPrefs {
     fn default() -> Self {
         Self {
             enabled: true,
+            placement: Placement::default(),
             corner: Corner::default(),
-            size: DotSize::default(),
+            look: DotLook::default(),
             shortcut: DEFAULT_SHORTCUT.into(),
             background: false,
             hide_in_fullscreen: false,
@@ -138,6 +204,7 @@ pub fn load_prefs(db: &Database) -> AssistantPrefs {
             if prefs.shortcut.len() > MAX_SHORTCUT_LEN || parse_shortcut(&prefs.shortcut).is_err() {
                 prefs.shortcut = DEFAULT_SHORTCUT.into();
             }
+            prefs.look = prefs.look.sanitized();
             prefs
         })
         .unwrap_or_default()
@@ -186,6 +253,8 @@ struct Inner {
     panel_creating: bool,
     /// The panel corner nearest the dot; the panel grows out of it.
     panel_origin: Corner,
+    /// "Hey NOVA" or a double clap opened the panel; handed to it when it shows.
+    pending_wake: Option<WakeCall>,
 }
 
 #[derive(Default)]
@@ -195,7 +264,12 @@ pub struct AssistantState {
     drag_generation: AtomicU64,
     collapse_generation: AtomicU64,
     watching_fullscreen: AtomicBool,
+    watching_taskbar: AtomicBool,
 }
+
+/// The dot's window handle while it sits in the taskbar (0 otherwise); the
+/// foreground hook lifts it back over the taskbar after clicks there.
+static TASKBAR_DOT: AtomicIsize = AtomicIsize::new(0);
 
 impl AssistantState {
     fn lock(&self) -> MutexGuard<'_, Inner> {
@@ -256,14 +330,14 @@ fn fit(value: i32, lo: i32, hi: i32) -> i32 {
     value.min(hi).max(lo)
 }
 
-fn dot_side(screen: Screen, size: DotSize) -> i32 {
-    px(size.window_side(), screen.scale)
+fn dot_side(screen: Screen, look: &DotLook) -> i32 {
+    px(look.window_side(), screen.scale)
 }
 
 /// Top-left of the dot window in `corner` of the screen's work area.
-pub fn corner_position(screen: Screen, corner: Corner, size: DotSize) -> (i32, i32) {
-    let side = dot_side(screen, size);
-    let inset = px(EDGE_GAP - DOT_MARGIN, screen.scale);
+pub fn corner_position(screen: Screen, corner: Corner, look: &DotLook) -> (i32, i32) {
+    let side = dot_side(screen, look);
+    let inset = px(look.edge_gap as f64 - look.room(), screen.scale);
     let work = screen.work;
     let (left, right) = (work.x + inset, work.right() - side - inset);
     let (top, bottom) = (work.y + inset, work.bottom() - side - inset);
@@ -275,12 +349,131 @@ pub fn corner_position(screen: Screen, corner: Corner, size: DotSize) -> (i32, i
     }
 }
 
-/// Keeps a dragged dot on screen: its glow may overhang the work area, the dot may not.
-pub fn clamp_dot(screen: Screen, size: DotSize, (x, y): (i32, i32)) -> (i32, i32) {
-    let side = dot_side(screen, size);
-    let margin = px(DOT_MARGIN, screen.scale);
+/// Keeps a dragged dot on screen: its room may overhang the work area, the dot may not.
+pub fn clamp_dot(screen: Screen, look: &DotLook, (x, y): (i32, i32)) -> (i32, i32) {
+    let side = dot_side(screen, look);
+    let margin = px(look.room(), screen.scale);
     let work = screen.work;
     (fit(x, work.x - margin, work.right() - side + margin), fit(y, work.y - margin, work.bottom() - side + margin))
+}
+
+/// The taskbar (physical px) and the first thing after its app buttons: a
+/// widget such as "News and interests", or else the notification area.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Taskbar {
+    pub bar: Rect,
+    pub next: Rect,
+}
+
+/// Top-left of the dot window in the taskbar: at the end of the app buttons,
+/// just before `next`, centred across the bar (taskbars on the left or right
+/// included). `gap` is the space between the window and `next`.
+pub fn taskbar_position(taskbar: Taskbar, side: i32, gap: i32) -> (i32, i32) {
+    let Taskbar { bar, next } = taskbar;
+    if bar.w >= bar.h {
+        (next.x - gap - side, bar.y + (bar.h - side) / 2)
+    } else {
+        (bar.x + (bar.w - side) / 2, next.y - gap - side)
+    }
+}
+
+/// Of the taskbar's parts, the first one that starts after the app buttons.
+pub fn first_after(buttons: Rect, parts: &[Rect], horizontal: bool) -> Option<Rect> {
+    let start = |r: &Rect| if horizontal { r.x } else { r.y };
+    let end = if horizontal { buttons.right() } else { buttons.bottom() };
+    parts.iter().copied().filter(|r| r.w > 0 && r.h > 0 && start(r) >= end - 2).min_by_key(start)
+}
+
+/// The primary taskbar, unless it hides itself (then the dot uses a corner).
+#[cfg(windows)]
+fn find_taskbar() -> Option<Taskbar> {
+    use windows::core::w;
+    use windows::Win32::Foundation::RECT;
+    use windows::Win32::UI::Shell::{SHAppBarMessage, ABM_GETSTATE, ABS_AUTOHIDE, APPBARDATA};
+    use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, FindWindowW, GetWindow, GetWindowRect, IsWindowVisible, GW_CHILD, GW_HWNDNEXT};
+    let rect = |r: RECT| Rect { x: r.left, y: r.top, w: r.right - r.left, h: r.bottom - r.top };
+    // SAFETY: read-only queries of the shell's own windows; the structs are sized for the calls.
+    unsafe {
+        let bar = FindWindowW(w!("Shell_TrayWnd"), None).ok()?;
+        let mut data = APPBARDATA { cbSize: size_of::<APPBARDATA>() as u32, hWnd: bar, ..Default::default() };
+        if SHAppBarMessage(ABM_GETSTATE, &mut data) as u32 & ABS_AUTOHIDE != 0 {
+            return None;
+        }
+        let window_rect = |hwnd| {
+            let mut r = RECT::default();
+            GetWindowRect(hwnd, &mut r).ok().map(|()| rect(r))
+        };
+        let bar_rect = window_rect(bar)?;
+        let tray = window_rect(FindWindowExW(Some(bar), None, w!("TrayNotifyWnd"), None).ok()?)?;
+        let buttons = FindWindowExW(Some(bar), None, w!("ReBarWindow32"), None).ok().and_then(window_rect);
+        // Everything visible directly on the taskbar: widgets sit between the app buttons and the tray.
+        let mut parts = Vec::new();
+        let mut child = GetWindow(bar, GW_CHILD);
+        while let Ok(part) = child {
+            if IsWindowVisible(part).as_bool() {
+                parts.extend(window_rect(part));
+            }
+            child = GetWindow(part, GW_HWNDNEXT);
+        }
+        let horizontal = bar_rect.w >= bar_rect.h;
+        let next = buttons.and_then(|b| first_after(b, &parts, horizontal)).unwrap_or(tray);
+        (bar_rect.w > 0 && bar_rect.h > 0).then_some(Taskbar { bar: bar_rect, next })
+    }
+}
+
+#[cfg(not(windows))]
+fn find_taskbar() -> Option<Taskbar> {
+    None
+}
+
+/// Keeps a topmost window above the others (the taskbar rises over the dot when clicked).
+#[cfg(windows)]
+fn raise_window(raw: isize) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE};
+    // SAFETY: z-order change of NOVA's own dot window; no activation, size or position change.
+    let _ = unsafe { SetWindowPos(HWND(raw as *mut _), Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER) };
+}
+
+/// Whether the taskbar is above `window` in the z-order (only topmost windows
+/// are above the dot, so the walk is short).
+#[cfg(windows)]
+fn taskbar_above(window: isize) -> bool {
+    use windows::core::w;
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, GetWindow, GW_HWNDPREV};
+    // SAFETY: read-only z-order queries.
+    unsafe {
+        let Ok(taskbar) = FindWindowW(w!("Shell_TrayWnd"), None) else { return false };
+        let mut above = GetWindow(HWND(window as *mut _), GW_HWNDPREV);
+        for _ in 0..256 {
+            match above {
+                Ok(hwnd) if hwnd == taskbar => return true,
+                Ok(hwnd) => above = GetWindow(hwnd, GW_HWNDPREV),
+                Err(_) => return false,
+            }
+        }
+        false
+    }
+}
+
+/// The foreground hook's report: a click on the taskbar lifts it over a
+/// docked dot, so lift the dot back up.
+#[cfg(windows)]
+pub fn on_foreground(window: isize) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::GetClassNameW;
+    let dot = TASKBAR_DOT.load(Ordering::SeqCst);
+    if dot == 0 || window == 0 {
+        return;
+    }
+    let mut class = [0u16; 32];
+    // SAFETY: the buffer outlives the call and its length is passed.
+    let len = unsafe { GetClassNameW(HWND(window as *mut _), &mut class) } as usize;
+    let class = String::from_utf16_lossy(&class[..len.min(class.len())]);
+    if class == "Shell_TrayWnd" || class == "Shell_SecondaryTrayWnd" {
+        raise_window(dot);
+    }
 }
 
 fn screen_containing(screens: &[Screen], point: (i32, i32)) -> Option<Screen> {
@@ -309,10 +502,10 @@ pub struct PanelPlacement {
 /// Opens the panel beside the dot: above it when the dot sits in the lower
 /// half of the screen, aligned with the dot's outer edge, always inside the
 /// work area.
-pub fn panel_placement(screen: Screen, dot_window: Rect) -> PanelPlacement {
+pub fn panel_placement(screen: Screen, dot_window: Rect, room: f64) -> PanelPlacement {
     let s = screen.scale;
     let work = screen.work;
-    let margin = px(DOT_MARGIN, s);
+    let margin = px(room, s);
     let dot = Rect { x: dot_window.x + margin, y: dot_window.y + margin, w: dot_window.w - 2 * margin, h: dot_window.h - 2 * margin };
     let (pad, gap) = (px(PANEL_PAD, s), px(PANEL_GAP, s));
     let (dot_x, dot_y) = dot.center();
@@ -358,18 +551,28 @@ fn primary_screen<R: Runtime>(app: &AppHandle<R>) -> Option<Screen> {
 /// connected screen, otherwise the chosen corner of the primary screen.
 fn dot_target<R: Runtime>(app: &AppHandle<R>, prefs: &AssistantPrefs) -> Option<(Screen, Rect)> {
     let all = screens(app);
+    let look = &prefs.look;
     let dragged = prefs.position.and_then(|p| {
-        let half = px(prefs.size.window_side(), 1.0) / 2;
-        screen_containing(&all, (p.x + half, p.y + half)).map(|screen| (screen, clamp_dot(screen, prefs.size, (p.x, p.y))))
+        let half = px(look.window_side(), 1.0) / 2;
+        screen_containing(&all, (p.x + half, p.y + half)).map(|screen| (screen, clamp_dot(screen, look, (p.x, p.y))))
     });
+    let docked = || {
+        let taskbar = find_taskbar()?;
+        let screen = nearest_screen(&all, taskbar.bar.center())?;
+        let gap = px((TRAY_GAP - look.room()).max(0.0), screen.scale);
+        Some((screen, taskbar_position(taskbar, dot_side(screen, look), gap)))
+    };
     let (screen, (x, y)) = match dragged {
         Some(found) => found,
-        None => {
-            let screen = primary_screen(app)?;
-            (screen, corner_position(screen, prefs.corner, prefs.size))
-        }
+        None => match (prefs.placement == Placement::Taskbar).then(docked).flatten() {
+            Some(found) => found,
+            None => {
+                let screen = primary_screen(app)?;
+                (screen, corner_position(screen, prefs.corner, look))
+            }
+        },
     };
-    let side = dot_side(screen, prefs.size);
+    let side = dot_side(screen, look);
     Some((screen, Rect { x, y, w: side, h: side }))
 }
 
@@ -411,8 +614,7 @@ fn disable_system_animations<R: Runtime>(_: &WebviewWindow<R>) {}
 /// Creates the dot window, hidden until its page reports ready. Must not run
 /// on the main thread's event handlers (WebView2 deadlocks there).
 fn create_dot<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
-    let size = state(app).lock().prefs.size;
-    let side = size.window_side();
+    let side = state(app).lock().prefs.look.window_side();
     let window = WebviewWindowBuilder::new(app, DOT_LABEL, WebviewUrl::App("dot.html".into()))
         .title("NOVA AI")
         .inner_size(side, side)
@@ -463,7 +665,8 @@ fn create_panel<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<WebviewWindow<R
 
 fn position_panel<R: Runtime>(app: &AppHandle<R>, panel: &WebviewWindow<R>) -> Corner {
     let Some((screen, dot)) = dot_rect(app) else { return Corner::default() };
-    let placement = panel_placement(screen, dot);
+    let room = state(app).lock().prefs.look.room();
+    let placement = panel_placement(screen, dot, room);
     let rect = placement.window;
     let pos = PhysicalPosition::new(rect.x, rect.y);
     let _ = panel.set_position(pos);
@@ -477,6 +680,18 @@ fn position_panel<R: Runtime>(app: &AppHandle<R>, panel: &WebviewWindow<R>) -> C
 #[serde(rename_all = "camelCase")]
 struct ExpandEvent {
     origin: Corner,
+    wake: Option<WakeCall>,
+}
+
+/// The panel opened by itself: what woke NOVA and what the panel should do.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WakeCall {
+    source: crate::wake::Source,
+    /// Start listening for a spoken request.
+    listen: bool,
+    /// Play the wake sound.
+    chime: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -495,7 +710,8 @@ fn show_panel<R: Runtime>(app: &AppHandle<R>, panel: &WebviewWindow<R>, origin: 
     let _ = panel.show();
     crate::desktop::set_page_visible(panel, true);
     let _ = panel.set_focus();
-    let _ = app.emit_to(PANEL_LABEL, EVENT_EXPAND, ExpandEvent { origin });
+    let wake = state(app).lock().pending_wake.take();
+    let _ = app.emit_to(PANEL_LABEL, EVENT_EXPAND, ExpandEvent { origin, wake });
 }
 
 /// Opens the panel next to the dot (creating it on first use).
@@ -568,6 +784,24 @@ fn hide_panel<R: Runtime>(app: &AppHandle<R>, generation: u64) {
     let _ = app.emit_to(DOT_LABEL, EVENT_PANEL, PanelEvent { open: false });
 }
 
+/// "Hey NOVA" or a double clap: opens the panel, or asks an open one to listen.
+pub fn wake<R: Runtime>(app: &AppHandle<R>, source: crate::wake::Source, listen: bool, chime: bool) {
+    let call = WakeCall { source, listen, chime };
+    let (open, loaded) = {
+        let inner = state(app).lock();
+        (inner.panel_open, inner.panel_loaded)
+    };
+    if open && loaded {
+        if let Some(panel) = app.get_webview_window(PANEL_LABEL) {
+            let _ = panel.set_focus();
+        }
+        let _ = app.emit_to(PANEL_LABEL, EVENT_WAKE, call);
+        return;
+    }
+    state(app).lock().pending_wake = Some(call);
+    expand(app);
+}
+
 /// Dot click, tray menu, command palette.
 pub fn toggle<R: Runtime>(app: &AppHandle<R>) {
     if state(app).lock().panel_open {
@@ -613,25 +847,86 @@ pub fn init<R: Runtime>(app: &AppHandle<R>, prefs: AssistantPrefs) {
     }
     let error = register_shortcut(app, shortcut).err();
     state(app).lock().shortcut_error = error;
-    let watch = {
+    let (fullscreen, taskbar) = {
         let inner = state(app).lock();
-        inner.prefs.enabled && inner.prefs.hide_in_fullscreen
+        (inner.prefs.enabled && inner.prefs.hide_in_fullscreen && !docked(&inner.prefs), docked(&inner.prefs))
     };
-    if watch {
+    if fullscreen {
         watch_fullscreen(app);
     }
+    if taskbar {
+        watch_taskbar(app);
+    }
+}
+
+/// The dot sits in the taskbar (shown, not dragged elsewhere).
+fn docked(prefs: &AssistantPrefs) -> bool {
+    prefs.enabled && prefs.position.is_none() && prefs.placement == Placement::Taskbar
+}
+
+/// While the dot sits in the taskbar, once a second: keeps it next to the
+/// notification area as icons come and go, keeps it above the taskbar, and
+/// hides it with the taskbar while a fullscreen app is in front. Stops when
+/// the dot leaves the taskbar.
+fn watch_taskbar<R: Runtime>(app: &AppHandle<R>) {
+    let assistant = state(app);
+    if assistant.watching_taskbar.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let mut hidden = false;
+        loop {
+            let (prefs, open) = {
+                let inner = self::state(&app).lock();
+                (inner.prefs.clone(), inner.panel_open)
+            };
+            let Some(dot) = app.get_webview_window(DOT_LABEL).filter(|_| docked(&prefs)) else { break };
+            #[cfg(windows)]
+            if let Ok(hwnd) = dot.hwnd() {
+                TASKBAR_DOT.store(hwnd.0 as isize, Ordering::SeqCst);
+            }
+            let hide = !open && fullscreen_in_front();
+            if hide != hidden {
+                let _ = if hide { dot.hide() } else { dot.show() };
+                hidden = hide;
+            }
+            if !hide {
+                let moved = match (dot_target(&app, &prefs), dot.outer_position()) {
+                    (Some((_, target)), Ok(now)) => (target.x - now.x).abs() > 1 || (target.y - now.y).abs() > 1,
+                    _ => false,
+                };
+                if moved {
+                    place_dot(&app, &dot);
+                }
+                // Only when the taskbar covers it: lifting it every time would also put it over its own menu.
+                #[cfg(windows)]
+                if taskbar_above(TASKBAR_DOT.load(Ordering::SeqCst)) {
+                    raise_window(TASKBAR_DOT.load(Ordering::SeqCst));
+                }
+            }
+            std::thread::sleep(Duration::from_secs(1));
+        }
+        TASKBAR_DOT.store(0, Ordering::SeqCst);
+        if hidden {
+            if let Some(dot) = app.get_webview_window(DOT_LABEL) {
+                let _ = dot.show();
+            }
+        }
+        self::state(&app).watching_taskbar.store(false, Ordering::SeqCst);
+    });
 }
 
 /// Whether Windows reports a fullscreen app, game or presentation in front.
 #[cfg(windows)]
-fn fullscreen_in_front() -> bool {
+pub(crate) fn fullscreen_in_front() -> bool {
     use windows::Win32::UI::Shell::{SHQueryUserNotificationState, QUNS_BUSY, QUNS_PRESENTATION_MODE, QUNS_RUNNING_D3D_FULL_SCREEN};
     // SAFETY: a read-only query of the shell's notification state.
     matches!(unsafe { SHQueryUserNotificationState() }, Ok(s) if s == QUNS_BUSY || s == QUNS_RUNNING_D3D_FULL_SCREEN || s == QUNS_PRESENTATION_MODE)
 }
 
 #[cfg(not(windows))]
-fn fullscreen_in_front() -> bool {
+pub(crate) fn fullscreen_in_front() -> bool {
     false
 }
 
@@ -648,7 +943,7 @@ fn watch_fullscreen<R: Runtime>(app: &AppHandle<R>) {
         loop {
             let (enabled, open) = {
                 let inner = self::state(&app).lock();
-                (inner.prefs.enabled && inner.prefs.hide_in_fullscreen, inner.panel_open)
+                (inner.prefs.enabled && inner.prefs.hide_in_fullscreen && !docked(&inner.prefs), inner.panel_open)
             };
             let hide = enabled && !open && fullscreen_in_front();
             if hide != hidden {
@@ -668,13 +963,13 @@ fn watch_fullscreen<R: Runtime>(app: &AppHandle<R>) {
 
 /// Brings the windows in line with changed preferences.
 fn apply<R: Runtime>(app: &AppHandle<R>, previous: &AssistantPrefs, prefs: &AssistantPrefs) {
-    if prefs.hide_in_fullscreen && prefs.enabled {
+    if prefs.hide_in_fullscreen && prefs.enabled && !docked(prefs) {
         watch_fullscreen(app);
     }
     match (prefs.enabled, app.get_webview_window(DOT_LABEL)) {
         (true, Some(dot)) => {
             place_dot(app, &dot);
-            if previous.size != prefs.size {
+            if previous.look != prefs.look {
                 let _ = app.emit_to(DOT_LABEL, EVENT_DOT, dot_view(app));
             }
         }
@@ -687,6 +982,9 @@ fn apply<R: Runtime>(app: &AppHandle<R>, previous: &AssistantPrefs, prefs: &Assi
             let _ = dot.destroy();
         }
         (false, None) => {}
+    }
+    if docked(prefs) {
+        watch_taskbar(app);
     }
     if state(app).lock().panel_open {
         if let Some(panel) = app.get_webview_window(PANEL_LABEL) {
@@ -726,15 +1024,15 @@ pub fn on_dot_moved<R: Runtime>(app: &AppHandle<R>, pos: PhysicalPosition<i32>) 
 }
 
 fn settle_drag<R: Runtime>(app: &AppHandle<R>) {
-    let (dragged, size) = {
+    let (dragged, look) = {
         let mut inner = state(app).lock();
-        (inner.dragged_to.take(), inner.prefs.size)
+        (inner.dragged_to.take(), inner.prefs.look.clone())
     };
     let Some(pos) = dragged else { return };
     let all = screens(app);
-    let half = px(size.window_side(), 1.0) / 2;
+    let half = px(look.window_side(), 1.0) / 2;
     let Some(screen) = nearest_screen(&all, (pos.x + half, pos.y + half)) else { return };
-    let (x, y) = clamp_dot(screen, size, (pos.x, pos.y));
+    let (x, y) = clamp_dot(screen, &look, (pos.x, pos.y));
     let prefs = {
         let mut inner = state(app).lock();
         inner.prefs.position = Some(Point { x, y });
@@ -837,8 +1135,11 @@ fn open_main<R: Runtime>(app: &AppHandle<R>, section: Option<&'static str>) {
 #[serde(rename_all = "camelCase")]
 pub struct AssistantStatus {
     enabled: bool,
+    placement: Placement,
     corner: Corner,
-    size: DotSize,
+    look: DotLook,
+    /// The taskbar can host the dot (it doesn't hide itself).
+    taskbar_available: bool,
     shortcut: String,
     background: bool,
     hide_in_fullscreen: bool,
@@ -854,8 +1155,10 @@ fn status<R: Runtime>(app: &AppHandle<R>) -> AssistantStatus {
     let inner = state(app).lock();
     AssistantStatus {
         enabled: inner.prefs.enabled,
+        placement: inner.prefs.placement,
         corner: inner.prefs.corner,
-        size: inner.prefs.size,
+        look: inner.prefs.look.clone(),
+        taskbar_available: find_taskbar().is_some(),
         shortcut: inner.prefs.shortcut.clone(),
         background: inner.prefs.background,
         hide_in_fullscreen: inner.prefs.hide_in_fullscreen,
@@ -870,8 +1173,9 @@ fn status<R: Runtime>(app: &AppHandle<R>) -> AssistantStatus {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PrefsUpdate {
     enabled: bool,
+    placement: Placement,
     corner: Corner,
-    size: DotSize,
+    look: DotLook,
     shortcut: String,
     background: bool,
     #[serde(default)]
@@ -903,13 +1207,14 @@ pub async fn assistant_configure<R: Runtime>(app: AppHandle<R>, update: PrefsUpd
     let prefs = {
         let mut inner = state(&app).lock();
         let prefs = &mut inner.prefs;
-        // Picking a corner moves a dragged dot back into it.
-        if update.corner != prefs.corner {
+        // Picking a place moves a dragged dot back into it.
+        if update.corner != prefs.corner || update.placement != prefs.placement {
             prefs.position = None;
         }
         prefs.enabled = update.enabled;
+        prefs.placement = update.placement;
         prefs.corner = update.corner;
-        prefs.size = update.size;
+        prefs.look = update.look.sanitized();
         prefs.shortcut = shortcut_text;
         prefs.background = update.background;
         prefs.hide_in_fullscreen = update.hide_in_fullscreen;
@@ -959,13 +1264,13 @@ pub async fn assistant_panel_hidden<R: Runtime>(app: AppHandle<R>, generation: u
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DotView {
-    size: DotSize,
+    look: DotLook,
     panel_open: bool,
 }
 
 fn dot_view<R: Runtime>(app: &AppHandle<R>) -> DotView {
     let inner = state(app).lock();
-    DotView { size: inner.prefs.size, panel_open: inner.panel_open }
+    DotView { look: inner.prefs.look.clone(), panel_open: inner.panel_open }
 }
 
 /// The dot's page has loaded: show the window.
@@ -983,6 +1288,7 @@ pub async fn assistant_dot_ready<R: Runtime>(app: AppHandle<R>, window: WebviewW
 pub struct PanelView {
     open: bool,
     origin: Corner,
+    wake: Option<WakeCall>,
 }
 
 /// The panel's page has loaded: show it if it was requested meanwhile.
@@ -991,16 +1297,17 @@ pub async fn assistant_panel_ready<R: Runtime>(app: AppHandle<R>, window: Webvie
     if window.label() != PANEL_LABEL {
         return Err("only the assistant panel can do this".into());
     }
-    let (open, origin) = {
+    let (open, origin, wake) = {
         let mut inner = state(&app).lock();
         inner.panel_loaded = true;
-        (inner.panel_open, inner.panel_origin)
+        let wake = if inner.panel_open { inner.pending_wake.take() } else { None };
+        (inner.panel_open, inner.panel_origin, wake)
     };
     if open {
         let _ = window.show();
         let _ = window.set_focus();
     }
-    Ok(PanelView { open, origin })
+    Ok(PanelView { open, origin, wake })
 }
 
 /// The dot's right-click menu. Synchronous so the menu runs on the main thread.
@@ -1066,23 +1373,65 @@ mod tests {
     /// 1366×768 laptop at 125 % with a 40 px taskbar.
     const LAPTOP: Screen = Screen { work: Rect { x: 0, y: 0, w: 1366, h: 728 }, scale: 1.25 };
 
+    /// A 52 px glowing dot: 52 + 2×18 px room = 88 px window.
+    fn big() -> DotLook {
+        DotLook { diameter: 52, glow: true, edge_gap: 18, ..DotLook::default() }
+    }
+
     #[test]
     fn corners_keep_the_dot_inside_the_work_area() {
-        // 52 px dot + 2×14 px glow room = 80 px window, 4 px inset (18 px visible gap).
-        assert_eq!(corner_position(HD, Corner::BottomRight, DotSize::Medium), (1920 - 80 - 4, 1040 - 80 - 4));
-        assert_eq!(corner_position(HD, Corner::TopLeft, DotSize::Medium), (4, 4));
-        assert_eq!(corner_position(HD, Corner::BottomLeft, DotSize::Large), (4, 1040 - 88 - 4));
-        // Scaled: 80 × 1.25 = 100 px window, inset 5 px.
-        assert_eq!(corner_position(LAPTOP, Corner::TopRight, DotSize::Medium), (1366 - 100 - 5, 5));
+        // Visible gap 18 px = room 18 px, so the window touches the work area's edge.
+        assert_eq!(corner_position(HD, Corner::BottomRight, &big()), (1920 - 88, 1040 - 88));
+        assert_eq!(corner_position(HD, Corner::TopLeft, &big()), (0, 0));
+        // Default: 24 px dot + 2×8 px room = 40 px window, 12 px gap → 4 px inset.
+        let look = DotLook::default();
+        assert_eq!(corner_position(HD, Corner::BottomLeft, &look), (4, 1040 - 40 - 4));
+        // Scaled: 40 × 1.25 = 50 px window, inset 5 px.
+        assert_eq!(corner_position(LAPTOP, Corner::TopRight, &look), (1366 - 50 - 5, 5));
         let second = Screen { work: Rect { x: 1920, y: -200, w: 1280, h: 984 }, scale: 1.0 };
-        assert_eq!(corner_position(second, Corner::TopLeft, DotSize::Small), (1924, -196));
+        assert_eq!(corner_position(second, Corner::TopLeft, &look), (1924, -196));
+        // No gap: the transparent room overhangs the work area.
+        let flush = DotLook { edge_gap: 0, ..DotLook::default() };
+        assert_eq!(corner_position(HD, Corner::BottomRight, &flush), (1920 - 40 + 8, 1040 - 40 + 8));
     }
 
     #[test]
     fn dragged_dots_stay_on_screen() {
-        assert_eq!(clamp_dot(HD, DotSize::Medium, (500, 400)), (500, 400));
-        // The glow may overhang by 14 px, the dot itself may not.
-        assert_eq!(clamp_dot(HD, DotSize::Medium, (-60, 2000)), (-14, 1040 - 80 + 14));
+        assert_eq!(clamp_dot(HD, &big(), (500, 400)), (500, 400));
+        // The room may overhang by 18 px, the dot itself may not.
+        assert_eq!(clamp_dot(HD, &big(), (-60, 2000)), (-18, 1040 - 88 + 18));
+    }
+
+    #[test]
+    fn the_dot_sits_in_the_taskbar_after_the_app_buttons() {
+        // 1920×1080 with a 40 px taskbar; the next part starts at x = 1650.
+        let bottom = Taskbar { bar: Rect { x: 0, y: 1040, w: 1920, h: 40 }, next: Rect { x: 1650, y: 1040, w: 270, h: 40 } };
+        assert_eq!(taskbar_position(bottom, 40, 0), (1610, 1040));
+        assert_eq!(taskbar_position(bottom, 30, 4), (1616, 1045));
+        // A taskbar on the right: the tray sits at its bottom.
+        let right = Taskbar { bar: Rect { x: 1860, y: 0, w: 60, h: 1080 }, next: Rect { x: 1860, y: 900, w: 60, h: 180 } };
+        assert_eq!(taskbar_position(right, 40, 0), (1870, 860));
+    }
+
+    #[test]
+    fn widgets_after_the_app_buttons_come_first() {
+        // As measured on Windows 10: Start, search, Task View, app buttons, "News and interests", tray.
+        let row = |x: i32, w: i32| Rect { x, y: 1030, w, h: 50 };
+        let buttons = row(548, 750);
+        let parts = [row(0, 60), row(60, 430), row(490, 60), buttons, row(1298, 250), row(1558, 362)];
+        assert_eq!(first_after(buttons, &parts, true), Some(row(1298, 250)));
+        // Without the widget, the tray.
+        assert_eq!(first_after(buttons, &[row(0, 60), buttons, row(1558, 362), row(0, 0)], true), Some(row(1558, 362)));
+        assert_eq!(first_after(buttons, &[row(0, 60)], true), None);
+    }
+
+    #[test]
+    fn looks_are_kept_within_limits() {
+        let wild = DotLook { diameter: 200, idle_opacity: 3, edge_gap: 99, color: "url(javascript:alert(1))".into(), ..DotLook::default() }.sanitized();
+        assert_eq!((wild.diameter, wild.idle_opacity, wild.edge_gap, wild.color.as_str()), (56, 25, 48, "accent"));
+        assert_eq!(DotLook { color: "#A1b2C3".into(), ..DotLook::default() }.sanitized().color, "#A1b2C3");
+        assert_eq!(DotLook { color: "#12345".into(), ..DotLook::default() }.sanitized().color, "accent");
+        assert_eq!(DotLook { color: "white".into(), ..DotLook::default() }.sanitized().color, "white");
     }
 
     #[test]
@@ -1097,33 +1446,46 @@ mod tests {
 
     #[test]
     fn panel_opens_above_a_bottom_right_dot() {
-        let (x, y) = corner_position(HD, Corner::BottomRight, DotSize::Medium);
-        let dot = Rect { x, y, w: 80, h: 80 };
-        let placement = panel_placement(HD, dot);
+        let look = big();
+        let (x, y) = corner_position(HD, Corner::BottomRight, &look);
+        let dot = Rect { x, y, w: 88, h: 88 };
+        let placement = panel_placement(HD, dot, look.room());
         let panel = placement.window;
         assert_eq!(placement.origin, Corner::BottomRight);
-        assert_eq!((panel.w, panel.h), (460 + 32, 620 + 32));
+        assert_eq!((panel.w, panel.h), (PANEL_WIDTH as i32 + 32, PANEL_MAX_HEIGHT as i32 + 32));
         // Visible panel: right edge flush with the dot, 18 px above the dot.
-        assert_eq!(panel.right() - 16, dot.right() - 14);
-        assert_eq!(panel.bottom() - 16, dot.y + 14 - 18);
+        assert_eq!(panel.right() - 16, dot.right() - 18);
+        assert_eq!(panel.bottom() - 16, dot.y + 18 - 18);
         // Its shadow room never reaches the dot itself.
-        assert!(panel.bottom() <= dot.y + 14);
+        assert!(panel.bottom() <= dot.y + 18);
     }
 
     #[test]
     fn panel_opens_below_a_top_left_dot() {
-        let dot = Rect { x: 4, y: 4, w: 80, h: 80 };
-        let placement = panel_placement(HD, dot);
+        let dot = Rect { x: 4, y: 4, w: 88, h: 88 };
+        let placement = panel_placement(HD, dot, 18.0);
         assert_eq!(placement.origin, Corner::TopLeft);
-        assert_eq!(placement.window.x + 16, dot.x + 14);
-        assert_eq!(placement.window.y + 16, dot.bottom() - 14 + 18);
+        assert_eq!(placement.window.x + 16, dot.x + 18);
+        assert_eq!(placement.window.y + 16, dot.bottom() - 18 + 18);
+    }
+
+    #[test]
+    fn panel_opens_above_a_dot_in_the_taskbar() {
+        // The dot window sits on the taskbar, below the work area.
+        let dot = Rect { x: 1610, y: 1040, w: 40, h: 40 };
+        let placement = panel_placement(HD, dot, DOT_ROOM);
+        let panel = placement.window;
+        assert_eq!(placement.origin, Corner::BottomRight);
+        assert!(panel.bottom() - 16 <= HD.work.bottom() - 16, "stays inside the work area");
+        assert_eq!(panel.right() - 16, dot.right() - 8);
     }
 
     #[test]
     fn panel_shrinks_to_fit_small_screens() {
-        let (x, y) = corner_position(LAPTOP, Corner::BottomRight, DotSize::Medium);
-        let dot = Rect { x, y, w: 100, h: 100 };
-        let panel = panel_placement(LAPTOP, dot).window;
+        let look = big();
+        let (x, y) = corner_position(LAPTOP, Corner::BottomRight, &look);
+        let dot = Rect { x, y, w: 110, h: 110 };
+        let panel = panel_placement(LAPTOP, dot, look.room()).window;
         assert!(panel.y >= LAPTOP.work.y && panel.bottom() <= LAPTOP.work.bottom());
         assert!(panel.x >= 0 && panel.right() <= LAPTOP.work.right());
         assert!(panel.h < px(PANEL_MAX_HEIGHT + 2.0 * PANEL_PAD, 1.25));
@@ -1147,7 +1509,11 @@ mod tests {
         assert_eq!(prefs.position, Some(Point { x: -10, y: 20 }));
         assert!(prefs.enabled && !prefs.background);
         assert_eq!(prefs.shortcut, DEFAULT_SHORTCUT);
-        assert!(serde_json::from_str::<PrefsUpdate>(r#"{"enabled":true,"corner":"topLeft","size":"small","shortcut":"","background":false,"position":{"x":0,"y":0}}"#).is_err());
+        // The 1.2 "size" setting is ignored: the new, quieter look applies.
+        let old: AssistantPrefs = serde_json::from_str(r#"{"corner":"bottomRight","size":"large"}"#).unwrap();
+        assert_eq!(old.look, DotLook::default());
+        assert_eq!(old.placement, Placement::Taskbar);
+        assert!(serde_json::from_str::<PrefsUpdate>(r#"{"enabled":true,"placement":"corner","corner":"topLeft","look":{},"shortcut":"","background":false,"position":{"x":0,"y":0}}"#).is_err());
     }
 
     #[test]

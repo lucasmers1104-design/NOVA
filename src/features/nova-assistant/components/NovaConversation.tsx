@@ -28,12 +28,12 @@ function UserMessage({ item }: { item: Extract<Item, { kind: "user" }> }) {
         a.preview ? (
           <img key={a.label} src={a.preview} alt={a.label} className="max-h-28 max-w-[70%] rounded-[12px] border border-line object-contain" />
         ) : (
-          <span key={a.label} className="rounded-full border border-line bg-white/[0.04] px-2.5 py-0.5 text-[11px] text-fg-muted">
-            📎 {a.label}
+          <span key={a.label} className="rounded-full bg-white/[0.06] px-2.5 py-0.5 text-[11px] text-fg-muted">
+            {a.label}
           </span>
         ),
       )}
-      {item.text && <p className="max-w-[85%] rounded-[16px] rounded-br-[6px] accent-soft px-3.5 py-2 text-[13px] leading-relaxed whitespace-pre-wrap text-fg select-text">{item.text}</p>}
+      {item.text && <p className="max-w-[85%] rounded-[18px] rounded-br-[6px] bg-white/[0.07] px-3.5 py-2 text-[13.5px] leading-relaxed whitespace-pre-wrap text-fg select-text">{item.text}</p>}
     </div>
   );
 }
@@ -42,7 +42,7 @@ function AssistantMessage({ item, onConfirm, onRetry, last }: { item: AssistantI
   const usage = usageLine(item.usage);
   const empty = item.segments.length === 0;
   return (
-    <div className="text-[13px] leading-relaxed text-fg" aria-busy={item.streaming}>
+    <div className="group text-[13.5px] leading-relaxed text-fg" aria-busy={item.streaming}>
       {item.segments.map((segment, index) =>
         segment.type === "text" ? (
           <div key={index} className="select-text">
@@ -60,7 +60,7 @@ function AssistantMessage({ item, onConfirm, onRetry, last }: { item: AssistantI
         </span>
       )}
       {item.error && (
-        <div role="alert" className="mt-1.5 flex items-start gap-2 rounded-[12px] border border-danger/30 bg-danger/[0.07] px-3 py-2 text-[12px] text-fg">
+        <div role="alert" className="mt-1.5 flex items-start gap-2 rounded-[12px] bg-danger/[0.08] px-3 py-2 text-[12px] text-fg">
           <TriangleAlert size={14} className="mt-0.5 shrink-0 text-danger" aria-hidden />
           <span className="min-w-0 flex-1">{item.error}</span>
           {last && (
@@ -70,7 +70,7 @@ function AssistantMessage({ item, onConfirm, onRetry, last }: { item: AssistantI
           )}
         </div>
       )}
-      {usage && !item.streaming && <p className="mt-1 text-[10.5px] text-fg-subtle tabular-nums">{usage}</p>}
+      {usage && !item.streaming && <p className="mt-1 text-[10.5px] text-fg-subtle tabular-nums opacity-0 transition-opacity group-hover:opacity-100">{usage}</p>}
     </div>
   );
 }
@@ -102,7 +102,7 @@ export function NovaConversation({ items, onConfirm, onRetry }: NovaConversation
         const el = e.currentTarget;
         pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
       }}
-      className={cn("min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-3")}
+      className={cn("min-h-0 flex-1 space-y-5 overflow-y-auto px-5 pt-2 pb-3")}
     >
       {items.map((item, index) =>
         item.kind === "user" ? (

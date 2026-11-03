@@ -34,6 +34,8 @@
     "allow-assistant-agent-configure",
     "allow-voice-listen",
     "allow-voice-stop",
-    "allow-voice-open-settings"
+    "allow-voice-open-settings",
+    "allow-wake-status",
+    "allow-wake-set-speaking"
   ]
 }

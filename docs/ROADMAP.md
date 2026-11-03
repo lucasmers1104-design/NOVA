@@ -105,7 +105,13 @@ Legend: ✅ done · ⬜ planned
 - ✅ Accessibility: labelled controls, live status, alert dialogs for confirmations, keyboard paths, reduced motion
 - ✅ Settings for model, voice, Finder, limits and history; privacy facts and external connections updated
 - ✅ Version 1.2.0, signed installer
-- ⬜ Wake word ("Hey NOVA") and double-clap activation: not built — they need continuous microphone access and couldn't be verified on this PC; push-to-talk and the global shortcut cover activation
+
+## 1.3 — Hands-free and quieter ✅
+- ✅ "Hey NOVA": offline phrase spotting (Windows speech recognition, fixed phrase list with decoys, confidence threshold), pauses during dictation, speech, lock screen and fullscreen apps
+- ✅ Double clap: own detector (onset, width, decay, spectrum, flatness, timing, level match, quiet around) plus live vetoes for keyboard/mouse input and speaker output; 0 false triggers on the speech, music, typing and Windows-sound test sets
+- ✅ Settings with a live test of what NOVA hears
+- ✅ The dot in the taskbar, a quieter default look and a full look editor with preview
+- ✅ A cleaner NOVA AI panel
 
 ## Next ideas
 - Calendar sync adapters (Outlook, Google) behind explicit opt-in

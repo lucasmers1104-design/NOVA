@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-wake-set-speaking"
+description = "Enables the wake_set_speaking command without any pre-configured scope."
+commands.allow = ["wake_set_speaking"]
+
+[[permission]]
+identifier = "deny-wake-set-speaking"
+description = "Denies the wake_set_speaking command without any pre-configured scope."
+commands.deny = ["wake_set_speaking"]

@@ -179,19 +179,27 @@ export function NovaToolCard({ tool, onConfirm }: NovaToolCardProps) {
       role={tool.state === "confirm" ? "alertdialog" : "group"}
       aria-label={`${tool.title} — ${stateLabel}`}
       className={cn(
-        "my-2 rounded-[14px] border p-2.5",
-        tool.state === "confirm" ? (high ? "border-danger/40 bg-danger/[0.06]" : "border-warning/35 bg-warning/[0.05]") : "border-line bg-white/[0.025]",
+        "my-2",
+        tool.state === "confirm" && "rounded-[14px] border p-3",
+        tool.state === "confirm" && (high ? "border-danger/40 bg-danger/[0.06]" : "border-warning/35 bg-warning/[0.05]"),
       )}
     >
       <div className="flex items-start gap-2">
-        <span className="mt-0.5 shrink-0">{icon}</span>
-        <div className="min-w-0 flex-1">
-          <p className="text-[12.5px] leading-snug font-medium text-fg">{tool.title}</p>
-          {tool.summary && tool.state !== "confirm" && <p className={cn("text-[11.5px]", tool.state === "failed" ? "text-danger" : "text-fg-muted")}>{tool.summary}</p>}
-        </div>
+        <span className="mt-[3px] shrink-0">{icon}</span>
+        <p className="min-w-0 flex-1 text-[12.5px] leading-snug">
+          <span className={cn("text-fg", tool.state === "confirm" && "font-medium")}>{tool.title}</span>
+          {tool.summary && tool.state !== "confirm" && (
+            <>
+              <span className="text-fg-subtle" aria-hidden>
+                {" · "}
+              </span>
+              <span className={tool.state === "failed" ? "text-danger" : "text-fg-muted"}>{tool.summary}</span>
+            </>
+          )}
+        </p>
       </div>
       {tool.state === "confirm" && (
-        <div className="mt-2 pl-6">
+        <div className="mt-1.5 pl-6">
           {tool.detail && <p className="text-[11.5px] leading-relaxed text-fg-muted">{tool.detail}</p>}
           <div className="mt-2 flex gap-1.5">
             <Button size="sm" variant={high ? "danger" : "primary"} onClick={() => onConfirm(true)} autoFocus>

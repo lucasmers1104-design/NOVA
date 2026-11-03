@@ -1,4 +1,3 @@
-import "../orb.css";
 import "./dot.css";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -36,7 +35,7 @@ function DotApp() {
   if (!view) return null;
   return (
     <NovaDot
-      size={view.size}
+      look={view.look}
       open={view.panelOpen}
       state={activity.state}
       level={activity.level}

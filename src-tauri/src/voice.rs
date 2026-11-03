@@ -40,8 +40,8 @@ const SETTINGS_PAGES: &[&str] = &["privacy-speech", "privacy-microphone", "speec
 
 /// A voice failure: the message and the settings page that fixes it.
 pub struct VoiceError {
-    message: String,
-    settings: Option<&'static str>,
+    pub(crate) message: String,
+    pub(crate) settings: Option<&'static str>,
 }
 
 impl From<String> for VoiceError {
@@ -57,7 +57,7 @@ impl From<&str> for VoiceError {
 }
 
 /// Readable messages for the common speech failures.
-fn describe(code: i32, language: &str) -> VoiceError {
+pub(crate) fn describe(code: i32, language: &str) -> VoiceError {
     let (message, settings) = match code as u32 {
         0x8004_5509 => ("Windows speech recognition is turned off. Turn on “Online speech recognition” in Windows Settings → Privacy → Speech, then try again.".to_string(), Some("privacy-speech")),
         0x8007_0005 => ("NOVA can't use the microphone. Allow desktop apps to access it in Windows Settings → Privacy → Microphone.".to_string(), Some("privacy-microphone")),
@@ -204,6 +204,8 @@ pub async fn voice_listen<R: Runtime>(app: AppHandle<R>, on_event: Channel<Voice
     let app2 = app.clone();
     let channel = on_event.clone();
     let outcome = tauri::async_runtime::spawn_blocking(move || {
+        // "Hey NOVA" listens with its own recognizer; it waits until dictation is done.
+        crate::wake::pause_for_dictation(&app2, true);
         let state = app2.state::<VoiceState>();
         let send = |event: VoiceEvent| {
             let _ = channel.send(event);
@@ -223,8 +225,10 @@ pub async fn voice_listen<R: Runtime>(app: AppHandle<R>, on_event: Channel<Voice
         result
     })
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| e.to_string());
     state.active.store(false, Ordering::SeqCst);
+    crate::wake::pause_for_dictation(&app, false);
+    let outcome = outcome?;
     if let Err(error) = outcome {
         let _ = on_event.send(VoiceEvent::Error { message: error.message, settings: error.settings });
     }

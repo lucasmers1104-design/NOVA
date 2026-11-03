@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.3.0 — 2026-11-03
+
+### Added
+- **"Hey NOVA"**: say it and NOVA AI opens and listens for your request. Recognized offline by Windows from a fixed phrase list (works with online speech recognition off); similar phrases ("Hey Noah", "Nova", other assistants' names) are ignored, and "Only when clear" accepts only what Windows is confident about.
+- **Double clap**: clap twice to wake NOVA. NOVA's own detector looks for two sudden, short, noise-like bursts 0.17–0.65 s apart, about equally loud, with quiet before, between and after. Speech, music, typing, knocks, clinks and beeps, single claps and applause don't count, nor do claps while you type or click, or sounds that come from the PC's speakers. "Very precise" (default) or "More forgiving".
+- Settings → Hey NOVA & claps: both off until you turn them on; what happens after waking (listen or just open), a wake sound, pausing in fullscreen apps and games, and a two-minute test that shows what NOVA hears without opening anything. Listening pauses during dictation, while NOVA speaks and while the PC is locked.
+- **The dot's look is yours**: glass, orb, flat or ring; size 16–56 px; color (accent, white, presets or any color); how visible it is at rest; glow, breathing, the sparkle and activity rings on or off — with a live preview.
+- The dot can sit **in the taskbar**, right after your app buttons (before widgets such as News and interests), and follows it as the taskbar changes; or in a corner with an adjustable distance from the edge.
+
+### Changed
+- The dot is much quieter by default: a 24 px glass bead in the taskbar, 70 % visible until you point at it, without glow or breathing.
+- NOVA AI's panel is cleaner: a slim header (status only while NOVA works), one menu for spoken replies, action history, AI provider and settings, a centered greeting with a few suggestions, one input with a single "+" for files and screenshots, no footer. Replies read as plain text, actions as one-line notes; only confirmations stand out. Token usage appears when you point at a reply.
+
+### Security
+- 93 explicitly permitted commands. The dot and panel may read the wake status and report when NOVA speaks; only the main window can change wake settings or run the test. The microphone audio for "Hey NOVA" and claps never leaves memory.
+
 ## 1.2.0 — 2026-11-02
 
 ### Added

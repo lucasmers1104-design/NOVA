@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { getTauriVersion, getVersion } from "@tauri-apps/api/app";
-import { Activity, AudioLines, Check, CloudDownload, FolderSearch, Globe, Info, Keyboard, KeyRound, LayoutDashboard, Layers, type LucideIcon, Palette, PanelLeft, Plug, Power, RotateCcw, ShieldCheck, Sparkles, TriangleAlert } from "lucide-react";
+import { Activity, AudioLines, Check, CloudDownload, Ear, FolderSearch, Globe, Info, Keyboard, KeyRound, LayoutDashboard, Layers, type LucideIcon, Palette, PanelLeft, Plug, Power, RotateCcw, ShieldCheck, Sparkles, TriangleAlert } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { SHORTCUTS } from "@/app/shortcuts";
 import { NovaMark } from "@/components/brand/NovaMark";
@@ -11,6 +11,7 @@ import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { Switch } from "@/components/ui/Switch";
 import { AgentSettings, AssistantHistoryRow, FinderSettings } from "@/features/nova-assistant/AgentSettings";
 import { AssistantSettings } from "@/features/nova-assistant/AssistantSettings";
+import { WakeSettings } from "@/features/nova-assistant/WakeSettings";
 import { useSystemInfo } from "@/features/system/api";
 import { cn } from "@/lib/cn";
 import { callNative, isDesktop } from "@/lib/native";
@@ -28,6 +29,7 @@ const SECTIONS: readonly { id: string; label: string; icon: LucideIcon }[] = [
   { id: "navigation", label: "Navigation", icon: PanelLeft },
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "assistant", label: "NOVA AI assistant", icon: Sparkles },
+  { id: "wake", label: "Hey NOVA & claps", icon: Ear },
   { id: "assistant-brain", label: "Assistant model & voice", icon: AudioLines },
   { id: "finder", label: "NOVA Finder", icon: FolderSearch },
   { id: "ai", label: "AI providers", icon: KeyRound },
@@ -98,6 +100,7 @@ export default function SettingsPage() {
           <NavigationSettings />
           <DashboardSection />
           <AssistantSettings />
+          <WakeSettings />
           <AgentSettings />
           <FinderSettings />
           <AiProviderSettings />
@@ -245,8 +248,9 @@ const PRIVACY_FACTS = [
   "System metrics, apps, files and media are read locally and never leave your device.",
   "AI keys live in Windows Credential Manager. Only your messages — and screenshots or files when you share them — go to the provider you chose.",
   "Wallpaper colors are sampled on this PC.",
-  "The NOVA AI dot never uses the microphone or captures your screen in the background. Changes to files always wait for your OK.",
+  "The NOVA AI dot never captures your screen in the background. Changes to files always wait for your OK.",
   "Voice input uses Windows speech recognition, only while the microphone button is active.",
+  "“Hey NOVA” and the double clap keep the microphone open only while you turn them on. The sound is checked on this PC and never recorded, saved or sent.",
 ];
 
 interface StorageStatus {

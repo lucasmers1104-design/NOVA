@@ -1,0 +1,709 @@
+//! Hands-free wake-up for NOVA AI: "Hey NOVA" and a double clap.
+//!
+//! Off until the user turns it on. While on, the microphone stays open; its
+//! audio is analysed in memory as it arrives and is never recorded, stored or
+//! sent. "Hey NOVA" is recognized offline by Windows from a fixed phrase list
+//! (see `word`), claps by NOVA's own detector (see `clap`).
+//!
+//! Listening pauses while NOVA takes dictation or speaks, while the PC is
+//! locked and, if the user wants, while a fullscreen app or game runs.
+
+pub mod clap;
+#[cfg(windows)]
+mod mic;
+#[cfg(windows)]
+mod word;
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Condvar, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
+
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
+
+use crate::storage::Database;
+use clap::Sensitivity;
+
+type CommandResult<T> = Result<T, String>;
+
+const PREFS_KEY: &str = "nova.assistant.wake";
+const EVENT_STATUS: &str = "wake://status";
+const EVENT_HEARD: &str = "wake://heard";
+
+/// The phrase that wakes NOVA, as Windows should recognize it.
+const WAKE_PHRASE: &str = "hey nova";
+/// Common and similar-sounding phrases in the same list, so that speech which
+/// only resembles the wake phrase matches one of these instead of it.
+const DECOYS: &[&str] = &[
+    "hey", "nova", "hallo", "okay", "ja", "nein", "danke", "genau", "na ja", "hey noah", "hey nora", "hey du", "hey leute", "hey google", "okay google", "hey siri",
+    "alexa", "hey cortana",
+];
+/// A test in Settings ends by itself after this long.
+const TEST_LENGTH: Duration = Duration::from_secs(120);
+/// Spoken replies longer than this no longer pause listening (a lost "done").
+const SPEAKING_LIMIT: Duration = Duration::from_secs(90);
+/// Two wake-ups closer than this are one.
+const WAKE_DEBOUNCE: Duration = Duration::from_secs(3);
+/// Keyboard or mouse input this close to a clap means it was probably a key or a click.
+const INPUT_VETO: Duration = Duration::from_millis(300);
+/// Speaker output this loud (peak × volume) around a clap means the sound came from the PC.
+const SPEAKER_VETO: f32 = 0.2;
+
+// ---------------------------------------------------------------------------
+// Preferences and status
+// ---------------------------------------------------------------------------
+
+/// What NOVA does once it wakes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AfterWake {
+    /// Open NOVA AI and listen for a spoken request.
+    #[default]
+    Listen,
+    /// Just open NOVA AI.
+    Open,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct WakePrefs {
+    /// Wake on "Hey NOVA".
+    pub phrase: bool,
+    pub phrase_sensitivity: Sensitivity,
+    /// Wake on a double clap.
+    pub clap: bool,
+    pub clap_sensitivity: Sensitivity,
+    pub after_wake: AfterWake,
+    /// A short sound when NOVA wakes.
+    pub chime: bool,
+    /// Don't listen while a fullscreen app, game or presentation is in front.
+    pub pause_in_fullscreen: bool,
+}
+
+impl Default for WakePrefs {
+    fn default() -> Self {
+        Self {
+            phrase: false,
+            phrase_sensitivity: Sensitivity::Strict,
+            clap: false,
+            clap_sensitivity: Sensitivity::Strict,
+            after_wake: AfterWake::Listen,
+            chime: true,
+            pause_in_fullscreen: true,
+        }
+    }
+}
+
+pub fn load_prefs(db: &Database) -> WakePrefs {
+    db.with(|conn| crate::storage::kv_get(conn, PREFS_KEY))
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default()
+}
+
+/// Why listening is paused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Pause {
+    Dictation,
+    Speaking,
+    Locked,
+    Fullscreen,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize)]
+#[serde(tag = "state", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum Listener {
+    #[default]
+    Off,
+    Starting,
+    Listening,
+    Paused { reason: Pause },
+    /// It can't run; `settings` names the Windows settings page that fixes it.
+    Unavailable { message: String, settings: Option<&'static str> },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WakeStatus {
+    prefs: WakePrefs,
+    phrase: Listener,
+    clap: Listener,
+    /// Listening after waking needs Windows' online speech recognition.
+    dictation: bool,
+    testing: bool,
+}
+
+/// How sure Windows was about a phrase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Confidence {
+    High,
+    Medium,
+    Low,
+    Rejected,
+}
+
+/// Why a double clap didn't wake NOVA.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Veto {
+    /// Someone typed or clicked at the same moment.
+    Typing,
+    /// The sound came from the PC's speakers.
+    Speakers,
+    /// Listening is paused (dictation, speech, fullscreen).
+    Paused,
+}
+
+/// What the test in Settings shows; only sent while a test runs.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum Heard {
+    /// Microphone level 0–1, about ten times a second.
+    Level { value: f32 },
+    Phrase { text: String, confidence: Confidence, accepted: bool },
+    Clap { level_db: f32 },
+    NotAClap { level_db: f32, reason: clap::NotAClap },
+    NotADouble { reason: clap::NotADouble },
+    Double { veto: Option<Veto> },
+}
+
+/// What woke NOVA.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Source {
+    Phrase,
+    Clap,
+}
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+struct Inner {
+    prefs: WakePrefs,
+    dictating: bool,
+    speaking_until: Option<Instant>,
+    testing_until: Option<Instant>,
+    phrase: Listener,
+    clap: Listener,
+    /// The supervisor thread is running.
+    running: bool,
+    /// No phrase recognizer is open (dictation may start its own).
+    phrase_idle: bool,
+    last_wake: Option<Instant>,
+    last_status: Option<WakeStatus>,
+}
+
+#[derive(Default)]
+pub struct WakeState {
+    inner: Mutex<Inner>,
+    changed: Condvar,
+    /// Claps are heard but must not wake NOVA (dictation, speech, fullscreen).
+    suppressed: AtomicBool,
+    testing: AtomicBool,
+}
+
+impl WakeState {
+    fn lock(&self) -> MutexGuard<'_, Inner> {
+        self.inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+fn state<R: Runtime>(app: &AppHandle<R>) -> &WakeState {
+    app.state::<WakeState>().inner()
+}
+
+fn testing(inner: &Inner) -> bool {
+    inner.testing_until.is_some_and(|until| Instant::now() < until)
+}
+
+fn speaking(inner: &Inner) -> bool {
+    inner.speaking_until.is_some_and(|until| Instant::now() < until)
+}
+
+fn status_of(inner: &Inner) -> WakeStatus {
+    WakeStatus { prefs: inner.prefs.clone(), phrase: inner.phrase.clone(), clap: inner.clap.clone(), dictation: dictation_allowed(), testing: testing(inner) }
+}
+
+/// Sends the status to the windows if it changed.
+fn publish<R: Runtime>(app: &AppHandle<R>) {
+    let status = {
+        let mut inner = state(app).lock();
+        let status = status_of(&inner);
+        if inner.last_status.as_ref() == Some(&status) {
+            return;
+        }
+        inner.last_status = Some(status.clone());
+        status
+    };
+    let _ = app.emit(EVENT_STATUS, status);
+}
+
+fn heard<R: Runtime>(app: &AppHandle<R>, what: Heard) {
+    // Development: NOVA_WAKE_LOG=1 prints everything the listener hears.
+    if cfg!(debug_assertions) && !matches!(what, Heard::Level { .. }) && std::env::var_os("NOVA_WAKE_LOG").is_some() {
+        eprintln!("[wake] {what:?}");
+    }
+    if state(app).testing.load(Ordering::Relaxed) {
+        let _ = app.emit(EVENT_HEARD, what);
+    }
+}
+
+#[cfg(windows)]
+fn dictation_allowed() -> bool {
+    mic::dictation_allowed()
+}
+
+#[cfg(not(windows))]
+fn dictation_allowed() -> bool {
+    false
+}
+
+/// Startup: begin listening if the user turned it on.
+pub fn init<R: Runtime>(app: &AppHandle<R>, prefs: WakePrefs) {
+    state(app).lock().prefs = prefs;
+    ensure_running(app);
+    // Development: NOVA_DEV_WAKE_AFTER=<seconds> acts as if a double clap was heard.
+    if let Some(seconds) = std::env::var("NOVA_DEV_WAKE_AFTER").ok().filter(|_| cfg!(debug_assertions)).and_then(|s| s.parse::<u64>().ok()) {
+        let app = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(seconds));
+            wake_up(&app, Source::Clap);
+        });
+    }
+}
+
+fn ensure_running<R: Runtime>(app: &AppHandle<R>) {
+    let state = state(app);
+    {
+        let mut inner = state.lock();
+        let wanted = inner.prefs.phrase || inner.prefs.clap || testing(&inner);
+        if !wanted || inner.running {
+            state.changed.notify_all();
+            return;
+        }
+        inner.running = true;
+        inner.phrase_idle = true;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        #[cfg(windows)]
+        let _ = crate::shell::with_com(false, || {
+            supervise(&app);
+            Ok(())
+        });
+        let state = self::state(&app);
+        {
+            let mut inner = state.lock();
+            inner.running = false;
+            inner.phrase_idle = true;
+            inner.phrase = Listener::Off;
+            inner.clap = Listener::Off;
+        }
+        state.changed.notify_all();
+        publish(&app);
+        // Turned on again while this thread was winding down.
+        ensure_running(&app);
+    });
+}
+
+/// Dictation opens its own recognizer: stop the phrase listener first (and
+/// wait briefly until it has let go), start it again afterwards.
+pub fn pause_for_dictation<R: Runtime>(app: &AppHandle<R>, dictating: bool) {
+    let state = state(app);
+    let mut inner = state.lock();
+    inner.dictating = dictating;
+    state.suppressed.store(dictating || speaking(&inner), Ordering::SeqCst);
+    state.changed.notify_all();
+    let deadline = Instant::now() + Duration::from_millis(1500);
+    while dictating && inner.running && !inner.phrase_idle {
+        let Some(left) = deadline.checked_duration_since(Instant::now()) else { break };
+        inner = state.changed.wait_timeout(inner, left).unwrap_or_else(|p| p.into_inner()).0;
+    }
+}
+
+/// Opens NOVA AI after a wake word or a double clap (unless a test runs).
+fn wake_up<R: Runtime>(app: &AppHandle<R>, source: Source) {
+    let prefs = {
+        let mut inner = state(app).lock();
+        if testing(&inner) || inner.dictating || inner.last_wake.is_some_and(|at| at.elapsed() < WAKE_DEBOUNCE) {
+            return;
+        }
+        inner.last_wake = Some(Instant::now());
+        inner.prefs.clone()
+    };
+    let listen = prefs.after_wake == AfterWake::Listen && dictation_allowed();
+    if cfg!(debug_assertions) && std::env::var_os("NOVA_WAKE_LOG").is_some() {
+        eprintln!("[wake] woke by {source:?} (listen: {listen})");
+    }
+    crate::assistant::wake(app, source, listen, prefs.chime);
+}
+
+/// Whether a phrase Windows heard should wake NOVA.
+fn accepts(text: &str, confidence: Confidence, raw: f64, duration_ms: i64, sensitivity: Sensitivity) -> bool {
+    let sure = match sensitivity {
+        Sensitivity::Strict => confidence == Confidence::High,
+        Sensitivity::Normal => confidence == Confidence::High || (confidence == Confidence::Medium && raw >= 0.5),
+    };
+    // "Hey NOVA" takes about half a second to a second; 0 means Windows didn't say.
+    let plausible = duration_ms == 0 || (250..=2500).contains(&duration_ms);
+    text.trim().eq_ignore_ascii_case(WAKE_PHRASE) && sure && plausible
+}
+
+// ---------------------------------------------------------------------------
+// Listening (Windows)
+// ---------------------------------------------------------------------------
+
+#[cfg(windows)]
+struct ClapThread {
+    stop: std::sync::Arc<AtomicBool>,
+    handle: std::thread::JoinHandle<Result<(), mic::MicError>>,
+}
+
+#[cfg(windows)]
+impl ClapThread {
+    fn start<R: Runtime>(app: &AppHandle<R>) -> Self {
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let flag = stop.clone();
+        let app = app.clone();
+        let handle = std::thread::spawn(move || {
+            let mut outcome = Ok(());
+            let _ = crate::shell::with_com(false, || {
+                outcome = listen_for_claps(&app, &flag);
+                Ok(())
+            });
+            outcome
+        });
+        Self { stop, handle }
+    }
+
+    fn stop(self) {
+        self.stop.store(true, Ordering::SeqCst);
+        let _ = self.handle.join();
+    }
+}
+
+#[cfg(windows)]
+fn mic_problem(error: &mic::MicError) -> Listener {
+    match error {
+        mic::MicError::Denied => Listener::Unavailable {
+            message: "Windows doesn't let NOVA use the microphone. Allow desktop apps to access it in Windows Settings → Privacy → Microphone.".into(),
+            settings: Some("privacy-microphone"),
+        },
+        mic::MicError::Missing => Listener::Unavailable { message: "No microphone was found.".into(), settings: None },
+        mic::MicError::Lost => Listener::Unavailable { message: "The microphone was disconnected. NOVA keeps trying.".into(), settings: None },
+        mic::MicError::Other(code) => Listener::Unavailable { message: format!("The microphone couldn't be opened ({code})."), settings: None },
+    }
+}
+
+/// Keeps the listeners in line with the preferences and pauses until both are turned off.
+#[cfg(windows)]
+fn supervise<R: Runtime>(app: &AppHandle<R>) {
+    let state = state(app);
+    let mut phrase: Option<(word::PhraseListener, String)> = None;
+    let mut phrase_retry = Instant::now();
+    let mut claps: Option<ClapThread> = None;
+    let mut clap_retry = Instant::now();
+    let mut clap_failure: Option<Listener> = None;
+    let mut fullscreen = (false, Instant::now() - Duration::from_secs(10));
+
+    loop {
+        let (prefs, dictating, speaking_now, test) = {
+            let mut inner = state.lock();
+            if inner.testing_until.is_some() && !testing(&inner) {
+                inner.testing_until = None;
+            }
+            (inner.prefs.clone(), inner.dictating, speaking(&inner), testing(&inner))
+        };
+        state.testing.store(test, Ordering::Relaxed);
+        let want_phrase = prefs.phrase || test;
+        let want_clap = prefs.clap || test;
+        if !want_phrase && !want_clap {
+            break;
+        }
+        if prefs.pause_in_fullscreen && fullscreen.1.elapsed() >= Duration::from_secs(2) {
+            fullscreen = (crate::assistant::fullscreen_in_front(), Instant::now());
+        }
+        let locked = mic::session_locked();
+        let pause = if locked {
+            Some(Pause::Locked)
+        } else if dictating {
+            Some(Pause::Dictation)
+        } else if speaking_now {
+            Some(Pause::Speaking)
+        } else if prefs.pause_in_fullscreen && fullscreen.0 && !test {
+            Some(Pause::Fullscreen)
+        } else {
+            None
+        };
+        state.suppressed.store(pause.is_some(), Ordering::SeqCst);
+
+        // "Hey NOVA": the recognizer is closed while paused.
+        let language = crate::agent::prefs(app).language;
+        if phrase.as_ref().is_some_and(|(listener, lang)| listener.ended() || *lang != language) {
+            phrase = None;
+        }
+        let phrase_state = if !want_phrase {
+            phrase = None;
+            Listener::Off
+        } else if let Some(reason) = pause {
+            phrase = None;
+            Listener::Paused { reason }
+        } else if phrase.is_some() {
+            Listener::Listening
+        } else if Instant::now() >= phrase_retry {
+            state.lock().phrase = Listener::Starting;
+            publish(app);
+            let mut phrases = vec![WAKE_PHRASE];
+            phrases.extend_from_slice(DECOYS);
+            match word::PhraseListener::start(&language, &phrases, on_phrase(app)) {
+                Ok(listener) => {
+                    phrase = Some((listener, language));
+                    Listener::Listening
+                }
+                Err(error) => {
+                    phrase_retry = Instant::now() + Duration::from_secs(30);
+                    Listener::Unavailable { message: error.message, settings: error.settings }
+                }
+            }
+        } else {
+            state.lock().phrase.clone()
+        };
+
+        // Claps: the microphone stays open through short pauses (claps are
+        // ignored meanwhile) but closes while the PC is locked.
+        if claps.as_ref().is_some_and(|thread| thread.handle.is_finished()) {
+            if let Some(thread) = claps.take() {
+                if let Ok(Err(error)) = thread.handle.join() {
+                    clap_retry = Instant::now() + if error == mic::MicError::Lost { Duration::from_secs(3) } else { Duration::from_secs(30) };
+                    clap_failure = Some(mic_problem(&error));
+                }
+            }
+        }
+        let clap_state = if !want_clap || locked {
+            if let Some(thread) = claps.take() {
+                thread.stop();
+            }
+            clap_failure = None;
+            if want_clap { Listener::Paused { reason: Pause::Locked } } else { Listener::Off }
+        } else {
+            if claps.is_none() && Instant::now() >= clap_retry {
+                claps = Some(ClapThread::start(app));
+                clap_failure = None;
+            }
+            match (&claps, pause, &clap_failure) {
+                (Some(_), Some(reason), _) => Listener::Paused { reason },
+                (Some(_), None, _) => Listener::Listening,
+                (None, _, Some(failure)) => failure.clone(),
+                (None, _, None) => Listener::Starting,
+            }
+        };
+
+        {
+            let mut inner = state.lock();
+            inner.phrase = phrase_state;
+            inner.clap = clap_state;
+            inner.phrase_idle = phrase.is_none();
+        }
+        state.changed.notify_all();
+        publish(app);
+
+        let inner = state.lock();
+        let _ = state.changed.wait_timeout(inner, Duration::from_secs(1));
+    }
+
+    drop(phrase);
+    if let Some(thread) = claps.take() {
+        thread.stop();
+    }
+}
+
+/// Handles what the phrase recognizer heard (on a Windows thread-pool thread).
+#[cfg(windows)]
+fn on_phrase<R: Runtime>(app: &AppHandle<R>) -> impl Fn(word::Heard) + Send + Sync + 'static {
+    let app = app.clone();
+    move |phrase: word::Heard| {
+        let state = self::state(&app);
+        let sensitivity = state.lock().prefs.phrase_sensitivity;
+        let accepted = accepts(&phrase.text, phrase.confidence, phrase.raw, phrase.duration_ms, sensitivity) && !state.suppressed.load(Ordering::SeqCst);
+        heard(&app, Heard::Phrase { text: phrase.text, confidence: phrase.confidence, accepted });
+        if accepted {
+            wake_up(&app, Source::Phrase);
+        }
+    }
+}
+
+/// Runs the clap detector on the microphone until `stop` is set.
+#[cfg(windows)]
+fn listen_for_claps<R: Runtime>(app: &AppHandle<R>, stop: &AtomicBool) -> Result<(), mic::MicError> {
+    use std::collections::VecDeque;
+
+    let state = state(app);
+    let mut detector: Option<clap::ClapDetector> = None;
+    let mut sensitivity = state.lock().prefs.clap_sensitivity;
+    // When the keyboard or mouse was last used, and how loud the speakers were.
+    let mut inputs: VecDeque<Instant> = VecDeque::new();
+    let mut speakers = mic::Speakers::open();
+    let mut speakers_opened = Instant::now();
+    let mut loudness: VecDeque<(Instant, f32)> = VecDeque::new();
+    let mut level = (0.0f32, Instant::now());
+
+    mic::capture(stop, |samples, rate| {
+        let now = Instant::now();
+        let last_input = now.checked_sub(Duration::from_millis(mic::input_idle_ms() as u64)).unwrap_or(now);
+        if inputs.back().is_none_or(|previous| last_input > *previous + Duration::from_millis(5)) {
+            inputs.push_back(last_input);
+        }
+        while inputs.front().is_some_and(|t| now.duration_since(*t) > Duration::from_secs(5)) {
+            inputs.pop_front();
+        }
+        // Follow changes of the default output device now and then.
+        if speakers_opened.elapsed() > Duration::from_secs(30) {
+            speakers = mic::Speakers::open();
+            speakers_opened = now;
+        }
+        let loud = speakers.as_ref().and_then(|s| s.loudness());
+        if loud.is_none() {
+            speakers = None;
+        }
+        loudness.push_back((now, loud.unwrap_or(0.0)));
+        while loudness.front().is_some_and(|(t, _)| now.duration_since(*t) > Duration::from_secs(3)) {
+            loudness.pop_front();
+        }
+
+        let wanted = state.lock().prefs.clap_sensitivity;
+        let detector = detector.get_or_insert_with(|| clap::ClapDetector::new(rate, wanted));
+        if wanted != sensitivity {
+            sensitivity = wanted;
+            detector.set_sensitivity(wanted);
+        }
+        detector.push(samples);
+        let elapsed = detector.elapsed_ms();
+        let at = |ms: u64| now.checked_sub(Duration::from_millis(elapsed.saturating_sub(ms))).unwrap_or(now);
+        for event in detector.drain() {
+            match event {
+                clap::Event::Clap { level_db, .. } => heard(app, Heard::Clap { level_db }),
+                clap::Event::NotAClap { level_db, reason, .. } => heard(app, Heard::NotAClap { level_db, reason }),
+                clap::Event::NotADouble { reason, .. } => heard(app, Heard::NotADouble { reason }),
+                clap::Event::Double { first_ms, second_ms } => {
+                    let (first, second) = (at(first_ms), at(second_ms));
+                    let near = |t: Instant, around: Instant, window: Duration| t + window >= around && t <= around + window;
+                    let veto = if state.suppressed.load(Ordering::SeqCst) {
+                        Some(Veto::Paused)
+                    } else if inputs.iter().any(|t| *t + INPUT_VETO >= first && *t <= second + INPUT_VETO) {
+                        Some(Veto::Typing)
+                    } else if loudness.iter().any(|(t, l)| *l >= SPEAKER_VETO && (near(*t, first, Duration::from_millis(120)) || near(*t, second, Duration::from_millis(120)))) {
+                        Some(Veto::Speakers)
+                    } else {
+                        None
+                    };
+                    heard(app, Heard::Double { veto });
+                    if veto.is_none() {
+                        wake_up(app, Source::Clap);
+                    }
+                }
+            }
+        }
+        if cfg!(debug_assertions) && std::env::var_os("NOVA_WAKE_LOG").is_some() && elapsed / 10_000 != elapsed.saturating_sub(samples.len() as u64 * 1000 / rate.max(1) as u64) / 10_000 {
+            eprintln!("[wake] {} s: noise floor {:.4}, rate {rate}", elapsed / 1000, detector.noise_floor());
+        }
+        if state.testing.load(Ordering::Relaxed) {
+            let peak = samples.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+            level.0 = level.0.max(peak);
+            if level.1.elapsed() >= Duration::from_millis(100) {
+                heard(app, Heard::Level { value: level.0.min(1.0) });
+                level = (0.0, Instant::now());
+            }
+        }
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Commands
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn wake_status<R: Runtime>(app: AppHandle<R>) -> CommandResult<WakeStatus> {
+    Ok(status_of(&state(&app).lock()))
+}
+
+#[tauri::command]
+pub async fn wake_configure<R: Runtime>(app: AppHandle<R>, prefs: WakePrefs) -> CommandResult<WakeStatus> {
+    let json = serde_json::to_string(&prefs).map_err(|e| e.to_string())?;
+    app.state::<Database>().with(|conn| crate::storage::kv_set(conn, PREFS_KEY, &json))?;
+    state(&app).lock().prefs = prefs;
+    ensure_running(&app);
+    publish(&app);
+    Ok(status_of(&state(&app).lock()))
+}
+
+/// Starts (or ends) a test in Settings: what NOVA hears is shown, nothing opens.
+#[tauri::command]
+pub async fn wake_test<R: Runtime>(app: AppHandle<R>, on: bool) -> CommandResult<WakeStatus> {
+    {
+        let state = state(&app);
+        let mut inner = state.lock();
+        inner.testing_until = on.then(|| Instant::now() + TEST_LENGTH);
+        state.testing.store(on, Ordering::Relaxed);
+    }
+    ensure_running(&app);
+    publish(&app);
+    Ok(status_of(&state(&app).lock()))
+}
+
+/// NOVA started or stopped reading a reply aloud (its own voice must not wake it).
+#[tauri::command]
+pub async fn wake_set_speaking<R: Runtime>(app: AppHandle<R>, speaking: bool) -> CommandResult<()> {
+    let state = state(&app);
+    let mut inner = state.lock();
+    inner.speaking_until = speaking.then(|| Instant::now() + SPEAKING_LIMIT);
+    state.suppressed.store(speaking || inner.dictating, Ordering::SeqCst);
+    state.changed.notify_all();
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wake_phrase_needs_confidence() {
+        assert!(accepts("hey nova", Confidence::High, 0.9, 700, Sensitivity::Strict));
+        assert!(accepts("Hey Nova ", Confidence::High, 0.9, 0, Sensitivity::Strict));
+        assert!(!accepts("hey nova", Confidence::Medium, 0.8, 700, Sensitivity::Strict));
+        assert!(accepts("hey nova", Confidence::Medium, 0.6, 700, Sensitivity::Normal));
+        assert!(!accepts("hey nova", Confidence::Medium, 0.3, 700, Sensitivity::Normal));
+        assert!(!accepts("hey nova", Confidence::Low, 0.9, 700, Sensitivity::Normal));
+        // A decoy, or something far too short or long to be the phrase.
+        assert!(!accepts("hey noah", Confidence::High, 0.95, 700, Sensitivity::Normal));
+        assert!(!accepts("hey nova", Confidence::High, 0.95, 120, Sensitivity::Normal));
+        assert!(!accepts("hey nova", Confidence::High, 0.95, 4000, Sensitivity::Normal));
+    }
+
+    #[test]
+    fn decoys_never_include_the_wake_phrase() {
+        assert!(DECOYS.iter().all(|d| !d.eq_ignore_ascii_case(WAKE_PHRASE)));
+    }
+
+    #[test]
+    fn preferences_start_off_and_fill_in_defaults() {
+        let prefs = WakePrefs::default();
+        assert!(!prefs.phrase && !prefs.clap && prefs.chime && prefs.pause_in_fullscreen);
+        let parsed: WakePrefs = serde_json::from_str(r#"{"clap":true,"clapSensitivity":"normal"}"#).unwrap();
+        assert!(parsed.clap && !parsed.phrase);
+        assert_eq!(parsed.clap_sensitivity, Sensitivity::Normal);
+        assert_eq!(parsed.after_wake, AfterWake::Listen);
+    }
+
+    #[test]
+    fn status_serializes_for_the_settings_page() {
+        let json = serde_json::to_value(Listener::Paused { reason: Pause::Dictation }).unwrap();
+        assert_eq!(json, serde_json::json!({ "state": "paused", "reason": "dictation" }));
+        let json = serde_json::to_value(Heard::NotAClap { level_db: -20.0, reason: clap::NotAClap::TooLong }).unwrap();
+        assert_eq!(json, serde_json::json!({ "kind": "notAClap", "levelDb": -20.0, "reason": "tooLong" }));
+    }
+}

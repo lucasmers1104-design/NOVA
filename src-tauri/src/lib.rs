@@ -16,6 +16,7 @@ mod storage;
 mod system;
 mod updates;
 mod voice;
+pub mod wake;
 mod wallpaper;
 
 use std::sync::atomic::Ordering;
@@ -52,6 +53,7 @@ pub fn run() {
         .manage(agent::AgentState::default())
         .manage(finder::FinderState::default())
         .manage(voice::VoiceState::default())
+        .manage(wake::WakeState::default())
         .manage(system::SystemMonitor::new())
         .manage(apps::AppCatalog::default())
         .manage(ai::ChatRequests::default())
@@ -69,6 +71,7 @@ pub fn run() {
             let assistant_prefs = assistant::load_prefs(&database);
             agent::init(app.handle(), agent::load_prefs(&database));
             let finder_prefs = finder::load_prefs(&database);
+            let wake_prefs = wake::load_prefs(&database);
             app.state::<desktop::DesktopState>().close_to_tray.store(close_to_tray, Ordering::Relaxed);
             app.manage(database);
             desktop::create_tray(app.handle())?;
@@ -85,6 +88,7 @@ pub fn run() {
             }
             assistant::init(app.handle(), assistant_prefs);
             finder::init(app.handle(), finder_prefs);
+            wake::init(app.handle(), wake_prefs);
             capture::watch_foreground();
             Ok(())
         })
@@ -207,6 +211,10 @@ pub fn run() {
             voice::voice_listen,
             voice::voice_stop,
             voice::voice_open_settings,
+            wake::wake_status,
+            wake::wake_configure,
+            wake::wake_test,
+            wake::wake_set_speaking,
         ])
         .run(tauri::generate_context!())
         .expect("error while running NOVA");

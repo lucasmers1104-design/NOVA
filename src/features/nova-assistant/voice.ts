@@ -2,6 +2,7 @@ import { Channel } from "@tauri-apps/api/core";
 import { create } from "zustand";
 import { callNative } from "@/lib/native";
 import type { AgentPrefs } from "./types";
+import { setSpeaking } from "./wake";
 
 /** Mirrors `VoiceEvent` in src-tauri/src/voice.rs. */
 export type VoiceEvent =
@@ -137,12 +138,14 @@ export function speak(text: string, prefs: Pick<AgentPrefs, "voice" | "speechRat
     const finish = () => {
       if (decay) clearInterval(decay);
       decay = null;
+      setSpeaking(false);
       useVoice.setState({ mode: "idle", level: 0 });
       resolve();
     };
     // Each word makes the visualizer jump; it settles between words.
     utterance.onboundary = () => useVoice.setState({ level: 0.6 + Math.random() * 0.4 });
     utterance.onstart = () => {
+      setSpeaking(true);
       useVoice.setState({ mode: "speaking", level: 0.5, error: null });
       decay = setInterval(() => useVoice.setState((s) => ({ level: Math.max(0.12, s.level * 0.8) })), 80);
     };

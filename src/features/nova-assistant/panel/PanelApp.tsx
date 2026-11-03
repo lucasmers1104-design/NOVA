@@ -2,11 +2,11 @@ import { emitTo, listen } from "@tauri-apps/api/event";
 import { AnimatePresence, MotionConfig } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import type { MotionPreference } from "@/stores/settings";
-import { agentStatus, assistantStatus, collapseAssistant, configureAgent, finderAddStandardFolders, finderStatus, openNova, panelHidden, panelReady } from "../api";
+import { agentStatus, collapseAssistant, configureAgent, finderAddStandardFolders, finderStatus, openNova, panelHidden, panelReady } from "../api";
 import { useAssistantAppearance } from "../appearance";
 import { NovaPanel } from "../components/NovaPanel";
 import { type AssistantItem, replyText, useConversation } from "../conversation";
-import { ASSISTANT_EVENTS, type AgentStatus, type AssistantState, type AssistantStatus, type DotCorner, type FinderStatus } from "../types";
+import { ASSISTANT_EVENTS, type AgentStatus, type AssistantState, type DotCorner, type FinderStatus, type WakeCall } from "../types";
 import { speak, stopListening, stopSpeaking, useVoice } from "../voice";
 
 const REDUCED_MOTION: Record<MotionPreference, "user" | "always" | "never"> = { system: "user", reduced: "always", full: "never" };
@@ -27,9 +27,10 @@ export function PanelApp() {
   const [origin, setOrigin] = useState<DotCorner>("bottomRight");
   // Each opening is a fresh mount, so it always plays the entrance.
   const [session, setSession] = useState(0);
-  const [status, setStatus] = useState<AssistantStatus | null>(null);
   const [agent, setAgent] = useState<AgentStatus | null>(null);
   const [finder, setFinder] = useState<FinderStatus | null>(null);
+  const [wake, setWake] = useState<{ id: number; call: WakeCall } | null>(null);
+  const wakes = useRef(0);
   const openRef = useRef(open);
   openRef.current = open;
   const pendingHide = useRef<number | null>(null);
@@ -44,19 +45,21 @@ export function PanelApp() {
   useEffect(() => {
     let alive = true;
     const refresh = () => {
-      assistantStatus().then((s) => alive && setStatus(s), () => {});
       agentStatus().then((s) => alive && setAgent(s), () => {});
       finderStatus().then((s) => alive && setFinder(s), () => {});
     };
-    const show = (from: DotCorner) => {
+    const woken = (call: WakeCall | null) => setWake(call && { id: ++wakes.current, call });
+    const show = (from: DotCorner, call: WakeCall | null) => {
       pendingHide.current = null;
+      woken(call);
       setOrigin(from);
       setSession((n) => n + 1);
       setOpen(true);
       refresh();
     };
     const subscriptions = [
-      listen<{ origin: DotCorner }>(ASSISTANT_EVENTS.expand, (event) => show(event.payload.origin)),
+      listen<{ origin: DotCorner; wake: WakeCall | null }>(ASSISTANT_EVENTS.expand, (event) => show(event.payload.origin, event.payload.wake)),
+      listen<WakeCall>(ASSISTANT_EVENTS.wake, (event) => woken(event.payload)),
       listen<{ generation: number }>(ASSISTANT_EVENTS.collapse, (event) => {
         stopListening();
         if (!openRef.current) {
@@ -66,12 +69,11 @@ export function PanelApp() {
         pendingHide.current = event.payload.generation;
         setOpen(false);
       }),
-      listen<AssistantStatus>(ASSISTANT_EVENTS.prefs, (event) => setStatus(event.payload)),
       listen<AgentStatus>(ASSISTANT_EVENTS.agent, (event) => setAgent(event.payload)),
       listen<FinderStatus["progress"]>(ASSISTANT_EVENTS.finder, () => finderStatus().then((s) => alive && setFinder(s), () => {})),
     ];
     panelReady().then(
-      (view) => alive && view.open && show(view.origin),
+      (view) => alive && view.open && show(view.origin, view.wake),
       (error: unknown) => console.error("NOVA panel:", error),
     );
     return () => {
@@ -133,9 +135,8 @@ export function PanelApp() {
             key={session}
             origin={origin}
             name={appearance.displayName}
-            shortcut={status?.shortcut ?? ""}
-            shortcutError={status?.shortcutError ?? null}
             agent={agent}
+            wake={wake}
             finder={finder}
             state={state}
             onCollapse={() => void collapseAssistant()}

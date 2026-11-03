@@ -1,12 +1,36 @@
 /** Screen corner the dot sits in; also the panel corner it grows out of. */
 export type DotCorner = "bottomRight" | "bottomLeft" | "topRight" | "topLeft";
-export type DotSize = "small" | "medium" | "large";
+/** Where the dot lives until it is dragged: in the taskbar or a desktop corner. */
+export type DotPlacement = "taskbar" | "corner";
+export type DotStyle = "glass" | "orb" | "solid" | "ring";
+
+/** Mirrors `DotLook` in src-tauri/src/assistant.rs. */
+export interface DotLook {
+  style: DotStyle;
+  /** Logical px, 16–56. */
+  diameter: number;
+  /** Opacity at rest in percent (25–100); hovering or activity shows it fully. */
+  idleOpacity: number;
+  /** "accent", "white" or "#rrggbb". */
+  color: string;
+  glow: boolean;
+  breathe: boolean;
+  icon: boolean;
+  activity: boolean;
+  /** Gap to the screen edges in a corner (logical px, 0–48). */
+  edgeGap: number;
+}
+
+export const DEFAULT_DOT_LOOK: DotLook = { style: "glass", diameter: 24, idleOpacity: 70, color: "accent", glow: false, breathe: false, icon: true, activity: true, edgeGap: 12 };
 
 /** Mirrors `AssistantStatus` in src-tauri/src/assistant.rs. */
 export interface AssistantStatus {
   enabled: boolean;
+  placement: DotPlacement;
   corner: DotCorner;
-  size: DotSize;
+  look: DotLook;
+  /** The taskbar can host the dot (it doesn't hide itself). */
+  taskbarAvailable: boolean;
   /** Global shortcut such as "Ctrl+Alt+Space"; empty means none. */
   shortcut: string;
   /** Keep NOVA running for the assistant when the main window is closed. */
@@ -21,19 +45,27 @@ export interface AssistantStatus {
   panelOpen: boolean;
 }
 
-export type AssistantPrefsUpdate = Pick<AssistantStatus, "enabled" | "corner" | "size" | "shortcut" | "background" | "hideInFullscreen">;
+export type AssistantPrefsUpdate = Pick<AssistantStatus, "enabled" | "placement" | "corner" | "look" | "shortcut" | "background" | "hideInFullscreen">;
 
 export interface DotView {
-  size: DotSize;
+  look: DotLook;
   panelOpen: boolean;
+}
+
+/** "Hey NOVA" or a double clap opened the panel; mirrors `WakeCall` in assistant.rs. */
+export interface WakeCall {
+  source: "phrase" | "clap";
+  /** Start listening for a spoken request. */
+  listen: boolean;
+  /** Play the wake sound. */
+  chime: boolean;
 }
 
 export interface PanelView {
   open: boolean;
   origin: DotCorner;
+  wake: WakeCall | null;
 }
-
-export const DOT_DIAMETER: Record<DotSize, number> = { small: 44, medium: 52, large: 60 };
 
 /** Everything NOVA AI can be doing; drives the dot, the header and the screen reader. */
 export type AssistantState =
@@ -170,4 +202,10 @@ export const ASSISTANT_EVENTS = {
   agent: "assistant://agent",
   /** → everyone: NOVA Finder indexing progress. */
   finder: "finder://progress",
+  /** → panel (already open): "Hey NOVA" or a double clap. */
+  wake: "assistant://wake",
+  /** → everyone: wake listening status changed. */
+  wakeStatus: "wake://status",
+  /** → main: what the wake listener heard (only during a test). */
+  wakeHeard: "wake://heard",
 } as const;
