@@ -283,8 +283,10 @@ fn state<R: Runtime>(app: &AppHandle<R>) -> &AssistantState {
 }
 
 /// Whether closing the main window should keep NOVA running for the assistant.
+/// The dot stays on the desktop after the window closes; quit from the tray or the dot's menu.
 pub fn runs_in_background<R: Runtime>(app: &AppHandle<R>) -> bool {
-    state(app).lock().prefs.background
+    let inner = state(app).lock();
+    inner.prefs.background || inner.prefs.enabled
 }
 
 // ---------------------------------------------------------------------------
@@ -859,6 +861,11 @@ pub fn init<R: Runtime>(app: &AppHandle<R>, prefs: AssistantPrefs) {
     }
 }
 
+/// Where Windows parks minimized windows.
+fn is_parked(pos: PhysicalPosition<i32>) -> bool {
+    pos.x <= -30_000 || pos.y <= -30_000
+}
+
 /// The dot sits in the taskbar (shown, not dragged elsewhere).
 fn docked(prefs: &AssistantPrefs) -> bool {
     prefs.enabled && prefs.position.is_none() && prefs.placement == Placement::Taskbar
@@ -996,6 +1003,14 @@ fn apply<R: Runtime>(app: &AppHandle<R>, previous: &AssistantPrefs, prefs: &Assi
 /// Called for every move of the dot window. Moves NOVA made itself are
 /// ignored; a drag is saved once the mouse button is up and the dot rests.
 pub fn on_dot_moved<R: Runtime>(app: &AppHandle<R>, pos: PhysicalPosition<i32>) {
+    // Minimizing (Win+M, other tools) parks windows at -32000: not a drag. Bring the dot back.
+    if is_parked(pos) {
+        if let Some(dot) = app.get_webview_window(DOT_LABEL) {
+            let _ = dot.unminimize();
+            place_dot(app, &dot);
+        }
+        return;
+    }
     let state = state(app);
     {
         let mut inner = state.lock();
@@ -1071,6 +1086,8 @@ const MENU_TALK: &str = "assistant-talk";
 const MENU_OPEN: &str = "assistant-open";
 const MENU_SETTINGS: &str = "assistant-settings";
 const MENU_HIDE: &str = "assistant-hide";
+const MENU_QUIT: &str = "assistant-quit";
+const MENU_LISTEN: &str = "assistant-listen";
 
 /// Handles the assistant's items in the tray and dot menus.
 pub fn on_menu_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
@@ -1083,6 +1100,8 @@ pub fn on_menu_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
             let app = app.clone();
             std::thread::spawn(move || hide_dot(&app));
         }
+        MENU_QUIT => app.exit(0),
+        MENU_LISTEN => crate::wake::toggle_muted(app),
         _ => {}
     }
 }
@@ -1319,7 +1338,15 @@ pub fn assistant_dot_menu<R: Runtime>(app: AppHandle<R>, window: WebviewWindow<R
         let main = MenuItem::with_id(&app, MENU_OPEN, "Open NOVA", true, None::<&str>)?;
         let settings = MenuItem::with_id(&app, MENU_SETTINGS, "Assistant settings…", true, None::<&str>)?;
         let hide = MenuItem::with_id(&app, MENU_HIDE, "Hide the dot", true, None::<&str>)?;
-        Menu::with_items(&app, &[&talk, &main, &settings, &PredefinedMenuItem::separator(&app)?, &hide])
+        let quit = MenuItem::with_id(&app, MENU_QUIT, "Quit NOVA", true, None::<&str>)?;
+        let separator = PredefinedMenuItem::separator(&app)?;
+        match crate::wake::listening(&app) {
+            Some(on) => {
+                let listen = MenuItem::with_id(&app, MENU_LISTEN, if on { "Pause listening" } else { "Resume listening" }, true, None::<&str>)?;
+                Menu::with_items(&app, &[&talk, &listen, &main, &settings, &separator, &hide, &quit])
+            }
+            None => Menu::with_items(&app, &[&talk, &main, &settings, &separator, &hide, &quit]),
+        }
     };
     let menu = build().map_err(|e| e.to_string())?;
     window.popup_menu(&menu).map_err(|e| e.to_string())
@@ -1411,6 +1438,13 @@ mod tests {
         // A taskbar on the right: the tray sits at its bottom.
         let right = Taskbar { bar: Rect { x: 1860, y: 0, w: 60, h: 1080 }, next: Rect { x: 1860, y: 900, w: 60, h: 180 } };
         assert_eq!(taskbar_position(right, 40, 0), (1870, 860));
+    }
+
+    #[test]
+    fn a_minimized_dot_is_not_a_drag() {
+        assert!(is_parked(PhysicalPosition::new(-32000, -32000)));
+        assert!(!is_parked(PhysicalPosition::new(-10, -10)));
+        assert!(!is_parked(PhysicalPosition::new(1610, 1040)));
     }
 
     #[test]

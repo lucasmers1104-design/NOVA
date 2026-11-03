@@ -50,6 +50,13 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
       if (count) setActive((i) => (i - 1 + count) % count);
+    } else if ((event.key === "Home" || event.key === "End") && event.ctrlKey && count) {
+      // Ctrl+Home / Ctrl+End jump to the first / last result (plain Home/End keep moving the caret).
+      event.preventDefault();
+      setActive(event.key === "Home" ? 0 : count - 1);
+    } else if (event.key === "PageDown" || event.key === "PageUp") {
+      event.preventDefault();
+      if (count) setActive((i) => (event.key === "PageDown" ? Math.min(count - 1, i + 8) : Math.max(0, i - 8)));
     } else if (event.key === "Enter") {
       event.preventDefault();
       const command = results[active];

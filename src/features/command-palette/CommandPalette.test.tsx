@@ -50,6 +50,18 @@ describe("CommandPalette", () => {
     expect(useSettings.getState().accent).toEqual({ kind: "preset", id: "blue" });
   });
 
+  it("jumps to the last and first result with Ctrl+End / Ctrl+Home", async () => {
+    render(<CommandPalette />);
+    openPalette();
+
+    const options = screen.getAllByRole("option");
+    await userEvent.keyboard("{Control>}{End}{/Control}");
+    expect(options[options.length - 1]).toHaveAttribute("aria-selected", "true");
+
+    await userEvent.keyboard("{Control>}{Home}{/Control}");
+    expect(options[0]).toHaveAttribute("aria-selected", "true");
+  });
+
   it("shows an empty state and closes with Escape", async () => {
     render(<CommandPalette />);
     openPalette();

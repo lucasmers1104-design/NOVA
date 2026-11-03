@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.3.1 — 2026-11-03
+
+### Changed
+- The dot stays on the desktop when you close NOVA's window: NOVA keeps running quietly with the dot, the shortcut and "Hey NOVA". Quit from the tray icon or with "Quit NOVA" in the dot's menu. With Start with Windows, NOVA starts with just the dot.
+
+### Added
+- "Pause listening" / "Resume listening" in the dot's right-click menu turns "Hey NOVA" and the double clap off (microphone closed) and back on; Settings shows the pause with a Resume button.
+- "Start with Windows" right in the dot's settings, so the dot is there after every restart.
+- In NOVA AI: copy a reply, jump back to the latest message, Up recalls your last message, Ctrl+N starts a new conversation, Ctrl+Shift+C copies the last reply, dismissible error notes, a cleaner action history.
+- Settings: a "Hover" state in the dot preview, a clearer live test (time left, timestamps, Clear) and a tip on how to clap.
+- Clear buttons and Esc in the Apps, Files and process searches, loading placeholders and better empty messages; Ctrl+Home/End and PageUp/PageDown in the command palette.
+
+### Fixed
+- "Hey NOVA" and the double clap: dictation and the phrase recognizer can no longer overlap, ending a pause no longer lets claps from that moment through, unknown idle time no longer blocks every double clap, no restart loop after short silences, no crash right after boot.
+- Minimizing all windows (Win+M or other tools) no longer moves the dot to the top-left corner.
+
 ## 1.3.0 — 2026-11-03
 
 ### Added

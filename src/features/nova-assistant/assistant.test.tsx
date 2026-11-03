@@ -138,6 +138,13 @@ describe("NovaDot", () => {
     fireEvent.keyDown(dot, { key: "Enter" });
     expect(h.onToggle).toHaveBeenCalledTimes(1);
   });
+
+  it("can be drawn as pointed at for the preview", () => {
+    const { rerender } = render(<NovaDot look={DEFAULT_DOT_LOOK} open={false} {...handlers()} />);
+    expect(screen.getByRole("button", { name: "Talk to NOVA" })).not.toHaveAttribute("data-hover");
+    rerender(<NovaDot look={DEFAULT_DOT_LOOK} open={false} hovered {...handlers()} />);
+    expect(screen.getByRole("button", { name: "Talk to NOVA" })).toHaveAttribute("data-hover", "true");
+  });
 });
 
 const AGENT: AgentStatus = {
@@ -293,6 +300,68 @@ describe("NovaPanel", () => {
     await user.click(screen.getByRole("button", { name: /Retry/ }));
     expect(api.sendMessage).toHaveBeenCalledTimes(2);
   });
+
+  it("copies a reply and brings the last message back with Up", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.sendMessage).mockImplementation(async (_text, onEvent) => {
+      onEvent({ type: "text", text: "Hier ist die Antwort." });
+      onEvent({ type: "done" });
+    });
+    renderPanel();
+    const box = screen.getByRole("textbox", { name: "Message NOVA" });
+    await user.type(box, "Wie spät ist es?{Enter}");
+    await user.click(await screen.findByRole("button", { name: "Copy reply" }));
+    expect(await navigator.clipboard.readText()).toBe("Hier ist die Antwort.");
+    expect(screen.getByRole("button", { name: "Copied" })).toBeInTheDocument();
+
+    await waitFor(() => expect(box).toHaveValue(""));
+    box.focus();
+    await user.keyboard("{ArrowUp}");
+    expect(box).toHaveValue("Wie spät ist es?");
+  });
+
+  it("starts a new conversation with Ctrl+N and copies the last reply with Ctrl+Shift+C", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.sendMessage).mockImplementation(async (_text, onEvent) => {
+      onEvent({ type: "text", text: "Erledigt." });
+      onEvent({ type: "done" });
+    });
+    const resetConversation = vi.spyOn(api, "resetConversation").mockResolvedValue();
+    renderPanel();
+    // Nothing to start over from yet.
+    fireEvent.keyDown(window, { key: "n", code: "KeyN", ctrlKey: true });
+    expect(screen.getByText("How can I help?")).toBeInTheDocument();
+
+    await user.type(screen.getByRole("textbox", { name: "Message NOVA" }), "Öffne den Rechner{Enter}");
+    expect(await screen.findByText("Erledigt.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New conversation" })).toHaveAttribute("title", "New conversation (Ctrl+N)");
+    // Plain typing is left alone.
+    fireEvent.keyDown(window, { key: "n", code: "KeyN" });
+    expect(screen.getByText("Erledigt.")).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "C", code: "KeyC", ctrlKey: true, shiftKey: true });
+    await waitFor(async () => expect(await navigator.clipboard.readText()).toBe("Erledigt."));
+
+    fireEvent.keyDown(window, { key: "n", code: "KeyN", ctrlKey: true });
+    expect(await screen.findByText("How can I help?")).toBeInTheDocument();
+    expect(screen.queryByText("Erledigt.")).toBeNull();
+    expect(resetConversation).toHaveBeenCalledOnce();
+    resetConversation.mockRestore();
+  });
+
+  it("shows the action history under the header title", async () => {
+    const user = userEvent.setup();
+    const history = vi.spyOn(api, "actionHistory").mockResolvedValue([]);
+    renderPanel();
+    await user.click(screen.getByRole("button", { name: "More" }));
+    await user.click(screen.getByRole("menuitem", { name: "Action history" }));
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("What NOVA did");
+    expect(screen.queryByRole("heading", { level: 2 })).toBeNull();
+    expect(await screen.findByText(/Nothing yet/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Back to the conversation" }));
+    expect(screen.getByText("How can I help?")).toBeInTheDocument();
+    history.mockRestore();
+  });
 });
 
 describe("conversation helpers", () => {
@@ -353,10 +422,12 @@ describe("AssistantSettings", () => {
     panelOpen: false,
   };
   let status: AssistantStatus;
+  let autostart: boolean;
   let call: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     status = { ...STATUS };
+    autostart = false;
     vi.spyOn(native, "isDesktop").mockReturnValue(true);
     call = vi.spyOn(native, "callNative").mockImplementation(async (command: string, args?: Record<string, unknown>) => {
       if (command === "assistant_status") return status;
@@ -370,22 +441,46 @@ describe("AssistantSettings", () => {
         status = { ...status, customPosition: false };
         return status;
       }
+      if (command === "autostart_get") return autostart;
+      if (command === "autostart_set") {
+        autostart = args?.enabled as boolean;
+        return autostart;
+      }
       throw new Error(`unexpected ${command}`);
     });
+  });
+
+  it("turns Start with Windows on and off", async () => {
+    const user = userEvent.setup();
+    renderWithQuery(<AssistantSettings />);
+    const toggle = await screen.findByRole("switch", { name: "Start with Windows" });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    expect(toggle).not.toBeChecked();
+    expect(screen.getByText(/starts in the background with just the dot/)).toBeInTheDocument();
+    await user.click(toggle);
+    expect(call).toHaveBeenCalledWith("autostart_set", { enabled: true });
+    await waitFor(() => expect(toggle).toBeChecked());
+    await user.click(toggle);
+    await waitFor(() => expect(toggle).not.toBeChecked());
+    expect(autostart).toBe(false);
   });
 
   it("sends complete preferences when one setting changes", async () => {
     const user = userEvent.setup();
     renderWithQuery(<AssistantSettings />);
-    await user.click(await screen.findByRole("switch", { name: "Keep NOVA AI available when the window is closed" }));
+    // While the dot is shown, NOVA always stays available after the window closes.
+    expect(await screen.findByRole("switch", { name: "Keep NOVA AI available when the window is closed" })).toBeDisabled();
+    await user.click(screen.getByRole("switch", { name: "Show the NOVA dot" }));
     expect(call).toHaveBeenCalledWith("assistant_configure", {
-      update: { enabled: true, placement: "taskbar", corner: "bottomRight", look: DEFAULT_DOT_LOOK, shortcut: "Ctrl+Alt+Space", background: true, hideInFullscreen: false },
+      update: { enabled: false, placement: "taskbar", corner: "bottomRight", look: DEFAULT_DOT_LOOK, shortcut: "Ctrl+Alt+Space", background: false, hideInFullscreen: false },
     });
+    await user.click(screen.getByRole("switch", { name: "Keep NOVA AI available when the window is closed" }));
+    await user.click(screen.getByRole("switch", { name: "Show the NOVA dot" }));
     // Corners appear once the dot leaves the taskbar.
     expect(screen.queryByRole("radio", { name: "Top left" })).toBeNull();
     await user.click(screen.getByRole("radio", { name: "In a corner" }));
     await user.click(await screen.findByRole("radio", { name: "Top left" }));
-    await waitFor(() => expect(call).toHaveBeenLastCalledWith("assistant_configure", { update: expect.objectContaining({ placement: "corner", corner: "topLeft", background: true }) }));
+    await waitFor(() => expect(call).toHaveBeenLastCalledWith("assistant_configure", { update: expect.objectContaining({ enabled: true, placement: "corner", corner: "topLeft", background: true }) }));
   });
 
   it("records a new shortcut and shows why one was rejected", async () => {
@@ -431,11 +526,21 @@ describe("AssistantSettings", () => {
     await waitFor(() => expect(status.look).toEqual(DEFAULT_DOT_LOOK));
     vi.useRealTimers();
   });
+
+  it("previews the dot as pointed at", async () => {
+    const user = userEvent.setup();
+    renderWithQuery(<AssistantSettings />);
+    const preview = await screen.findByRole("group", { name: "Dot preview" });
+    expect(screen.getByRole("button", { name: "Talk to NOVA" })).not.toHaveAttribute("data-hover");
+    await user.click(screen.getByRole("radio", { name: "Hover" }));
+    expect(preview.querySelector(".nova-dot")).toHaveAttribute("data-hover", "true");
+    expect(preview.querySelector(".nova-dot")).toHaveAttribute("data-state", "idle");
+  });
 });
 
 describe("WakeSettings", () => {
   const OFF: WakeStatus = {
-    prefs: { phrase: false, phraseSensitivity: "strict", clap: false, clapSensitivity: "strict", afterWake: "listen", chime: true, pauseInFullscreen: true },
+    prefs: { phrase: false, phraseSensitivity: "strict", clap: false, clapSensitivity: "strict", afterWake: "listen", chime: true, pauseInFullscreen: true, muted: false },
     phrase: { state: "off" },
     clap: { state: "off" },
     dictation: false,
@@ -472,6 +577,15 @@ describe("WakeSettings", () => {
     expect(screen.getByRole("radio", { name: "Very precise" })).toHaveAttribute("aria-checked", "true");
   });
 
+  it("offers to resume listening paused from the dot's menu", async () => {
+    status = { ...status, prefs: { ...status.prefs, clap: true, muted: true }, clap: { state: "paused", reason: "muted" } };
+    const user = userEvent.setup();
+    renderWithQuery(<WakeSettings />);
+    expect(await screen.findByText(/Paused from the dot's menu/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Resume" }));
+    expect(call).toHaveBeenCalledWith("wake_configure", { prefs: expect.objectContaining({ clap: true, muted: false }) });
+  });
+
   it("explains that listening after waking needs online speech recognition", async () => {
     const user = userEvent.setup();
     renderWithQuery(<WakeSettings />);
@@ -487,6 +601,29 @@ describe("WakeSettings", () => {
     expect(await screen.findByRole("meter", { name: "Microphone level" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Stop" }));
     expect(call).toHaveBeenLastCalledWith("wake_test", { on: false });
+  });
+
+  it("logs what the test heard with times and clears the log", async () => {
+    const { listen } = await import("@tauri-apps/api/event");
+    const { ASSISTANT_EVENTS } = await import("./types");
+    status.prefs.clap = true;
+    const user = userEvent.setup();
+    renderWithQuery(<WakeSettings />);
+    expect(await screen.findByText(/How to clap/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Start test" }));
+    expect(await screen.findByText(/left$/)).toHaveTextContent("2:00 left");
+    const heard = await waitFor(() => {
+      const found = [...vi.mocked(listen).mock.calls].reverse().find(([event]) => event === ASSISTANT_EVENTS.wakeHeard);
+      expect(found).toBeDefined();
+      return found![1] as (event: { payload: unknown }) => void;
+    });
+    act(() => heard({ payload: { kind: "double", veto: null } }));
+    const log = screen.getByRole("list", { name: "What NOVA heard" });
+    expect(log).toHaveTextContent("0:00");
+    expect(log).toHaveTextContent("Double clap — NOVA would open");
+    await user.click(screen.getByRole("button", { name: "Clear" }));
+    expect(log).not.toHaveTextContent("Double clap");
+    expect(log).toHaveTextContent("Listening…");
   });
 
   it("describes what it heard", () => {

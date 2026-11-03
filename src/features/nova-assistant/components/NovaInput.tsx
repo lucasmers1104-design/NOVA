@@ -18,13 +18,15 @@ interface NovaInputProps {
   mic?: ReactNode;
   /** Text to put in the box, e.g. a transcript to review. */
   draft?: string;
+  /** The user's previous message; Up in an empty box brings it back to edit. */
+  lastMessage?: string;
 }
 
 const iconButton = "flex size-8 shrink-0 items-center justify-center rounded-full text-fg-muted transition-colors hover:bg-white/[0.08] hover:text-fg disabled:opacity-40";
 const menuItem = "flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-1.5 text-left text-[12.5px] text-fg hover:bg-white/[0.07]";
 
 /** One quiet message box: add (file or screenshot), text, voice, send/stop. */
-export function NovaInput({ busy, listening = false, attachments, onSend, onStop, onAttachFile, onLoadTargets, onCapture, onClearAttachments, mic, draft }: NovaInputProps) {
+export function NovaInput({ busy, listening = false, attachments, onSend, onStop, onAttachFile, onLoadTargets, onCapture, onClearAttachments, mic, draft, lastMessage }: NovaInputProps) {
   const [text, setText] = useState("");
   const [adding, setAdding] = useState(false);
   const [targets, setTargets] = useState<CaptureTargets | null>(null);
@@ -170,6 +172,9 @@ export function NovaInput({ busy, listening = false, attachments, onSend, onStop
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
               submit();
+            } else if (e.key === "ArrowUp" && !text && lastMessage && !busy) {
+              e.preventDefault();
+              setText(lastMessage);
             }
           }}
           className="max-h-33 min-h-8 flex-1 resize-none bg-transparent px-1.5 py-1.5 text-[13.5px] leading-snug text-fg outline-none select-text placeholder:text-fg-subtle"

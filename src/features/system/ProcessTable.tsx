@@ -44,11 +44,19 @@ export function ProcessTable() {
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && query) {
+                event.preventDefault();
+                setQuery("");
+              }
+            }}
             placeholder="Filter by name or PID"
             className="h-full flex-1 bg-transparent text-[13px] text-fg outline-none select-text placeholder:text-fg-subtle"
           />
         </label>
-        <Button size="sm" variant="secondary" icon={paused ? <Play size={14} /> : <Pause size={14} />} onClick={() => setPaused((p) => !p)}>
+        <Button size="sm" variant="secondary" icon={paused ? <Play size={14} /> : <Pause size={14} />} onClick={() => setPaused((p) => !p)}
+          title={paused ? "Resume live updates" : "Freeze the list so rows stop moving"}
+        >
           {paused ? "Resume" : "Pause"}
         </Button>
       </div>
@@ -85,7 +93,9 @@ export function ProcessTable() {
                 ))}
               </tbody>
             </table>
-            {visible.length === 0 && <p className="py-8 text-center text-[13px] text-fg-muted">No processes match “{query}”.</p>}
+            {visible.length === 0 && (
+              <p className="py-8 text-center text-[13px] text-fg-muted">{query.trim() ? `No processes match “${query.trim()}”.` : "No processes reported yet."}</p>
+            )}
           </div>
           <div className="mt-2 flex items-center justify-between text-[12px] text-fg-subtle">
             <span className="tabular-nums">

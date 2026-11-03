@@ -16,9 +16,11 @@ export interface WakePrefs {
   chime: boolean;
   /** Don't listen while a fullscreen app, game or presentation is in front. */
   pauseInFullscreen: boolean;
+  /** Paused from the dot's menu: the microphone is closed until resumed. */
+  muted: boolean;
 }
 
-export type WakePause = "dictation" | "speaking" | "locked" | "fullscreen";
+export type WakePause = "muted" | "dictation" | "speaking" | "locked" | "fullscreen";
 export type SettingsPage = "privacy-speech" | "privacy-microphone" | "speech";
 
 export type WakeListener =
@@ -65,6 +67,7 @@ export const NOT_A_CLAP: Record<NotAClap, string> = {
 };
 
 export const PAUSE_LABELS: Record<WakePause, string> = {
+  muted: "Paused from the dot's menu — the microphone is off",
   dictation: "Paused while you dictate",
   speaking: "Paused while NOVA speaks",
   locked: "Paused while the PC is locked",

@@ -27,7 +27,7 @@ interface Location {
 }
 
 export default function FilesPage() {
-  const { data: known, error: knownError } = useKnownFolders();
+  const { data: known, error: knownError, isPending: knownPending } = useKnownFolders();
   const favorites = useFavorites((s) => s.favorites);
   const loaded = useFavorites((s) => s.loaded);
   const load = useFavorites((s) => s.load);
@@ -67,6 +67,12 @@ export default function FilesPage() {
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape" && query) {
+              e.preventDefault();
+              setQuery("");
+            }
+          }}
           placeholder="Search your standard folders and favorites by name"
           className="h-full flex-1 bg-transparent text-[14px] text-fg outline-none select-text placeholder:text-fg-subtle"
         />
@@ -85,6 +91,12 @@ export default function FilesPage() {
             <h2 className="mb-2.5 text-[12px] font-semibold tracking-wider text-fg-subtle uppercase">Quick access</h2>
             {knownError ? (
               <StatusMessage error={knownError} subject="folders" compact />
+            ) : knownPending ? (
+              <div className="grid grid-cols-6 gap-3">
+                {Array.from({ length: 6 }, (_, i) => (
+                  <Skeleton key={i} className="h-24 rounded-[18px]" />
+                ))}
+              </div>
             ) : (
               <ul className="grid grid-cols-6 gap-3">
                 {(known ?? []).map((folder) => {
@@ -272,7 +284,7 @@ function SearchResults({ query }: { query: string }) {
   return (
     <section aria-label="Search results" className="glass rounded-widget p-4">
       <p className="mb-2 px-2 text-[12px] text-fg-subtle">
-        {isFetching ? "Searching…" : data ? `${data.length}${data.length === 100 ? "+" : ""} results` : ""}
+        {isFetching ? "Searching…" : data ? `${data.length}${data.length === 100 ? "+" : ""} ${data.length === 1 ? "result" : "results"}` : ""}
       </p>
       {error ? (
         <StatusMessage error={error} subject="search results" compact />

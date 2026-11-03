@@ -9,13 +9,15 @@ import { Switch } from "@/components/ui/Switch";
 import { notifyError } from "@/features/notifications/store";
 import { SettingRow, SettingsSection } from "@/features/settings/SettingsLayout";
 import { cn } from "@/lib/cn";
-import { isDesktop } from "@/lib/native";
+import { callNative, isDesktop } from "@/lib/native";
 import { assistantStatus, configureAssistant, resetDotPosition } from "./api";
 import { NovaDot } from "./components/NovaDot";
 import { captureShortcut, shortcutLabels } from "./shortcut";
 import { ASSISTANT_EVENTS, type AssistantPrefsUpdate, type AssistantStatus, DEFAULT_DOT_LOOK, type DotCorner, type DotLook, type DotPlacement, type DotStyle } from "./types";
 
 export const ASSISTANT_STATUS_KEY = ["assistant", "status"] as const;
+/** Shared with Settings → Startup, so both switches stay in sync. */
+const AUTOSTART_KEY = ["desktop", "autostart"] as const;
 
 const PLACEMENTS = [
   { value: "taskbar", label: "In the taskbar" },
@@ -69,6 +71,12 @@ export function AssistantSettings() {
     mutationFn: resetDotPosition,
     onSuccess: (next) => client.setQueryData(ASSISTANT_STATUS_KEY, next),
     onError: (error) => notifyError("Couldn't move the dot", error),
+  });
+  const { data: autostart } = useQuery({ queryKey: AUTOSTART_KEY, queryFn: () => callNative<boolean>("autostart_get"), enabled: desktop });
+  const setAutostart = useMutation({
+    mutationFn: (enabled: boolean) => callNative<boolean>("autostart_set", { enabled }),
+    onSuccess: (enabled) => client.setQueryData(AUTOSTART_KEY, enabled),
+    onError: (error) => notifyError("Couldn't change the startup setting", error),
   });
 
   // The dot changes preferences too: dragging it, or "Hide the dot" in its menu.
@@ -177,13 +185,25 @@ export function AssistantSettings() {
       )}
       <SettingRow
         label="Keep NOVA AI available when the window is closed"
-        description="Closing NOVA's window keeps the dot, the shortcut and “Hey NOVA” working; quit from the tray icon. Together with Start with Windows, NOVA starts with just the dot."
+        description={
+          status?.enabled
+            ? "Always, while the dot is shown: closing the window keeps the dot, the shortcut and “Hey NOVA” working. Quit from the tray icon or the dot's menu."
+            : "Closing NOVA's window keeps the shortcut and “Hey NOVA” working; quit from the tray icon."
+        }
       >
         <Switch
           label="Keep NOVA AI available when the window is closed"
-          checked={status?.background ?? false}
-          disabled={busy}
+          checked={(status?.background || status?.enabled) ?? false}
+          disabled={busy || status?.enabled}
           onChange={(background) => update({ background })}
+        />
+      </SettingRow>
+      <SettingRow label="Start with Windows" description="NOVA starts in the background with just the dot, so it's there after every restart.">
+        <Switch
+          label="Start with Windows"
+          checked={autostart ?? false}
+          disabled={autostart === undefined || setAutostart.isPending}
+          onChange={(enabled) => setAutostart.mutate(enabled)}
         />
       </SettingRow>
       <p className="flex items-start gap-2 pt-4 text-[12.5px] leading-relaxed text-fg-muted">
@@ -228,7 +248,7 @@ export function DotLookEditor({ look, placement, disabled, onChange }: DotLookEd
     <div className={cn("mb-2 rounded-[18px] border border-line bg-white/[0.025] p-4", disabled && "pointer-events-none opacity-50")} aria-disabled={disabled}>
       <div className="flex flex-wrap items-start gap-5">
         <DotPreview look={draft} placement={placement} />
-        <div className="min-w-64 flex-1 space-y-3.5">
+        <div className="min-w-0 flex-1 basis-64 space-y-3.5">
           <LookRow label="Style">
             <SegmentedControl label="Dot style" value={draft.style} options={STYLES} onChange={(style) => change({ style })} />
           </LookRow>
@@ -258,7 +278,7 @@ export function DotLookEditor({ look, placement, disabled, onChange }: DotLookEd
                   title={swatch.label}
                   onClick={() => change({ color: swatch.value })}
                   className={cn(
-                    "flex size-6 items-center justify-center rounded-full border border-white/20 transition-transform hover:scale-110",
+                    "flex size-6 items-center justify-center rounded-full border border-white/20 transition-transform outline-none hover:scale-110 focus-visible:ring-2 focus-visible:ring-accent",
                     draft.color === swatch.value && "ring-2 ring-fg/80 ring-offset-2 ring-offset-transparent",
                   )}
                   style={{ background: swatch.css }}
@@ -269,14 +289,14 @@ export function DotLookEditor({ look, placement, disabled, onChange }: DotLookEd
               <label
                 title="Custom color"
                 className={cn(
-                  "relative flex size-6 cursor-pointer items-center justify-center overflow-hidden rounded-full border border-white/20 bg-[conic-gradient(#f87171,#fbbf24,#34d399,#60a5fa,#a78bfa,#f472b6,#f87171)] hover:scale-110",
+                  "relative flex size-6 cursor-pointer items-center justify-center overflow-hidden rounded-full border border-white/20 bg-[conic-gradient(#f87171,#fbbf24,#34d399,#60a5fa,#a78bfa,#f472b6,#f87171)] transition-transform hover:scale-110 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-accent",
                   customColor && "ring-2 ring-fg/80 ring-offset-2 ring-offset-transparent",
                 )}
                 style={customColor ? { background: draft.color } : undefined}
               >
-                <span className="sr-only">Custom color</span>
                 <input
                   type="color"
+                  aria-label="Custom color"
                   value={draft.color.startsWith("#") ? draft.color : "#8b5cf6"}
                   onChange={(e) => change({ color: e.target.value }, SAVE_DELAY_MS)}
                   className="absolute inset-0 cursor-pointer opacity-0"
@@ -284,7 +304,7 @@ export function DotLookEditor({ look, placement, disabled, onChange }: DotLookEd
               </label>
             </div>
           </LookRow>
-          <div className="grid grid-cols-2 gap-x-4 gap-y-2 pt-1">
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(12rem,1fr))] gap-x-4 gap-y-2 pt-1">
             <Toggle label="Sparkle inside" checked={draft.icon} onChange={(icon) => change({ icon })} />
             <Toggle label="Show what NOVA is doing" checked={draft.activity} onChange={(activity) => change({ activity })} />
             <Toggle label="Glow" checked={draft.glow} onChange={(glow) => change({ glow, breathe: glow && draft.breathe })} />
@@ -305,15 +325,18 @@ export function DotLookEditor({ look, placement, disabled, onChange }: DotLookEd
 
 /** The dot as it will look, on a strip of taskbar or desktop. Hover it to see it fully. */
 function DotPreview({ look, placement }: { look: DotLook; placement: DotPlacement }) {
-  const [state, setState] = useState<"idle" | "thinking" | "listening">("idle");
+  const [shown, setShown] = useState<PreviewState>("idle");
+  const state = shown === "hover" ? "idle" : shown;
+  const dot = <NovaDot look={look} open={false} state={state} level={0.5} hovered={shown === "hover"} onToggle={() => {}} onMenu={() => {}} onDragStart={() => {}} />;
   return (
-    <div className="w-56 shrink-0">
+    <div className="w-64 max-w-full shrink-0">
       <div
         className={cn(
           "relative flex h-36 items-end overflow-hidden rounded-[14px] border border-line",
           "bg-[radial-gradient(120%_90%_at_20%_10%,rgb(99_102_241/0.35),transparent_60%),radial-gradient(90%_80%_at_90%_30%,rgb(236_72_153/0.22),transparent_60%),#0d1020]",
         )}
-        aria-label="Preview"
+        role="group"
+        aria-label="Dot preview"
       >
         {placement === "taskbar" ? (
           <div className="flex h-10 w-full items-center justify-end gap-2 bg-[#1b1d26]/95 pr-2.5 pl-3">
@@ -322,7 +345,7 @@ function DotPreview({ look, placement }: { look: DotLook; placement: DotPlacemen
                 <span key={i} className="size-5 rounded-[5px] bg-white/[0.12]" />
               ))}
             </span>
-            <NovaDot look={look} open={false} state={state} level={0.5} onToggle={() => {}} onMenu={() => {}} onDragStart={() => {}} />
+            {dot}
             <span className="flex items-center gap-1.5 text-[10px] text-white/60" aria-hidden>
               <span className="size-2.5 rounded-full bg-white/30" />
               <span className="size-2.5 rounded-full bg-white/30" />
@@ -332,7 +355,7 @@ function DotPreview({ look, placement }: { look: DotLook; placement: DotPlacemen
         ) : (
           <div className="flex w-full flex-col items-end">
             <div className="p-3">
-              <NovaDot look={look} open={false} state={state} level={0.5} onToggle={() => {}} onMenu={() => {}} onDragStart={() => {}} />
+              {dot}
             </div>
             <div className="h-6 w-full bg-[#1b1d26]/95" aria-hidden />
           </div>
@@ -341,18 +364,23 @@ function DotPreview({ look, placement }: { look: DotLook; placement: DotPlacemen
       <div className="mt-2 flex justify-center">
         <SegmentedControl
           label="Preview state"
-          value={state}
-          options={[
-            { value: "idle", label: "Rest" },
-            { value: "listening", label: "Listen" },
-            { value: "thinking", label: "Think" },
-          ]}
-          onChange={setState}
+          value={shown}
+          options={PREVIEW_STATES}
+          onChange={setShown}
         />
       </div>
     </div>
   );
 }
+
+type PreviewState = "idle" | "hover" | "listening" | "thinking";
+
+const PREVIEW_STATES = [
+  { value: "idle", label: "Rest" },
+  { value: "hover", label: "Hover" },
+  { value: "listening", label: "Listen" },
+  { value: "thinking", label: "Think" },
+] as const satisfies readonly { value: PreviewState; label: string }[];
 
 function LookRow({ label, children }: { label: string; children: ReactNode }) {
   return (

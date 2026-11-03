@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use windows::core::{Interface, HSTRING};
-use windows::Foundation::TypedEventHandler;
+use windows::Foundation::{TimeSpan, TypedEventHandler};
 use windows::Globalization::Language;
 use windows::Media::SpeechRecognition::{
     ISpeechRecognitionConstraint, SpeechContinuousRecognitionCompletedEventArgs, SpeechContinuousRecognitionResultGeneratedEventArgs,
@@ -55,6 +55,9 @@ impl PhraseListener {
         }
 
         let session = recognizer.ContinuousRecognitionSession().map_err(fail)?;
+        // The session would otherwise end after a short silence (a quiet room
+        // is the normal case here) and be rebuilt from scratch; keep it going.
+        let _ = session.SetAutoStopSilenceTimeout(TimeSpan { Duration: 24 * 3600 * 10_000_000 });
         let result_token = session
             .ResultGenerated(&TypedEventHandler::<SpeechContinuousRecognitionSession, SpeechContinuousRecognitionResultGeneratedEventArgs>::new(move |_, args| {
                 let Some(args) = args.as_ref() else { return Ok(()) };

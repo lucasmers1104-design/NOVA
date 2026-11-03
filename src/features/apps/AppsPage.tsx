@@ -1,5 +1,5 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { ChevronLeft, ChevronRight, Plus, RefreshCw, Search, Star, Trash } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, RefreshCw, Search, Star, Trash, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Page, PageHeader } from "@/components/layout/PageHeader";
 import { Button, IconButton } from "@/components/ui/Button";
@@ -66,10 +66,19 @@ export default function AppsPage() {
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && visible[0]) launch.mutate(visible[0]);
+              else if (e.key === "Escape" && query) {
+                e.preventDefault();
+                setQuery("");
+              }
             }}
             placeholder="Search apps — press Enter to open the top result"
             className="h-full flex-1 bg-transparent text-[14px] text-fg outline-none select-text placeholder:text-fg-subtle"
           />
+          {query && (
+            <IconButton size="sm" label="Clear search" onClick={() => setQuery("")}>
+              <X size={14} />
+            </IconButton>
+          )}
         </label>
         <div role="tablist" aria-label="App categories" className="flex flex-wrap gap-1.5">
           {[
@@ -110,7 +119,13 @@ export default function AppsPage() {
           {filter === "all" && !query && favoriteApps.length > 0 && <FavoritesStrip apps={favoriteApps} />}
           {visible.length === 0 ? (
             <p className="glass rounded-widget py-16 text-center text-[13px] text-fg-muted">
-              {filter === "favorites" ? "Star apps to keep them here and in Quick launch." : query ? `No apps match “${query}”.` : "Nothing here yet."}
+              {query
+                ? `No apps match “${query}”.`
+                : filter === "favorites"
+                  ? "Star apps to keep them here and in Quick launch."
+                  : filter === "recent"
+                    ? "Apps you open from NOVA show up here."
+                    : "Nothing here yet."}
             </p>
           ) : (
             <ul className="grid grid-cols-[repeat(auto-fill,minmax(132px,1fr))] gap-3">

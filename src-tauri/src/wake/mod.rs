@@ -78,6 +78,8 @@ pub struct WakePrefs {
     pub chime: bool,
     /// Don't listen while a fullscreen app, game or presentation is in front.
     pub pause_in_fullscreen: bool,
+    /// Paused from the dot's menu: the microphone is closed until resumed.
+    pub muted: bool,
 }
 
 impl Default for WakePrefs {
@@ -90,6 +92,7 @@ impl Default for WakePrefs {
             after_wake: AfterWake::Listen,
             chime: true,
             pause_in_fullscreen: true,
+            muted: false,
         }
     }
 }
@@ -106,6 +109,8 @@ pub fn load_prefs(db: &Database) -> WakePrefs {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Pause {
+    /// "Pause listening" in the dot's menu.
+    Muted,
     Dictation,
     Speaking,
     Locked,
@@ -185,7 +190,9 @@ pub enum Source {
 #[derive(Default)]
 struct Inner {
     prefs: WakePrefs,
-    dictating: bool,
+    /// Dictation sessions in progress (a new one can begin before the last one
+    /// has reported that it ended).
+    dictating: u32,
     speaking_until: Option<Instant>,
     testing_until: Option<Instant>,
     phrase: Listener,
@@ -291,9 +298,13 @@ fn ensure_running<R: Runtime>(app: &AppHandle<R>) {
     }
     let app = app.clone();
     std::thread::spawn(move || {
+        // A panic must not leave `running` set forever (nothing would restart it).
         #[cfg(windows)]
         let _ = crate::shell::with_com(false, || {
-            supervise(&app);
+            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| supervise(&app))).is_err() {
+                // Don't spin if it panics right away again.
+                std::thread::sleep(Duration::from_secs(5));
+            }
             Ok(())
         });
         let state = self::state(&app);
@@ -316,8 +327,11 @@ fn ensure_running<R: Runtime>(app: &AppHandle<R>) {
 pub fn pause_for_dictation<R: Runtime>(app: &AppHandle<R>, dictating: bool) {
     let state = state(app);
     let mut inner = state.lock();
-    inner.dictating = dictating;
-    state.suppressed.store(dictating || speaking(&inner), Ordering::SeqCst);
+    inner.dictating = dictation_count(inner.dictating, dictating);
+    if dictating {
+        // Clearing it is left to the supervisor, which knows about every other pause.
+        state.suppressed.store(true, Ordering::SeqCst);
+    }
     state.changed.notify_all();
     let deadline = Instant::now() + Duration::from_millis(1500);
     while dictating && inner.running && !inner.phrase_idle {
@@ -326,11 +340,21 @@ pub fn pause_for_dictation<R: Runtime>(app: &AppHandle<R>, dictating: bool) {
     }
 }
 
+/// Counts overlapping dictation sessions: the end of one must not resume
+/// listening while the next has already begun.
+fn dictation_count(count: u32, started: bool) -> u32 {
+    if started {
+        count.saturating_add(1)
+    } else {
+        count.saturating_sub(1)
+    }
+}
+
 /// Opens NOVA AI after a wake word or a double clap (unless a test runs).
 fn wake_up<R: Runtime>(app: &AppHandle<R>, source: Source) {
     let prefs = {
         let mut inner = state(app).lock();
-        if testing(&inner) || inner.dictating || inner.last_wake.is_some_and(|at| at.elapsed() < WAKE_DEBOUNCE) {
+        if testing(&inner) || inner.dictating > 0 || inner.last_wake.is_some_and(|at| at.elapsed() < WAKE_DEBOUNCE) {
             return;
         }
         inner.last_wake = Some(Instant::now());
@@ -404,20 +428,24 @@ fn mic_problem(error: &mic::MicError) -> Listener {
 #[cfg(windows)]
 fn supervise<R: Runtime>(app: &AppHandle<R>) {
     let state = state(app);
-    let mut phrase: Option<(word::PhraseListener, String)> = None;
+    // The listener, its language and when it started.
+    let mut phrase: Option<(word::PhraseListener, String, Instant)> = None;
     let mut phrase_retry = Instant::now();
+    let mut phrase_failure: Option<Listener> = None;
     let mut claps: Option<ClapThread> = None;
     let mut clap_retry = Instant::now();
     let mut clap_failure: Option<Listener> = None;
-    let mut fullscreen = (false, Instant::now() - Duration::from_secs(10));
+    // Whether a fullscreen app is in front, and when that was last checked.
+    let mut fullscreen: (bool, Option<Instant>) = (false, None);
 
     loop {
+        let snapshot = |inner: &Inner| (inner.prefs.clone(), inner.dictating > 0, speaking(inner), testing(inner));
         let (prefs, dictating, speaking_now, test) = {
             let mut inner = state.lock();
             if inner.testing_until.is_some() && !testing(&inner) {
                 inner.testing_until = None;
             }
-            (inner.prefs.clone(), inner.dictating, speaking(&inner), testing(&inner))
+            snapshot(&inner)
         };
         state.testing.store(test, Ordering::Relaxed);
         let want_phrase = prefs.phrase || test;
@@ -425,11 +453,14 @@ fn supervise<R: Runtime>(app: &AppHandle<R>) {
         if !want_phrase && !want_clap {
             break;
         }
-        if prefs.pause_in_fullscreen && fullscreen.1.elapsed() >= Duration::from_secs(2) {
-            fullscreen = (crate::assistant::fullscreen_in_front(), Instant::now());
+        if prefs.pause_in_fullscreen && fullscreen.1.is_none_or(|checked| checked.elapsed() >= Duration::from_secs(2)) {
+            fullscreen = (crate::assistant::fullscreen_in_front(), Some(Instant::now()));
         }
         let locked = mic::session_locked();
-        let pause = if locked {
+        let muted = prefs.muted && !test;
+        let pause = if muted {
+            Some(Pause::Muted)
+        } else if locked {
             Some(Pause::Locked)
         } else if dictating {
             Some(Pause::Dictation)
@@ -444,11 +475,21 @@ fn supervise<R: Runtime>(app: &AppHandle<R>) {
 
         // "Hey NOVA": the recognizer is closed while paused.
         let language = crate::agent::prefs(app).language;
-        if phrase.as_ref().is_some_and(|(listener, lang)| listener.ended() || *lang != language) {
-            phrase = None;
+        if let Some((listener, lang, started)) = &phrase {
+            if listener.ended() {
+                // A session that ends again right away (no microphone, audio
+                // problem) must not be restarted every second.
+                if started.elapsed() < Duration::from_secs(10) {
+                    phrase_retry = Instant::now() + Duration::from_secs(10);
+                }
+                phrase = None;
+            } else if *lang != language {
+                phrase = None;
+            }
         }
         let phrase_state = if !want_phrase {
             phrase = None;
+            phrase_failure = None;
             Listener::Off
         } else if let Some(reason) = pause {
             phrase = None;
@@ -456,22 +497,40 @@ fn supervise<R: Runtime>(app: &AppHandle<R>) {
         } else if phrase.is_some() {
             Listener::Listening
         } else if Instant::now() >= phrase_retry {
-            state.lock().phrase = Listener::Starting;
-            publish(app);
-            let mut phrases = vec![WAKE_PHRASE];
-            phrases.extend_from_slice(DECOYS);
-            match word::PhraseListener::start(&language, &phrases, on_phrase(app)) {
-                Ok(listener) => {
-                    phrase = Some((listener, language));
-                    Listener::Listening
+            // Dictation that began after the snapshot above must not find a
+            // recognizer starting here: either it sees one coming (and waits
+            // for it to close) or this sees the dictation and leaves it.
+            let dictation_began = {
+                let mut inner = state.lock();
+                let began = inner.dictating > 0;
+                if !began {
+                    inner.phrase = Listener::Starting;
+                    inner.phrase_idle = false;
                 }
-                Err(error) => {
-                    phrase_retry = Instant::now() + Duration::from_secs(30);
-                    Listener::Unavailable { message: error.message, settings: error.settings }
+                began
+            };
+            if dictation_began {
+                Listener::Paused { reason: Pause::Dictation }
+            } else {
+                publish(app);
+                let mut phrases = vec![WAKE_PHRASE];
+                phrases.extend_from_slice(DECOYS);
+                match word::PhraseListener::start(&language, &phrases, on_phrase(app)) {
+                    Ok(listener) => {
+                        phrase = Some((listener, language, Instant::now()));
+                        phrase_failure = None;
+                        Listener::Listening
+                    }
+                    Err(error) => {
+                        phrase_retry = Instant::now() + Duration::from_secs(30);
+                        let failure = Listener::Unavailable { message: error.message, settings: error.settings };
+                        phrase_failure = Some(failure.clone());
+                        failure
+                    }
                 }
             }
         } else {
-            state.lock().phrase.clone()
+            phrase_failure.clone().unwrap_or(Listener::Starting)
         };
 
         // Claps: the microphone stays open through short pauses (claps are
@@ -484,12 +543,16 @@ fn supervise<R: Runtime>(app: &AppHandle<R>) {
                 }
             }
         }
-        let clap_state = if !want_clap || locked {
+        let clap_state = if !want_clap || locked || muted {
             if let Some(thread) = claps.take() {
                 thread.stop();
             }
             clap_failure = None;
-            if want_clap { Listener::Paused { reason: Pause::Locked } } else { Listener::Off }
+            match (want_clap, muted) {
+                (false, _) => Listener::Off,
+                (true, true) => Listener::Paused { reason: Pause::Muted },
+                (true, false) => Listener::Paused { reason: Pause::Locked },
+            }
         } else {
             if claps.is_none() && Instant::now() >= clap_retry {
                 claps = Some(ClapThread::start(app));
@@ -512,8 +575,12 @@ fn supervise<R: Runtime>(app: &AppHandle<R>) {
         state.changed.notify_all();
         publish(app);
 
+        // Sleep unless something changed since the snapshot (a notification
+        // sent while this iteration ran would otherwise be lost for a second).
         let inner = state.lock();
-        let _ = state.changed.wait_timeout(inner, Duration::from_secs(1));
+        if snapshot(&inner) == (prefs, dictating, speaking_now, test) {
+            let _ = state.changed.wait_timeout(inner, Duration::from_secs(1));
+        }
     }
 
     drop(phrase);
@@ -550,13 +617,20 @@ fn listen_for_claps<R: Runtime>(app: &AppHandle<R>, stop: &AtomicBool) -> Result
     let mut speakers = mic::Speakers::open();
     let mut speakers_opened = Instant::now();
     let mut loudness: VecDeque<(Instant, f32)> = VecDeque::new();
+    // When listening was last paused: claps from just before a pause ended
+    // (NOVA's own voice, a video) are reported only after it.
+    let mut last_paused: Option<Instant> = None;
     let mut level = (0.0f32, Instant::now());
 
     mic::capture(stop, |samples, rate| {
         let now = Instant::now();
-        let last_input = now.checked_sub(Duration::from_millis(mic::input_idle_ms() as u64)).unwrap_or(now);
-        if inputs.back().is_none_or(|previous| last_input > *previous + Duration::from_millis(5)) {
-            inputs.push_back(last_input);
+        if state.suppressed.load(Ordering::SeqCst) {
+            last_paused = Some(now);
+        }
+        if let Some(last_input) = last_input(now, mic::input_idle_ms()) {
+            if inputs.back().is_none_or(|previous| last_input > *previous + Duration::from_millis(5)) {
+                inputs.push_back(last_input);
+            }
         }
         while inputs.front().is_some_and(|t| now.duration_since(*t) > Duration::from_secs(5)) {
             inputs.pop_front();
@@ -590,17 +664,7 @@ fn listen_for_claps<R: Runtime>(app: &AppHandle<R>, stop: &AtomicBool) -> Result
                 clap::Event::NotAClap { level_db, reason, .. } => heard(app, Heard::NotAClap { level_db, reason }),
                 clap::Event::NotADouble { reason, .. } => heard(app, Heard::NotADouble { reason }),
                 clap::Event::Double { first_ms, second_ms } => {
-                    let (first, second) = (at(first_ms), at(second_ms));
-                    let near = |t: Instant, around: Instant, window: Duration| t + window >= around && t <= around + window;
-                    let veto = if state.suppressed.load(Ordering::SeqCst) {
-                        Some(Veto::Paused)
-                    } else if inputs.iter().any(|t| *t + INPUT_VETO >= first && *t <= second + INPUT_VETO) {
-                        Some(Veto::Typing)
-                    } else if loudness.iter().any(|(t, l)| *l >= SPEAKER_VETO && (near(*t, first, Duration::from_millis(120)) || near(*t, second, Duration::from_millis(120)))) {
-                        Some(Veto::Speakers)
-                    } else {
-                        None
-                    };
+                    let veto = clap_veto(at(first_ms), at(second_ms), last_paused, &inputs, &loudness);
                     heard(app, Heard::Double { veto });
                     if veto.is_none() {
                         wake_up(app, Source::Clap);
@@ -622,6 +686,33 @@ fn listen_for_claps<R: Runtime>(app: &AppHandle<R>, stop: &AtomicBool) -> Result
     })
 }
 
+/// When the keyboard or mouse was last used, from the idle time; None when
+/// Windows couldn't say (`u32::MAX`), so that it isn't taken for input now.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn last_input(now: Instant, idle_ms: u32) -> Option<Instant> {
+    if idle_ms == u32::MAX {
+        return None;
+    }
+    now.checked_sub(Duration::from_millis(idle_ms as u64))
+}
+
+/// Why a double clap with claps at `first` and `second` must not wake NOVA:
+/// listening was paused at or after the first clap, someone typed or clicked
+/// around them, or the speakers were loud right then.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn clap_veto(first: Instant, second: Instant, last_paused: Option<Instant>, inputs: &std::collections::VecDeque<Instant>, loudness: &std::collections::VecDeque<(Instant, f32)>) -> Option<Veto> {
+    let near = |t: Instant, around: Instant, window: Duration| t + window >= around && t <= around + window;
+    if last_paused.is_some_and(|t| t + INPUT_VETO >= first) {
+        Some(Veto::Paused)
+    } else if inputs.iter().any(|t| *t + INPUT_VETO >= first && *t <= second + INPUT_VETO) {
+        Some(Veto::Typing)
+    } else if loudness.iter().any(|(t, l)| *l >= SPEAKER_VETO && (near(*t, first, Duration::from_millis(120)) || near(*t, second, Duration::from_millis(120)))) {
+        Some(Veto::Speakers)
+    } else {
+        None
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
@@ -639,6 +730,26 @@ pub async fn wake_configure<R: Runtime>(app: AppHandle<R>, prefs: WakePrefs) -> 
     ensure_running(&app);
     publish(&app);
     Ok(status_of(&state(&app).lock()))
+}
+
+/// Whether "Hey NOVA" or the double clap is turned on, and if so whether it is paused.
+pub fn listening<R: Runtime>(app: &AppHandle<R>) -> Option<bool> {
+    let prefs = state(app).lock().prefs.clone();
+    (prefs.phrase || prefs.clap).then_some(!prefs.muted)
+}
+
+/// "Pause listening" / "Resume listening" from the dot's menu.
+pub fn toggle_muted<R: Runtime>(app: &AppHandle<R>) {
+    let prefs = {
+        let mut inner = state(app).lock();
+        inner.prefs.muted = !inner.prefs.muted;
+        inner.prefs.clone()
+    };
+    if let Ok(json) = serde_json::to_string(&prefs) {
+        let _ = app.state::<Database>().with(|conn| crate::storage::kv_set(conn, PREFS_KEY, &json));
+    }
+    ensure_running(app);
+    publish(app);
 }
 
 /// Starts (or ends) a test in Settings: what NOVA hears is shown, nothing opens.
@@ -661,7 +772,10 @@ pub async fn wake_set_speaking<R: Runtime>(app: AppHandle<R>, speaking: bool) ->
     let state = state(&app);
     let mut inner = state.lock();
     inner.speaking_until = speaking.then(|| Instant::now() + SPEAKING_LIMIT);
-    state.suppressed.store(speaking || inner.dictating, Ordering::SeqCst);
+    if speaking {
+        // Clearing it is left to the supervisor, which knows about every other pause.
+        state.suppressed.store(true, Ordering::SeqCst);
+    }
     state.changed.notify_all();
     Ok(())
 }
@@ -682,6 +796,53 @@ mod tests {
         assert!(!accepts("hey noah", Confidence::High, 0.95, 700, Sensitivity::Normal));
         assert!(!accepts("hey nova", Confidence::High, 0.95, 120, Sensitivity::Normal));
         assert!(!accepts("hey nova", Confidence::High, 0.95, 4000, Sensitivity::Normal));
+    }
+
+    #[test]
+    fn overlapping_dictations_keep_listening_paused() {
+        // B starts before A has reported its end.
+        let count = dictation_count(dictation_count(0, true), true);
+        let count = dictation_count(count, false);
+        assert_eq!(count, 1, "still dictating");
+        assert_eq!(dictation_count(count, false), 0);
+        // A stray "ended" never underflows.
+        assert_eq!(dictation_count(0, false), 0);
+    }
+
+    #[test]
+    fn unknown_idle_time_is_not_input_now() {
+        let now = Instant::now();
+        assert_eq!(last_input(now, u32::MAX), None);
+        assert_eq!(last_input(now, 0), Some(now));
+        if let Some(t) = last_input(now, 250) {
+            assert_eq!(now.duration_since(t), Duration::from_millis(250));
+        }
+    }
+
+    #[test]
+    fn vetoes_claps_around_input_speakers_and_pauses() {
+        use std::collections::VecDeque;
+        let Some(base) = Instant::now().checked_sub(Duration::from_secs(10)) else { return };
+        let ms = |n: u64| base + Duration::from_millis(n);
+        let (first, second) = (ms(5000), ms(5300));
+        let none = VecDeque::new();
+        let quiet: VecDeque<(Instant, f32)> = (4000..6000).step_by(20).map(|t| (ms(t), 0.05)).collect();
+        assert_eq!(clap_veto(first, second, None, &none, &quiet), None);
+        // A pause that ended long before is fine; one that ended right before or during the claps isn't.
+        assert_eq!(clap_veto(first, second, Some(ms(3000)), &none, &quiet), None);
+        assert_eq!(clap_veto(first, second, Some(ms(4900)), &none, &quiet), Some(Veto::Paused));
+        assert_eq!(clap_veto(first, second, Some(ms(5600)), &none, &quiet), Some(Veto::Paused));
+        // Typing close to either clap, but not long before or after.
+        assert_eq!(clap_veto(first, second, None, &VecDeque::from([ms(4800)]), &quiet), Some(Veto::Typing));
+        assert_eq!(clap_veto(first, second, None, &VecDeque::from([ms(5550)]), &quiet), Some(Veto::Typing));
+        assert_eq!(clap_veto(first, second, None, &VecDeque::from([ms(4000), ms(6000)]), &quiet), None);
+        // Loud speakers right at a clap.
+        let mut loud = quiet.clone();
+        loud.push_back((ms(5310), 0.5));
+        assert_eq!(clap_veto(first, second, None, &none, &loud), Some(Veto::Speakers));
+        let mut earlier = quiet.clone();
+        earlier.push_back((ms(4500), 0.5));
+        assert_eq!(clap_veto(first, second, None, &none, &earlier), None);
     }
 
     #[test]

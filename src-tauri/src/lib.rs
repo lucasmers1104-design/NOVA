@@ -80,7 +80,7 @@ pub fn run() {
             // Launched by "Start with Windows": stay in the background if the user chose
             // close-to-tray or the background assistant.
             let background_start = std::env::args().any(|arg| arg == desktop::BACKGROUND_FLAG);
-            if background_start && (close_to_tray || assistant_prefs.background) {
+            if background_start && (close_to_tray || assistant_prefs.background || assistant_prefs.enabled) {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.hide();
                     desktop::set_page_visible(&window, false);

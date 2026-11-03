@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
-import { Ear, ShieldCheck } from "lucide-react";
+import { CircleCheck, Ear, Eraser, Hand, Minus, ShieldCheck, TriangleAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
@@ -62,7 +62,7 @@ export function WakeSettings() {
   const busy = !status || configure.isPending;
   return (
     <SettingsSection id="wake" title="Hey NOVA & double clap" description={description} icon={Ear}>
-      <SettingRow label="Wake with “Hey NOVA”" description={<ListenerLine listener={status?.phrase} on={prefs?.phrase} />}>
+      <SettingRow label="Wake with “Hey NOVA”" description={<ListenerLine listener={status?.phrase} on={prefs?.phrase} onResume={() => update({ muted: false })} />}>
         <Switch label="Wake with Hey NOVA" checked={prefs?.phrase ?? false} disabled={busy} onChange={(phrase) => update({ phrase })} />
       </SettingRow>
       {prefs?.phrase && (
@@ -70,7 +70,7 @@ export function WakeSettings() {
           <SegmentedControl label="Hey NOVA sensitivity" value={prefs.phraseSensitivity} options={PHRASE_SENSITIVITY} onChange={(phraseSensitivity) => update({ phraseSensitivity })} />
         </SettingRow>
       )}
-      <SettingRow label="Wake with a double clap" description={<ListenerLine listener={status?.clap} on={prefs?.clap} />}>
+      <SettingRow label="Wake with a double clap" description={<ListenerLine listener={status?.clap} on={prefs?.clap} onResume={() => update({ muted: false })} />}>
         <Switch label="Wake with a double clap" checked={prefs?.clap ?? false} disabled={busy} onChange={(clap) => update({ clap })} />
       </SettingRow>
       {prefs?.clap && (
@@ -104,7 +104,7 @@ export function WakeSettings() {
       <SettingRow label="Pause in fullscreen apps and games" description="Films and games are full of voices and claps.">
         <Switch label="Pause in fullscreen apps and games" checked={prefs?.pauseInFullscreen ?? true} disabled={busy} onChange={(pauseInFullscreen) => update({ pauseInFullscreen })} />
       </SettingRow>
-      <WakeTest testing={status?.testing ?? false} />
+      <WakeTest testing={status?.testing ?? false} clap={prefs?.clap ?? false} />
       <p className="flex items-start gap-2 pt-4 text-[12.5px] leading-relaxed text-fg-muted">
         <ShieldCheck size={14} className="mt-0.5 shrink-0 text-success" aria-hidden />
         While one of these is on, the microphone stays open and Windows shows its microphone icon. The sound is checked on this PC as it comes in and is never
@@ -114,13 +114,18 @@ export function WakeSettings() {
   );
 }
 
-function ListenerLine({ listener, on }: { listener: WakeListener | undefined; on: boolean | undefined }) {
+function ListenerLine({ listener, on, onResume }: { listener: WakeListener | undefined; on: boolean | undefined; onResume: () => void }) {
   if (!listener || !on) return <>Off</>;
   const tone = listener.state === "listening" ? "text-success" : listener.state === "unavailable" ? "text-danger" : "text-fg-muted";
   return (
     <span className={cn("inline-flex flex-wrap items-center gap-x-1.5", tone)} role="status">
       {listener.state === "listening" && <span className="size-1.5 animate-[nova-pulse_2s_ease-in-out_3] rounded-full bg-success" aria-hidden />}
       {listenerLabel(listener)}
+      {listener.state === "paused" && listener.reason === "muted" && (
+        <button type="button" className="font-medium text-accent-text hover:underline" onClick={onResume}>
+          Resume
+        </button>
+      )}
       {listener.state === "unavailable" && listener.settings && (
         <button type="button" className="font-medium text-accent-text hover:underline" onClick={() => openVoiceSettings(listener.settings!)}>
           Open settings
@@ -130,44 +135,76 @@ function ListenerLine({ listener, on }: { listener: WakeListener | undefined; on
   );
 }
 
+/** How long a test runs; the listener ends it on the Rust side. */
+const TEST_MS = 120_000;
+
+/** "1:05" for 65 seconds. */
+function clock(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
 interface LogLine {
   id: number;
+  /** Time since the test started. */
+  at: number;
   text: string;
   tone: "good" | "muted" | "warn";
 }
 
+const TONE_ICON = { good: CircleCheck, muted: Minus, warn: TriangleAlert } as const;
+const TONE_CLASS = { good: "font-medium text-success", muted: "text-fg-muted", warn: "text-warning" } as const;
+
 /** Two minutes of "what NOVA hears", without opening anything. */
-function WakeTest({ testing }: { testing: boolean }) {
+function WakeTest({ testing, clap }: { testing: boolean; clap: boolean }) {
   const client = useQueryClient();
   const [level, setLevel] = useState(0);
   const [log, setLog] = useState<LogLine[]>([]);
+  const [now, setNow] = useState(0);
   const next = useRef(0);
+  const started = useRef(0);
   const start = useMutation({ mutationFn: testWake, onSuccess: (status) => client.setQueryData(WAKE_STATUS_KEY, status) });
 
   useEffect(() => {
     if (!testing) {
       setLevel(0);
+      setNow(0);
+      started.current = 0;
       return;
     }
+    started.current = Date.now();
+    setNow(started.current);
+    const tick = setInterval(() => setNow(Date.now()), 1000);
     const unlisten = listen<Heard>(ASSISTANT_EVENTS.wakeHeard, (event) => {
       if (event.payload.kind === "level") {
         setLevel(event.payload.value);
         return;
       }
       const line = describeHeard(event.payload);
-      if (line) setLog((lines) => [{ id: next.current++, ...line }, ...lines].slice(0, 8));
+      if (line) setLog((lines) => [{ id: next.current++, at: Date.now() - started.current, ...line }, ...lines].slice(0, 8));
     });
-    return () => void unlisten.then((stop) => stop());
+    return () => {
+      clearInterval(tick);
+      void unlisten.then((stop) => stop());
+    };
   }, [testing]);
 
   // Leaving the page ends the test.
   useEffect(() => () => void testWake(false).catch(() => {}), []);
 
+  const left = TEST_MS - (now - started.current);
   return (
     <div className="mt-3 rounded-[16px] border border-line bg-white/[0.025] p-4">
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <p className="text-[13.5px] font-medium text-fg">Try it</p>
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <div className="min-w-0 flex-1 basis-56">
+          <p className="text-[13.5px] font-medium text-fg">
+            Try it
+            {testing && (
+              <span className="ml-2 text-[12px] font-normal text-fg-subtle tabular-nums">
+                {clock(left)} left
+              </span>
+            )}
+          </p>
           <p className="mt-0.5 text-[12.5px] text-fg-muted">
             {testing ? "Say “Hey NOVA”, clap twice — or talk and type to see what's ignored. Nothing opens during the test." : "Shows what NOVA hears for two minutes."}
           </p>
@@ -183,18 +220,41 @@ function WakeTest({ testing }: { testing: boolean }) {
           {testing ? "Stop" : "Start test"}
         </Button>
       </div>
+      {clap && (
+        <p className="mt-2 flex items-start gap-1.5 text-[12px] leading-relaxed text-fg-subtle">
+          <Hand size={13} className="mt-0.5 shrink-0" aria-hidden />
+          How to clap: two short, sharp claps with flat hands, about half a second apart and equally loud — then stay quiet for a moment.
+        </p>
+      )}
       {testing && (
         <div className="mt-3">
           <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.06]" role="meter" aria-label="Microphone level" aria-valuemin={0} aria-valuemax={1} aria-valuenow={level}>
             <div className="h-full rounded-full bg-accent transition-[width] duration-100 ease-out" style={{ width: `${Math.min(100, Math.sqrt(level) * 100)}%` }} />
           </div>
-          <ol className="mt-3 space-y-1" aria-live="polite" aria-label="What NOVA heard">
+        </div>
+      )}
+      {(testing || log.length > 0) && (
+        <div className="mt-3">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[11.5px] font-medium tracking-wide text-fg-subtle uppercase">What NOVA heard</p>
+            {log.length > 0 && (
+              <button type="button" className="flex items-center gap-1 text-[12px] font-medium text-fg-muted hover:text-fg" onClick={() => setLog([])}>
+                <Eraser size={12} aria-hidden /> Clear
+              </button>
+            )}
+          </div>
+          <ol className="mt-1.5 space-y-1" aria-live="polite" aria-label="What NOVA heard">
             {log.length === 0 && <li className="text-[12px] text-fg-subtle">Listening…</li>}
-            {log.map((line) => (
-              <li key={line.id} className={cn("text-[12.5px]", line.tone === "good" ? "font-medium text-success" : line.tone === "warn" ? "text-warning" : "text-fg-muted")}>
-                {line.text}
-              </li>
-            ))}
+            {log.map((line) => {
+              const Icon = TONE_ICON[line.tone];
+              return (
+                <li key={line.id} className={cn("flex items-start gap-2 text-[12.5px]", TONE_CLASS[line.tone])}>
+                  <span className="w-9 shrink-0 text-right text-[11.5px] font-normal text-fg-subtle tabular-nums">{clock(line.at)}</span>
+                  <Icon size={13} className="mt-[3px] shrink-0" aria-hidden />
+                  <span className="min-w-0">{line.text}</span>
+                </li>
+              );
+            })}
           </ol>
         </div>
       )}

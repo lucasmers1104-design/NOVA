@@ -66,10 +66,12 @@ interface NovaDotProps {
   onMenu: () => void;
   /** Hand the drag to Windows, which moves the dot window. */
   onDragStart: () => void;
+  /** Draw it as if pointed at (the Settings preview). */
+  hovered?: boolean;
 }
 
 /** The floating NOVA dot: click to talk, drag to move, right-click for options. */
-export function NovaDot({ look, open, state = "idle", level = 0, onToggle, onMenu, onDragStart }: NovaDotProps) {
+export function NovaDot({ look, open, state = "idle", level = 0, onToggle, onMenu, onDragStart, hovered = false }: NovaDotProps) {
   const press = useRef<{ x: number; y: number } | null>(null);
   const resting = state === "idle" || state === "completed";
   const breathing = useBreathing(look.breathe && look.glow && !open && resting);
@@ -88,6 +90,7 @@ export function NovaDot({ look, open, state = "idle", level = 0, onToggle, onMen
       data-activity={look.activity}
       data-breathing={breathing}
       data-state={state}
+      data-hover={hovered || undefined}
       style={
         {
           "--dot": `${look.diameter}px`,

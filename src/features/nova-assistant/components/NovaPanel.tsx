@@ -6,7 +6,7 @@ import { Menu } from "@/components/ui/Menu";
 import { cn } from "@/lib/cn";
 import { greetingFor } from "@/lib/time";
 import { attachFile, captureScreen, captureTargets, clearAttachments } from "../api";
-import { useConversation } from "../conversation";
+import { replyText, useConversation } from "../conversation";
 import type { AgentStatus, AssistantState, DotCorner, FinderStatus, WakeCall } from "../types";
 import { listen, openVoiceSettings, stopListening, stopSpeaking, useVoice } from "../voice";
 import { playChime } from "../wake";
@@ -86,6 +86,26 @@ export function NovaPanel(props: NovaPanelProps) {
     };
   }, [wake?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Ctrl+N starts over, Ctrl+Shift+C copies the last finished reply. Other keys are left to the input.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!event.ctrlKey || event.altKey || event.metaKey) return;
+      const letter = event.code.startsWith("Key") ? event.code.slice(3).toLowerCase() : event.key.toLowerCase();
+      const conversation = useConversation.getState();
+      if (letter === "n" && !event.shiftKey) {
+        event.preventDefault();
+        if (view === "chat" && conversation.items.length > 0 && !conversation.busy) void conversation.reset();
+      } else if (letter === "c" && event.shiftKey) {
+        const reply = conversation.items.findLast((i) => i.kind === "assistant" && !i.streaming && replyText(i).trim() !== "");
+        if (reply?.kind !== "assistant") return;
+        event.preventDefault();
+        void navigator.clipboard.writeText(replyText(reply)).catch(report);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [view]);
+
   const model = agent?.activeProvider ? `${agent.activeProvider} · ${agent.activeModel}` : null;
 
   return (
@@ -111,7 +131,7 @@ export function NovaPanel(props: NovaPanelProps) {
           {statusLabel(state, detail)}
         </p>
         {view === "chat" && items.length > 0 && (
-          <IconButton label="New conversation" size="sm" onClick={() => void reset()}>
+          <IconButton label="New conversation" title="New conversation (Ctrl+N)" size="sm" onClick={() => void reset()}>
             <SquarePen size={15} aria-hidden />
           </IconButton>
         )}
@@ -162,6 +182,11 @@ export function NovaPanel(props: NovaPanelProps) {
               Open settings
             </button>
           )}
+          {actionError && (
+            <button type="button" aria-label="Dismiss" title="Dismiss" className="-mt-0.5 shrink-0 rounded-full p-0.5 text-fg-muted hover:text-fg" onClick={() => setActionError(null)}>
+              <X size={13} aria-hidden />
+            </button>
+          )}
         </p>
       )}
 
@@ -170,8 +195,10 @@ export function NovaPanel(props: NovaPanelProps) {
         listening={listening}
         attachments={attachments}
         draft={listening ? voice.transcript : undefined}
+        lastMessage={items.findLast((i) => i.kind === "user")?.text}
         onSend={(text) => {
           stopSpeaking();
+          setActionError(null);
           setView("chat");
           void send(text);
         }}
