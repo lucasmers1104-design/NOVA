@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.1 — 2026-11-04
+
+### Changed
+- NOVA answers a wake-up right away: its greetings and "one moment" lines are made ahead of time, and its voice stays ready for 20 minutes after it last spoke (instead of 5), so there's no pause of several seconds after a double clap or "Hey NOVA".
+- Your request is sent sooner: NOVA treats a 1.1-second pause (was 1.6) as the end of what you said and no longer waits up to 3 seconds for Windows' final wording when it already has your words.
+- Quieter voices are understood: while NOVA listens to a request, the microphone is turned all the way up, and set back to your level afterwards.
+
 ## 1.4.0 — 2026-11-04
 
 ### Added

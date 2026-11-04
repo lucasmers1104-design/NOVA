@@ -48,8 +48,9 @@ const CONFIG: Download = Download {
 /// Written last: the voice is complete. Changing it makes NOVA download again.
 const MARKER: &str = "piper-2023.11.14-2 thorsten-medium v1.0.0";
 
-/// Piper ends after this long without a sentence to speak (it holds ~150 MB).
-const IDLE_LIMIT: Duration = Duration::from_secs(300);
+/// Piper ends after this long without a sentence to speak (it holds ~100 MB);
+/// starting it again costs about a second before NOVA can answer.
+const IDLE_LIMIT: Duration = Duration::from_secs(20 * 60);
 /// One sentence never takes this long; Piper is stuck.
 const SENTENCE_LIMIT: Duration = Duration::from_secs(20);
 /// The panel sends a sentence or two at a time.

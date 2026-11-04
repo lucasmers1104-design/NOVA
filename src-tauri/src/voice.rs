@@ -123,7 +123,7 @@ mod win {
         SpeechRecognitionConfidence, SpeechRecognitionHypothesisGeneratedEventArgs, SpeechRecognitionResultStatus, SpeechRecognizer, SpeechRecognizerState,
         SpeechRecognizerStateChangedEventArgs,
     };
-    use windows::Win32::Media::Audio::Endpoints::IAudioMeterInformation;
+    use windows::Win32::Media::Audio::Endpoints::{IAudioEndpointVolume, IAudioMeterInformation};
     use windows::Win32::Media::Audio::{eCapture, eConsole, IMMDeviceEnumerator, MMDeviceEnumerator};
     use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
 
@@ -136,6 +136,37 @@ mod win {
             let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
             let device = enumerator.GetDefaultAudioEndpoint(eCapture, eConsole).ok()?;
             device.Activate(CLSCTX_ALL, None).ok()
+        }
+    }
+
+    /// Turns the microphone all the way up for one turn, so quiet voices are
+    /// understood too, and back to where it was afterwards.
+    struct FullMicrophone {
+        volume: IAudioEndpointVolume,
+        before: f32,
+    }
+
+    impl FullMicrophone {
+        fn raise() -> Option<Self> {
+            // SAFETY: standard COM activation and plain property calls on a thread with COM initialized.
+            unsafe {
+                let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
+                let device = enumerator.GetDefaultAudioEndpoint(eCapture, eConsole).ok()?;
+                let volume: IAudioEndpointVolume = device.Activate(CLSCTX_ALL, None).ok()?;
+                let before = volume.GetMasterVolumeLevelScalar().ok()?;
+                if before >= 0.99 {
+                    return None;
+                }
+                volume.SetMasterVolumeLevelScalar(1.0, std::ptr::null()).ok()?;
+                Some(Self { volume, before })
+            }
+        }
+    }
+
+    impl Drop for FullMicrophone {
+        fn drop(&mut self) {
+            // SAFETY: plain property call on a live endpoint interface.
+            let _ = unsafe { self.volume.SetMasterVolumeLevelScalar(self.before, std::ptr::null()) };
         }
     }
 
@@ -160,7 +191,7 @@ mod win {
     }
 
     /// A pause this long after the last word ends the turn; shorter pauses are waited out.
-    const END_PAUSE: Duration = Duration::from_millis(1600);
+    const END_PAUSE: Duration = Duration::from_millis(1100);
     /// Nobody said anything for this long: give up.
     const NOTHING_SAID: Duration = Duration::from_secs(8);
     /// Windows hears speech but no words have come back yet (online dictation
@@ -258,6 +289,7 @@ mod win {
             let _ = session.RemoveCompleted(completed_token);
             let _ = recognizer.Close();
         };
+        let _full = FullMicrophone::raise();
         if let Err(error) = session.StartAsync().and_then(|start| start.join()) {
             cleanup();
             return Err(fail(error));
@@ -330,7 +362,8 @@ mod win {
                     let _ = session.StopAsync();
                     stopping = Some(Instant::now());
                 }
-                Some(since) if since.elapsed() > Duration::from_secs(3) => {
+                // With words in hand, the final version isn't worth a long wait.
+                Some(since) if since.elapsed() > if transcript(&phrases, &current).is_empty() { Duration::from_secs(3) } else { Duration::from_millis(700) } => {
                     let _ = session.CancelAsync();
                     break;
                 }

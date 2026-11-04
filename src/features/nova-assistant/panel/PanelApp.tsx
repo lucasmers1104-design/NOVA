@@ -7,7 +7,7 @@ import { useAssistantAppearance } from "../appearance";
 import { NovaPanel } from "../components/NovaPanel";
 import { type AssistantItem, replyText, useConversation } from "../conversation";
 import { ASSISTANT_EVENTS, type AgentStatus, type AssistantState, type DotCorner, type FinderStatus, type WakeCall } from "../types";
-import { installNovaVoice, NOVA_VOICE, speak, stopListening, stopSpeaking, useVoice, watchNovaVoice } from "../voice";
+import { installNovaVoice, NOVA_VOICE, prepareNovaLines, speak, stopListening, stopSpeaking, useVoice, watchNovaVoice } from "../voice";
 
 const REDUCED_MOTION: Record<MotionPreference, "user" | "always" | "never"> = { system: "user", reduced: "always", full: "never" };
 
@@ -49,6 +49,12 @@ export function PanelApp() {
   useEffect(() => {
     if (usesNovaVoice && novaVoice?.state === "missing") void installNovaVoice();
   }, [usesNovaVoice, novaVoice?.state]);
+  // Greetings play right after a wake-up instead of being made then.
+  const language = agent?.prefs.language;
+  const rate = agent?.prefs.speechRate;
+  useEffect(() => {
+    if (usesNovaVoice && novaVoice?.state === "ready" && language !== undefined && rate !== undefined) void prepareNovaLines(language, rate);
+  }, [usesNovaVoice, novaVoice?.state, language, rate]);
 
   useEffect(() => {
     let alive = true;

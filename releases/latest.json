@@ -1,11 +1,11 @@
 {
-  "version": "1.4.0",
-  "notes": "- NOVA's own voice, Thorsten: a natural-sounding German voice that runs on your PC, offline. It's downloaded once in the background (about 85 MB, checked before use); until then NOVA speaks with a Windows voice. Replies are spoken sentence by sentence, so NOVA starts talking right away. \"Automatic\" uses Thorsten for German and a Windows voice otherwise; Settings → Assistant model & voice can pick Thorsten or any Windows voice.\n- Voice input could hear you (the bars moved) but understand nothing: the clap detector and \"Hey NOVA\" kept using the microphone while NOVA listened to your request. Both now let go of the microphone completely while NOVA talks with you, and only resume a moment after NOVA has finished speaking.\n- The voice line says \"Einen Moment …\" until the microphone is really open, then \"Ich höre zu …\", so the first words aren't lost.\n- Phrases Windows wasn't sure about are used when nothing else was understood, and a turn without words explains in your language whether NOVA heard nothing at all or heard you without making out words. Each turn's timings (never what you said) are kept in `voice-last-turn.txt` in NOVA's local data folder.",
-  "pub_date": "2026-11-04T18:43:39.000Z",
+  "version": "1.4.1",
+  "notes": "- NOVA answers a wake-up right away: its greetings and \"one moment\" lines are made ahead of time, and its voice stays ready for 20 minutes after it last spoke (instead of 5), so there's no pause of several seconds after a double clap or \"Hey NOVA\".\n- Your request is sent sooner: NOVA treats a 1.1-second pause (was 1.6) as the end of what you said and no longer waits up to 3 seconds for Windows' final wording when it already has your words.\n- Quieter voices are understood: while NOVA listens to a request, the microphone is turned all the way up, and set back to your level afterwards.",
+  "pub_date": "2026-11-04T19:01:43.307Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQXJNVGpjYStTWkp3NUZVNVVDbkl0SUE0dGJQb1hsSzhIN1F0a2l4dHhueWhOdEs0WW1VMDI5RXdiQ0VCeHBVMFB3Q2IzMDJkb2p6QVlZYVZmaWlWRDNEUEpUUlFRRmdjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzODE3ODE3CWZpbGU6Tk9WQV8xLjQuMF94NjQtc2V0dXAuZXhlCXZlcnNpb246MS40LjAKOGtENkI5UTY3WlZZVTJGV2Z0RDh6eXkrTlo1UmgrWHJLbmc4Qjd2LzBQY3phUlh3TXF6TCtmNjRzK2orS0c3ckJSOHlOcXNENFd6R0RVL1pQTWtHRFE9PQo=",
-      "url": "https://raw.githubusercontent.com/lucasmers1104-design/NOVA/main/releases/NOVA_1.4.0_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUQXJNVGpjYStTWkltanU2ck52dndEQVRmYXpaZkg0eG9uUW1pMUxYUUdiOTB2YVpDM2pxdWpmeWkvNVdoajV6RGp3bXV2V0Ridi9HWmwwU29TTTdyL2FhMENqNENnNWdVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzODE4OTAxCWZpbGU6Tk9WQV8xLjQuMV94NjQtc2V0dXAuZXhlCXZlcnNpb246MS40LjEKK3lKTExMZ04yNXZuR0Vmejd2Ui9GY3VZR2pScVVTQU0yUXpISmNEaSsrRUdTamdPdWlYa2lXVEUwRjBQMkt6TXBmQTZQazZGb3gyN2xVUnJrekx2QkE9PQo=",
+      "url": "https://raw.githubusercontent.com/lucasmers1104-design/NOVA/main/releases/NOVA_1.4.1_x64-setup.exe"
     }
   }
 }

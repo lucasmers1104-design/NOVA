@@ -183,6 +183,32 @@ let audio: AudioContext | null = null;
 
 type SpeechPrefs = Pick<AgentPrefs, "voice" | "speechRate" | "speechVolume">;
 
+/** NOVA's fixed lines (greetings, "one moment") made ahead, so they play at once. */
+const madeAhead = new Map<string, ArrayBuffer>();
+const aheadKey = (text: string, rate: number) => `${rate}|${text}`;
+
+function synthesizeChunk(text: string, rate: number): Promise<ArrayBuffer> {
+  const ready = madeAhead.get(aheadKey(text, rate));
+  // Playing detaches the buffer: hand out a copy.
+  return ready ? Promise.resolve(ready.slice(0)) : callNative<ArrayBuffer>("tts_speak", { text, rate });
+}
+
+/** Makes NOVA's greetings and acknowledgements ahead of time (and keeps its voice warm). */
+export async function prepareNovaLines(language: string, rate: number): Promise<void> {
+  const lines = LINES[speaksGerman(language) ? "de" : "en"];
+  for (const line of [...lines.greet, ...lines.ack]) {
+    for (const chunk of speechChunks(speakableText(line))) {
+      const key = aheadKey(chunk, rate);
+      if (madeAhead.has(key)) continue;
+      try {
+        madeAhead.set(key, await callNative<ArrayBuffer>("tts_speak", { text: chunk, rate }));
+      } catch {
+        return;
+      }
+    }
+  }
+}
+
 /** Reads `text` aloud. Resolves when finished or interrupted. */
 export async function speak(text: string, prefs: SpeechPrefs): Promise<void> {
   const spoken = speakableText(text);
@@ -218,7 +244,7 @@ function ended() {
 /** Says `spoken` sentence by sentence; resolves with what's left unsaid if the voice failed, else null. */
 async function speakWithNovaVoice(spoken: string, prefs: SpeechPrefs, mine: number): Promise<string | null> {
   const chunks = speechChunks(spoken.slice(0, 4000));
-  const synthesize = (chunk: string) => callNative<ArrayBuffer>("tts_speak", { text: chunk, rate: prefs.speechRate });
+  const synthesize = (chunk: string) => synthesizeChunk(chunk, prefs.speechRate);
   audio ??= new AudioContext();
   const context = audio;
   await context.resume().catch(() => {});
