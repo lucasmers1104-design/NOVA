@@ -137,7 +137,7 @@ export function NovaPanel(props: NovaPanelProps) {
     }
     setActionError(null);
     discard.current = false;
-    const text = await listen();
+    const text = await listen(german);
     if (text && !discard.current) {
       props.onVoiceTurn();
       setView("chat");
@@ -379,6 +379,7 @@ export function NovaPanel(props: NovaPanelProps) {
         <NovaVoiceLine
           level={voice.level}
           active={voice.mode === "listening"}
+          ready={voice.ready}
           transcript={voice.transcript}
           german={german}
           onDone={() => stopListening()}

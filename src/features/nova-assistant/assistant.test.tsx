@@ -15,7 +15,8 @@ import { reduceReply, replyText, useConversation } from "./conversation";
 import { displayedState } from "./panel/PanelApp";
 import { captureShortcut, shortcutLabels } from "./shortcut";
 import { type AgentEvent, type AgentStatus, type AssistantStatus, DEFAULT_DOT_LOOK, type FinderStatus } from "./types";
-import { speakableText, speaksGerman, voiceLine } from "./voice";
+import { NOVA_VOICE, speakableText, speaksGerman, speechChunks, usesNovaVoice, voiceLine } from "./voice";
+import { voiceDescription } from "./AgentSettings";
 import { NovaVoiceLine } from "./components/NovaVoiceLine";
 import { describeHeard, listenerLabel, type WakeStatus } from "./wake";
 
@@ -414,17 +415,42 @@ describe("conversation helpers", () => {
     const user = userEvent.setup();
     const done = vi.fn();
     const cancel = vi.fn();
-    const { rerender } = render(<NovaVoiceLine level={0.4} active transcript="" german onDone={done} onCancel={cancel} />);
+    const { rerender } = render(<NovaVoiceLine level={0.4} active ready={false} transcript="" german onDone={done} onCancel={cancel} />);
+    // The microphone isn't open yet: don't invite speaking.
+    expect(screen.getByRole("group", { name: "NOVA is listening" })).toHaveTextContent("Einen Moment");
+    rerender(<NovaVoiceLine level={0.4} active ready transcript="" german onDone={done} onCancel={cancel} />);
     expect(screen.getByRole("group", { name: "NOVA is listening" })).toHaveTextContent("Ich höre zu");
-    rerender(<NovaVoiceLine level={0.4} active transcript="Öffne meine Downloads" german onDone={done} onCancel={cancel} />);
+    rerender(<NovaVoiceLine level={0.4} active ready transcript="Öffne meine Downloads" german onDone={done} onCancel={cancel} />);
     expect(screen.getByText("Öffne meine Downloads")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Done, send it" }));
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(done).toHaveBeenCalledOnce();
     expect(cancel).toHaveBeenCalledOnce();
-    rerender(<NovaVoiceLine level={0} active={false} transcript="" german={false} onDone={done} onCancel={cancel} />);
+    rerender(<NovaVoiceLine level={0} active={false} ready transcript="" german={false} onDone={done} onCancel={cancel} />);
     expect(screen.getByText("One moment …")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Done, send it" })).toBeDisabled();
+  });
+
+  it("speaks German with NOVA's own voice unless a Windows voice is chosen", () => {
+    expect(usesNovaVoice("Ich habe drei Dateien gefunden.", "")).toBe(true);
+    expect(usesNovaVoice("I found three files.", "")).toBe(false);
+    expect(usesNovaVoice("I found three files.", NOVA_VOICE)).toBe(true);
+    expect(usesNovaVoice("Ich habe drei Dateien gefunden.", "Microsoft Katja")).toBe(false);
+    expect(voiceDescription("", { state: "downloading", percent: 42 })).toMatch(/42 %/);
+    expect(voiceDescription("Microsoft Katja", { state: "ready" })).toMatch(/Windows voice/);
+  });
+
+  it("cuts replies into sentences NOVA's voice says one after another", () => {
+    expect(speechChunks("Hey! Was kann ich für dich tun? Alles klar. Gut. Ich hab drei Rechnungen gefunden.")).toEqual([
+      "Hey!",
+      "Was kann ich für dich tun? Alles klar. Gut.",
+      "Ich hab drei Rechnungen gefunden.",
+    ]);
+    const long = "Das ist ein sehr langer Satz, der immer weiter geht, ".repeat(8).trim();
+    const chunks = speechChunks(long, 120);
+    expect(chunks.every((c) => c.length <= 120)).toBe(true);
+    expect(chunks.join(" ")).toBe(long);
+    expect(speechChunks("   ")).toEqual([]);
   });
 
   it("prefers voice states in the header", () => {

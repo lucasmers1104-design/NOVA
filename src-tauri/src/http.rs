@@ -1,6 +1,7 @@
 //! The single outbound HTTP client. Every network connection NOVA makes goes
 //! through here, and only for features the user explicitly configured
-//! (AI providers with a key, weather with a location, news feeds they added).
+//! (AI providers with a key, weather with a location, news feeds they added,
+//! NOVA's voice when spoken replies use it).
 
 use std::sync::OnceLock;
 use std::time::Duration;

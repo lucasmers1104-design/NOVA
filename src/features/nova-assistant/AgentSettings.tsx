@@ -22,7 +22,7 @@ import {
   finderStatus,
 } from "./api";
 import { ASSISTANT_EVENTS, type AgentPrefs, type AgentStatus, type FinderStatus, type ProviderId } from "./types";
-import { speak, voices } from "./voice";
+import { installNovaVoice, NOVA_VOICE, type NovaVoiceStatus, speak, useVoice, voices, watchNovaVoice } from "./voice";
 
 const AGENT_KEY = ["assistant", "agent"] as const;
 const FINDER_KEY = ["assistant", "finder"] as const;
@@ -70,6 +70,9 @@ export function AgentSettings() {
   const limitId = useId();
   const [limitDraft, setLimitDraft] = useState<string | null>(null);
   const [voiceList, setVoiceList] = useState<SpeechSynthesisVoice[]>(() => voices());
+  const novaVoice = useVoice((s) => s.novaVoice);
+
+  useEffect(() => (isDesktop() ? watchNovaVoice() : undefined), []);
 
   useEffect(() => {
     if (typeof speechSynthesis === "undefined") return;
@@ -174,21 +177,33 @@ export function AgentSettings() {
       <SettingRow label="Spoken replies" description="NOVA reads its answers aloud. Replies to spoken questions are always read aloud.">
         <Switch label="Spoken replies" checked={prefs?.speakReplies ?? false} disabled={!prefs} onChange={(speakReplies) => update({ speakReplies })} />
       </SettingRow>
-      <SettingRow label="Voice" description={voiceList.length === 0 ? "No Windows voices found. Add one in Windows Settings → Time & language → Speech." : "Windows voices installed on this PC."}>
+      <SettingRow label="Voice" description={voiceDescription(prefs?.voice ?? "", novaVoice)}>
         <div className="flex items-center gap-1.5">
-          <select aria-label="Voice" className={selectClass} disabled={!prefs || voiceList.length === 0} value={prefs?.voice ?? ""} onChange={(e) => update({ voice: e.target.value })}>
-            <option value="">Automatic (matches the reply's language)</option>
+          <select aria-label="Voice" className={selectClass} disabled={!prefs} value={prefs?.voice ?? ""} onChange={(e) => update({ voice: e.target.value })}>
+            <option value="">Automatic (Thorsten for German, else Windows)</option>
+            <option value={NOVA_VOICE}>Thorsten — NOVA's natural voice</option>
             {voiceList.map((v) => (
               <option key={v.name} value={v.name}>
                 {v.name} ({v.lang})
               </option>
             ))}
           </select>
+          {(prefs?.voice === "" || prefs?.voice === NOVA_VOICE) && (novaVoice?.state === "missing" || novaVoice?.state === "failed") && (
+            <Button size="sm" variant="ghost" onClick={() => void installNovaVoice()}>
+              {novaVoice.state === "failed" ? "Retry" : "Download"}
+            </Button>
+          )}
           <Button
             size="sm"
             variant="ghost"
-            disabled={!prefs || voiceList.length === 0}
-            onClick={() => prefs && void speak(/^de/i.test(voiceList.find((v) => v.name === prefs.voice)?.lang ?? navigator.language) ? "Hallo, ich bin NOVA. So klinge ich." : "Hi, I'm NOVA. This is how I sound.", prefs)}
+            disabled={!prefs}
+            onClick={() =>
+              prefs &&
+              void speak(
+                prefs.voice === NOVA_VOICE || /^de/i.test(voiceList.find((v) => v.name === prefs.voice)?.lang ?? navigator.language) ? "Hallo, ich bin NOVA. So klinge ich." : "Hi, I'm NOVA. This is how I sound.",
+                prefs,
+              )
+            }
           >
             Test
           </Button>
@@ -235,6 +250,21 @@ export function AgentSettings() {
       </SettingRow>
     </SettingsSection>
   );
+}
+
+/** What the voice row says about the chosen voice and NOVA's own voice. */
+export function voiceDescription(voice: string, nova: NovaVoiceStatus | null): string {
+  if (voice !== "" && voice !== NOVA_VOICE) return "A Windows voice installed on this PC.";
+  switch (nova?.state) {
+    case "downloading":
+      return `Downloading Thorsten (about 85 MB, once) … ${nova.percent} %. Until then NOVA speaks with a Windows voice.`;
+    case "failed":
+      return `${nova.message}. NOVA speaks with a Windows voice meanwhile.`;
+    case "missing":
+      return "Thorsten is a natural-sounding voice that runs on this PC. It's downloaded once (about 85 MB); until then NOVA speaks with a Windows voice.";
+    default:
+      return "Thorsten is a natural-sounding voice that runs on this PC, offline.";
+  }
 }
 
 function ModelRow({ provider, name, hasKey, value, disabled, onChange }: { provider: ProviderId; name: string; hasKey: boolean; value: string; disabled: boolean; onChange: (model: string) => void }) {

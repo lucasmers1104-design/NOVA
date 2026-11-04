@@ -12,6 +12,8 @@ interface NovaVoiceLineProps {
   level: number;
   /** Still listening (false while the words are being finished). */
   active: boolean;
+  /** The microphone is open (it takes a moment after the line appears). */
+  ready: boolean;
   transcript: string;
   /** Finish now and send what was said. */
   onDone: () => void;
@@ -26,7 +28,7 @@ interface NovaVoiceLineProps {
  * and sink back slowly when you're quiet, like a studio level meter, with
  * the words understood so far above them. Animates only while it's shown.
  */
-export function NovaVoiceLine({ level, active, transcript, onDone, onCancel, german }: NovaVoiceLineProps) {
+export function NovaVoiceLine({ level, active, ready, transcript, onDone, onCancel, german }: NovaVoiceLineProps) {
   const bars = useRef<(HTMLSpanElement | null)[]>([]);
   const target = useRef(level);
   target.current = active ? level : 0;
@@ -61,7 +63,7 @@ export function NovaVoiceLine({ level, active, transcript, onDone, onCancel, ger
     <div className="px-3 pt-1 pb-3">
       <div className="rounded-[20px] bg-white/[0.055] px-4 pt-3 pb-2.5 ring-1 ring-accent/30" role="group" aria-label="NOVA is listening">
         <p className={cn("min-h-[20px] text-[13.5px] leading-snug", transcript ? "text-fg" : "text-fg-muted")} aria-live="polite">
-          {transcript || (active ? (german ? "Ich höre zu …" : "Listening …") : german ? "Einen Moment …" : "One moment …")}
+          {transcript || (active && ready ? (german ? "Ich höre zu …" : "Listening …") : german ? "Einen Moment …" : "One moment …")}
         </p>
         <div className="mt-2 flex items-center gap-3">
           <div className="flex h-11 flex-1 items-center justify-center gap-[3px]" aria-hidden>

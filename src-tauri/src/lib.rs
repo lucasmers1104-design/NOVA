@@ -14,6 +14,7 @@ mod media;
 mod shell;
 mod storage;
 mod system;
+mod tts;
 mod updates;
 mod voice;
 pub mod wake;
@@ -53,6 +54,7 @@ pub fn run() {
         .manage(agent::AgentState::default())
         .manage(finder::FinderState::default())
         .manage(voice::VoiceState::default())
+        .manage(tts::TtsState::default())
         .manage(wake::WakeState::default())
         .manage(system::SystemMonitor::new())
         .manage(apps::AppCatalog::default())
@@ -211,6 +213,9 @@ pub fn run() {
             voice::voice_listen,
             voice::voice_stop,
             voice::voice_open_settings,
+            tts::tts_status,
+            tts::tts_install,
+            tts::tts_speak,
             wake::wake_status,
             wake::wake_configure,
             wake::wake_test,

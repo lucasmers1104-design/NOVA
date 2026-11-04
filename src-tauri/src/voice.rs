@@ -31,7 +31,8 @@ pub enum VoiceEvent {
     /// Speech ended; the final text is being worked out.
     Processing,
     Result { text: String },
-    NoSpeech,
+    /// No words came back. `heard`: Windows did hear sound or speech.
+    NoSpeech { heard: bool },
     /// `settings`: the Windows settings page that fixes it, if any.
     Error { message: String, settings: Option<&'static str> },
 }
@@ -69,6 +70,42 @@ pub(crate) fn describe(code: i32, language: &str) -> VoiceError {
     VoiceError { message, settings }
 }
 
+/// What happened in the last spoken turn, written to `voice-last-turn.txt`
+/// in NOVA's local data folder so a failed turn can be explained. It holds
+/// timings and counts only, never what was said.
+#[derive(Debug, Default)]
+pub(crate) struct TurnReport {
+    language: String,
+    /// When the recognizer was ready, after the request (ms).
+    ready_ms: Option<u128>,
+    /// When Windows first heard sound / speech, after it was ready (ms).
+    sound_ms: Option<u128>,
+    speech_ms: Option<u128>,
+    hypotheses: u32,
+    phrases: u32,
+    unsure: u32,
+    ended: String,
+    outcome: String,
+}
+
+impl TurnReport {
+    fn render(&self, at: &str) -> String {
+        let ms = |v: Option<u128>| v.map_or("never".to_string(), |v| format!("{v} ms"));
+        format!(
+            "NOVA voice turn ({at})\nlanguage: {}\nready after: {}\nsound heard after: {}\nspeech detected after: {}\nlive hypotheses: {}\nphrases: {}\nunsure phrases: {}\nsession ended: {}\noutcome: {}\n",
+            self.language,
+            ms(self.ready_ms),
+            ms(self.sound_ms),
+            ms(self.speech_ms),
+            self.hypotheses,
+            self.phrases,
+            self.unsure,
+            self.ended,
+            self.outcome
+        )
+    }
+}
+
 /// The finished phrases of a turn plus the one still being spoken.
 fn transcript(phrases: &[String], current: &str) -> String {
     phrases.iter().map(String::as_str).chain(std::iter::once(current)).map(str::trim).filter(|p| !p.is_empty()).collect::<Vec<_>>().join(" ")
@@ -83,13 +120,14 @@ mod win {
     use windows::Globalization::Language;
     use windows::Media::SpeechRecognition::{
         SpeechContinuousRecognitionCompletedEventArgs, SpeechContinuousRecognitionResultGeneratedEventArgs, SpeechContinuousRecognitionSession,
-        SpeechRecognitionConfidence, SpeechRecognitionHypothesisGeneratedEventArgs, SpeechRecognitionResultStatus, SpeechRecognizer,
+        SpeechRecognitionConfidence, SpeechRecognitionHypothesisGeneratedEventArgs, SpeechRecognitionResultStatus, SpeechRecognizer, SpeechRecognizerState,
+        SpeechRecognizerStateChangedEventArgs,
     };
     use windows::Win32::Media::Audio::Endpoints::IAudioMeterInformation;
     use windows::Win32::Media::Audio::{eCapture, eConsole, IMMDeviceEnumerator, MMDeviceEnumerator};
     use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
 
-    use super::{describe, transcript, VoiceError, VoiceEvent, VoiceState};
+    use super::{describe, transcript, TurnReport, VoiceError, VoiceEvent, VoiceState};
 
     /// Peak level of the default microphone (it only moves while something records).
     fn meter() -> Option<IAudioMeterInformation> {
@@ -111,6 +149,12 @@ mod win {
         Hypothesis(String),
         /// A finished phrase (the user paused briefly).
         Phrase(String),
+        /// A phrase Windows wasn't sure about (kept in case nothing else comes).
+        Unsure(String),
+        /// Windows hears sound above the background noise.
+        Sound,
+        /// Windows hears speech.
+        Speech,
         /// The session ended; Success unless something went wrong.
         Ended(SpeechRecognitionResultStatus),
     }
@@ -119,6 +163,9 @@ mod win {
     const END_PAUSE: Duration = Duration::from_millis(1600);
     /// Nobody said anything for this long: give up.
     const NOTHING_SAID: Duration = Duration::from_secs(8);
+    /// Windows hears speech but no words have come back yet (online dictation
+    /// can lag): wait this long before giving up.
+    const NO_WORDS_YET: Duration = Duration::from_secs(14);
     const LONGEST_TURN: Duration = Duration::from_secs(90);
 
     fn ended_with(status: SpeechRecognitionResultStatus, used: &str) -> Option<VoiceError> {
@@ -137,7 +184,8 @@ mod win {
 
     /// One spoken turn: listens continuously, waits out short pauses, and ends
     /// once the user has been quiet for `END_PAUSE` (or presses stop).
-    pub fn listen(language: &str, state: &VoiceState, send: &dyn Fn(VoiceEvent)) -> Result<(), VoiceError> {
+    pub fn listen(language: &str, state: &VoiceState, send: &dyn Fn(VoiceEvent), report: &mut TurnReport) -> Result<(), VoiceError> {
+        let requested = Instant::now();
         let fail = |e: windows::core::Error| describe(e.code().0, language);
         let recognizer = if language == "auto" {
             SpeechRecognizer::new().map_err(fail)?
@@ -146,6 +194,7 @@ mod win {
             SpeechRecognizer::Create(&tag).map_err(fail)?
         };
         let used = recognizer.CurrentLanguage().and_then(|l| l.LanguageTag()).map(|t| t.to_string()).unwrap_or_else(|_| language.to_string());
+        report.language = used.clone();
         let timeouts = recognizer.Timeouts().map_err(fail)?;
         // Phrases end at short pauses; NOVA decides when the whole turn is over.
         let _ = timeouts.SetInitialSilenceTimeout(span(NOTHING_SAID.as_millis() as i64 + 2000));
@@ -165,6 +214,21 @@ mod win {
                 Ok(())
             }))
             .map_err(fail)?;
+        let state_tx = tx.clone();
+        let state_token = recognizer
+            .StateChanged(&TypedEventHandler::<SpeechRecognizer, SpeechRecognizerStateChangedEventArgs>::new(move |_, args| {
+                match args.as_ref().and_then(|a| a.State().ok()) {
+                    Some(SpeechRecognizerState::SoundStarted) => {
+                        let _ = state_tx.send(Heard::Sound);
+                    }
+                    Some(SpeechRecognizerState::SpeechDetected) => {
+                        let _ = state_tx.send(Heard::Speech);
+                    }
+                    _ => {}
+                }
+                Ok(())
+            }))
+            .map_err(fail)?;
         let session = recognizer.ContinuousRecognitionSession().map_err(fail)?;
         let _ = session.SetAutoStopSilenceTimeout(span(LONGEST_TURN.as_millis() as i64));
         let phrase_tx = tx.clone();
@@ -172,8 +236,9 @@ mod win {
             .ResultGenerated(&TypedEventHandler::<SpeechContinuousRecognitionSession, SpeechContinuousRecognitionResultGeneratedEventArgs>::new(move |_, args| {
                 if let Some(result) = args.as_ref().and_then(|a| a.Result().ok()) {
                     let rejected = result.Confidence().is_ok_and(|c| c == SpeechRecognitionConfidence::Rejected);
-                    if result.Status()? == SpeechRecognitionResultStatus::Success && !rejected {
-                        let _ = phrase_tx.send(Heard::Phrase(result.Text()?.to_string()));
+                    if result.Status()? == SpeechRecognitionResultStatus::Success {
+                        let text = result.Text()?.to_string();
+                        let _ = phrase_tx.send(if rejected { Heard::Unsure(text) } else { Heard::Phrase(text) });
                     }
                 }
                 Ok(())
@@ -188,6 +253,7 @@ mod win {
             .map_err(fail)?;
         let cleanup = || {
             let _ = recognizer.RemoveHypothesisGenerated(hypothesis_token);
+            let _ = recognizer.RemoveStateChanged(state_token);
             let _ = session.RemoveResultGenerated(result_token);
             let _ = session.RemoveCompleted(completed_token);
             let _ = recognizer.Close();
@@ -200,7 +266,10 @@ mod win {
 
         let meter = meter();
         let started = Instant::now();
+        report.ready_ms = Some(started.duration_since(requested).as_millis());
         let mut phrases: Vec<String> = Vec::new();
+        let mut unsure: Vec<String> = Vec::new();
+        let mut heard_speech = false;
         let mut current = String::new();
         let mut last_words: Option<Instant> = None;
         let mut stopping: Option<Instant> = None;
@@ -209,15 +278,34 @@ mod win {
             while let Ok(event) = heard.try_recv() {
                 match event {
                     Heard::Hypothesis(text) => {
+                        report.hypotheses += 1;
                         current = text;
                         last_words = Some(Instant::now());
                     }
                     Heard::Phrase(text) => {
+                        report.phrases += 1;
                         if !text.trim().is_empty() {
                             phrases.push(text.trim().to_string());
                         }
                         current.clear();
                         last_words = Some(Instant::now());
+                    }
+                    Heard::Unsure(text) => {
+                        report.unsure += 1;
+                        if !text.trim().is_empty() {
+                            unsure.push(text.trim().to_string());
+                        }
+                        current.clear();
+                        last_words = Some(Instant::now());
+                    }
+                    Heard::Sound => {
+                        report.sound_ms.get_or_insert(started.elapsed().as_millis());
+                        continue;
+                    }
+                    Heard::Speech => {
+                        report.speech_ms.get_or_insert(started.elapsed().as_millis());
+                        heard_speech = true;
+                        continue;
                     }
                     Heard::Ended(status) => ended = Some(status),
                 }
@@ -233,7 +321,7 @@ mod win {
             }
             let wants_stop = state.stop.load(super::Ordering::SeqCst)
                 || last_words.is_some_and(|t| t.elapsed() >= END_PAUSE)
-                || (last_words.is_none() && started.elapsed() >= NOTHING_SAID)
+                || (last_words.is_none() && started.elapsed() >= if heard_speech { NO_WORDS_YET } else { NOTHING_SAID })
                 || started.elapsed() >= LONGEST_TURN;
             match stopping {
                 None if wants_stop => {
@@ -254,14 +342,23 @@ mod win {
         if stopping.is_none() {
             send(VoiceEvent::Processing);
         }
-        // Words still in progress when the turn ended count too.
-        let text = transcript(&phrases, &current);
+        report.ended = ended.map_or_else(|| "stopped by NOVA".to_string(), |status| format!("status {}", status.0));
+        // Words still in progress when the turn ended count too; phrases
+        // Windows wasn't sure about only when nothing else was understood.
+        let mut text = transcript(&phrases, &current);
+        if text.is_empty() {
+            text = transcript(&unsure, "");
+        }
         if let Some(error) = ended.and_then(|status| ended_with(status, &used)).filter(|_| text.is_empty()) {
+            report.outcome = format!("error: {}", error.message);
             return Err(error);
         }
         if text.is_empty() {
-            send(VoiceEvent::NoSpeech);
+            let heard = report.sound_ms.is_some() || heard_speech;
+            report.outcome = format!("no words (sound heard: {heard})");
+            send(VoiceEvent::NoSpeech { heard });
         } else {
+            report.outcome = format!("{} words", text.split_whitespace().count());
             send(VoiceEvent::Result { text });
         }
         Ok(())
@@ -285,11 +382,12 @@ pub async fn voice_listen<R: Runtime>(app: AppHandle<R>, on_event: Channel<Voice
         let send = |event: VoiceEvent| {
             let _ = channel.send(event);
         };
+        let mut report = TurnReport::default();
         #[cfg(windows)]
         let result = {
             let mut failure = None;
             let _ = crate::shell::with_com(false, || {
-                failure = win::listen(&language, &state, &send).err();
+                failure = win::listen(&language, &state, &send, &mut report).err();
                 Ok(())
             });
             failure.map_or(Ok(()), Err)
@@ -297,6 +395,10 @@ pub async fn voice_listen<R: Runtime>(app: AppHandle<R>, on_event: Channel<Voice
         #[cfg(not(windows))]
         let result: Result<(), VoiceError> = Err("Voice input requires Windows".into());
         let _ = (&state, &send, &language);
+        if let Some(error) = result.as_ref().err().filter(|_| report.outcome.is_empty()) {
+            report.outcome = format!("error: {}", error.message);
+        }
+        write_report(&app2, &report);
         result
     })
     .await
@@ -308,6 +410,13 @@ pub async fn voice_listen<R: Runtime>(app: AppHandle<R>, on_event: Channel<Voice
         let _ = on_event.send(VoiceEvent::Error { message: error.message, settings: error.settings });
     }
     Ok(())
+}
+
+fn write_report<R: Runtime>(app: &AppHandle<R>, report: &TurnReport) {
+    let Ok(dir) = app.path().app_local_data_dir() else { return };
+    let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = std::fs::write(dir.join("voice-last-turn.txt"), report.render(&format!("unix time {at}")));
 }
 
 /// Opens a Windows settings page that fixes a voice problem (fixed list, no input passes through).
@@ -353,6 +462,13 @@ mod tests {
     }
 
     #[test]
+    fn turn_report_holds_no_words() {
+        let report = TurnReport { language: "de-DE".into(), ready_ms: Some(420), speech_ms: Some(900), hypotheses: 0, outcome: "no words (sound heard: true)".into(), ..TurnReport::default() };
+        let text = report.render("now");
+        assert!(text.contains("ready after: 420 ms") && text.contains("sound heard after: never") && text.contains("speech detected after: 900 ms"));
+    }
+
+    #[test]
     fn explains_common_failures() {
         let privacy = describe(0x8004_5509u32 as i32, "de-DE");
         assert!(privacy.message.contains("Online speech recognition"));
@@ -367,6 +483,6 @@ mod tests {
     fn events_serialize_for_the_panel() {
         let json = serde_json::to_value(VoiceEvent::Hypothesis { text: "hallo".into() }).unwrap();
         assert_eq!(json, serde_json::json!({ "type": "hypothesis", "text": "hallo" }));
-        assert_eq!(serde_json::to_value(VoiceEvent::NoSpeech).unwrap(), serde_json::json!({ "type": "noSpeech" }));
+        assert_eq!(serde_json::to_value(VoiceEvent::NoSpeech { heard: true }).unwrap(), serde_json::json!({ "type": "noSpeech", "heard": true }));
     }
 }

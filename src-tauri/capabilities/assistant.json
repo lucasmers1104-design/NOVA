@@ -35,6 +35,9 @@
     "allow-voice-listen",
     "allow-voice-stop",
     "allow-voice-open-settings",
+    "allow-tts-status",
+    "allow-tts-install",
+    "allow-tts-speak",
     "allow-wake-status",
     "allow-wake-set-speaking"
   ]

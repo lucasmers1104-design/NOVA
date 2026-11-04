@@ -7,7 +7,7 @@ import { useAssistantAppearance } from "../appearance";
 import { NovaPanel } from "../components/NovaPanel";
 import { type AssistantItem, replyText, useConversation } from "../conversation";
 import { ASSISTANT_EVENTS, type AgentStatus, type AssistantState, type DotCorner, type FinderStatus, type WakeCall } from "../types";
-import { speak, stopListening, stopSpeaking, useVoice } from "../voice";
+import { installNovaVoice, NOVA_VOICE, speak, stopListening, stopSpeaking, useVoice, watchNovaVoice } from "../voice";
 
 const REDUCED_MOTION: Record<MotionPreference, "user" | "always" | "never"> = { system: "user", reduced: "always", full: "never" };
 
@@ -41,6 +41,14 @@ export function PanelApp() {
   const voiceMode = useVoice((s) => s.mode);
   const level = useVoice((s) => s.level);
   const state = displayedState(conversationState, voiceMode);
+  const novaVoice = useVoice((s) => s.novaVoice);
+
+  useEffect(() => watchNovaVoice(), []);
+  // NOVA's own voice is downloaded once, in the background, when it will be used.
+  const usesNovaVoice = agent ? agent.prefs.voice === "" || agent.prefs.voice === NOVA_VOICE : false;
+  useEffect(() => {
+    if (usesNovaVoice && novaVoice?.state === "missing") void installNovaVoice();
+  }, [usesNovaVoice, novaVoice?.state]);
 
   useEffect(() => {
     let alive = true;

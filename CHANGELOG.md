@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.4.0 — 2026-11-04
+
+### Added
+- **NOVA's own voice, Thorsten**: a natural-sounding German voice that runs on your PC, offline. It's downloaded once in the background (about 85 MB, checked before use); until then NOVA speaks with a Windows voice. Replies are spoken sentence by sentence, so NOVA starts talking right away. "Automatic" uses Thorsten for German and a Windows voice otherwise; Settings → Assistant model & voice can pick Thorsten or any Windows voice.
+
+### Fixed
+- Voice input could hear you (the bars moved) but understand nothing: the clap detector and "Hey NOVA" kept using the microphone while NOVA listened to your request. Both now let go of the microphone completely while NOVA talks with you, and only resume a moment after NOVA has finished speaking.
+- The voice line says "Einen Moment …" until the microphone is really open, then "Ich höre zu …", so the first words aren't lost.
+- Phrases Windows wasn't sure about are used when nothing else was understood, and a turn without words explains in your language whether NOVA heard nothing at all or heard you without making out words. Each turn's timings (never what you said) are kept in `voice-last-turn.txt` in NOVA's local data folder.
+
 ## 1.3.2 — 2026-11-04
 
 ### Changed

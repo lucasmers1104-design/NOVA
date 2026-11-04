@@ -86,6 +86,9 @@
     "allow-wake-status",
     "allow-wake-configure",
     "allow-wake-test",
-    "allow-voice-open-settings"
+    "allow-voice-open-settings",
+    "allow-tts-status",
+    "allow-tts-install",
+    "allow-tts-speak"
   ]
 }

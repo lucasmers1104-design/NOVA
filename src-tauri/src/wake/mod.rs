@@ -42,6 +42,12 @@ const DECOYS: &[&str] = &[
 const TEST_LENGTH: Duration = Duration::from_secs(120);
 /// Spoken replies longer than this no longer pause listening (a lost "done").
 const SPEAKING_LIMIT: Duration = Duration::from_secs(90);
+/// After NOVA stops speaking, listening resumes only after this long: NOVA
+/// usually starts listening for an answer right away, and a recognizer
+/// started in between would hold the microphone while it does.
+const SPEAKING_SETTLE: Duration = Duration::from_millis(1500);
+/// Longest wait for the wake listeners to let go of the microphone before dictation.
+const RELEASE_WAIT: Duration = Duration::from_secs(4);
 /// Two wake-ups closer than this are one.
 const WAKE_DEBOUNCE: Duration = Duration::from_secs(3);
 /// Keyboard or mouse input this close to a clap means it was probably a key or a click.
@@ -201,6 +207,8 @@ struct Inner {
     running: bool,
     /// No phrase recognizer is open (dictation may start its own).
     phrase_idle: bool,
+    /// The clap detector doesn't hold the microphone.
+    clap_idle: bool,
     last_wake: Option<Instant>,
     last_status: Option<WakeStatus>,
 }
@@ -295,6 +303,7 @@ fn ensure_running<R: Runtime>(app: &AppHandle<R>) {
         }
         inner.running = true;
         inner.phrase_idle = true;
+        inner.clap_idle = true;
     }
     let app = app.clone();
     std::thread::spawn(move || {
@@ -312,6 +321,7 @@ fn ensure_running<R: Runtime>(app: &AppHandle<R>) {
             let mut inner = state.lock();
             inner.running = false;
             inner.phrase_idle = true;
+            inner.clap_idle = true;
             inner.phrase = Listener::Off;
             inner.clap = Listener::Off;
         }
@@ -322,8 +332,9 @@ fn ensure_running<R: Runtime>(app: &AppHandle<R>) {
     });
 }
 
-/// Dictation opens its own recognizer: stop the phrase listener first (and
-/// wait briefly until it has let go), start it again afterwards.
+/// Dictation opens its own recognizer: stop the phrase listener and the clap
+/// detector first (and wait until both have let go of the microphone), start
+/// them again afterwards.
 pub fn pause_for_dictation<R: Runtime>(app: &AppHandle<R>, dictating: bool) {
     let state = state(app);
     let mut inner = state.lock();
@@ -333,8 +344,8 @@ pub fn pause_for_dictation<R: Runtime>(app: &AppHandle<R>, dictating: bool) {
         state.suppressed.store(true, Ordering::SeqCst);
     }
     state.changed.notify_all();
-    let deadline = Instant::now() + Duration::from_millis(1500);
-    while dictating && inner.running && !inner.phrase_idle {
+    let deadline = Instant::now() + RELEASE_WAIT;
+    while dictating && inner.running && !(inner.phrase_idle && inner.clap_idle) {
         let Some(left) = deadline.checked_duration_since(Instant::now()) else { break };
         inner = state.changed.wait_timeout(inner, left).unwrap_or_else(|p| p.into_inner()).0;
     }
@@ -533,8 +544,10 @@ fn supervise<R: Runtime>(app: &AppHandle<R>) {
             phrase_failure.clone().unwrap_or(Listener::Starting)
         };
 
-        // Claps: the microphone stays open through short pauses (claps are
-        // ignored meanwhile) but closes while the PC is locked.
+        // Claps: the microphone closes while NOVA talks with the user (two
+        // streams on one microphone can leave dictation without sound) and
+        // while the PC is locked; it stays open through other pauses, which
+        // only make it ignore claps.
         if claps.as_ref().is_some_and(|thread| thread.handle.is_finished()) {
             if let Some(thread) = claps.take() {
                 if let Ok(Err(error)) = thread.handle.join() {
@@ -543,15 +556,15 @@ fn supervise<R: Runtime>(app: &AppHandle<R>) {
                 }
             }
         }
-        let clap_state = if !want_clap || locked || muted {
+        let closed = pause.filter(|reason| matches!(reason, Pause::Muted | Pause::Locked | Pause::Dictation | Pause::Speaking));
+        let clap_state = if !want_clap || closed.is_some() {
             if let Some(thread) = claps.take() {
                 thread.stop();
             }
             clap_failure = None;
-            match (want_clap, muted) {
-                (false, _) => Listener::Off,
-                (true, true) => Listener::Paused { reason: Pause::Muted },
-                (true, false) => Listener::Paused { reason: Pause::Locked },
+            match closed {
+                Some(reason) if want_clap => Listener::Paused { reason },
+                _ => Listener::Off,
             }
         } else {
             if claps.is_none() && Instant::now() >= clap_retry {
@@ -571,6 +584,7 @@ fn supervise<R: Runtime>(app: &AppHandle<R>) {
             inner.phrase = phrase_state;
             inner.clap = clap_state;
             inner.phrase_idle = phrase.is_none();
+            inner.clap_idle = claps.is_none();
         }
         state.changed.notify_all();
         publish(app);
@@ -771,7 +785,8 @@ pub async fn wake_test<R: Runtime>(app: AppHandle<R>, on: bool) -> CommandResult
 pub async fn wake_set_speaking<R: Runtime>(app: AppHandle<R>, speaking: bool) -> CommandResult<()> {
     let state = state(&app);
     let mut inner = state.lock();
-    inner.speaking_until = speaking.then(|| Instant::now() + SPEAKING_LIMIT);
+    // Done speaking still pauses listening for a moment (see SPEAKING_SETTLE).
+    inner.speaking_until = Some(Instant::now() + if speaking { SPEAKING_LIMIT } else { SPEAKING_SETTLE });
     if speaking {
         // Clearing it is left to the supervisor, which knows about every other pause.
         state.suppressed.store(true, Ordering::SeqCst);
