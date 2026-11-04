@@ -1,4 +1,5 @@
-//! Voice input for NOVA AI through Windows speech recognition (push-to-talk).
+//! Voice input for NOVA AI through Windows speech recognition: one spoken
+//! turn at a time, which ends after a pause.
 //!
 //! The microphone is opened only after the user presses the mic button and
 //! closes as soon as they stop speaking (or press it again). Spoken replies
@@ -68,6 +69,11 @@ pub(crate) fn describe(code: i32, language: &str) -> VoiceError {
     VoiceError { message, settings }
 }
 
+/// The finished phrases of a turn plus the one still being spoken.
+fn transcript(phrases: &[String], current: &str) -> String {
+    phrases.iter().map(String::as_str).chain(std::iter::once(current)).map(str::trim).filter(|p| !p.is_empty()).collect::<Vec<_>>().join(" ")
+}
+
 #[cfg(windows)]
 mod win {
     use std::time::{Duration, Instant};
@@ -76,14 +82,14 @@ mod win {
     use windows::Foundation::{TimeSpan, TypedEventHandler};
     use windows::Globalization::Language;
     use windows::Media::SpeechRecognition::{
-        SpeechRecognitionHypothesisGeneratedEventArgs, SpeechRecognitionResultStatus, SpeechRecognizer,
+        SpeechContinuousRecognitionCompletedEventArgs, SpeechContinuousRecognitionResultGeneratedEventArgs, SpeechContinuousRecognitionSession,
+        SpeechRecognitionConfidence, SpeechRecognitionHypothesisGeneratedEventArgs, SpeechRecognitionResultStatus, SpeechRecognizer,
     };
     use windows::Win32::Media::Audio::Endpoints::IAudioMeterInformation;
     use windows::Win32::Media::Audio::{eCapture, eConsole, IMMDeviceEnumerator, MMDeviceEnumerator};
     use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
-    use windows_future::AsyncStatus;
 
-    use super::{describe, VoiceError, VoiceEvent, VoiceState};
+    use super::{describe, transcript, VoiceError, VoiceEvent, VoiceState};
 
     /// Peak level of the default microphone (it only moves while something records).
     fn meter() -> Option<IAudioMeterInformation> {
@@ -99,6 +105,38 @@ mod win {
         TimeSpan { Duration: ms * 10_000 }
     }
 
+    /// What the recognizer reports from its own threads.
+    enum Heard {
+        /// The phrase being spoken right now, as understood so far.
+        Hypothesis(String),
+        /// A finished phrase (the user paused briefly).
+        Phrase(String),
+        /// The session ended; Success unless something went wrong.
+        Ended(SpeechRecognitionResultStatus),
+    }
+
+    /// A pause this long after the last word ends the turn; shorter pauses are waited out.
+    const END_PAUSE: Duration = Duration::from_millis(1600);
+    /// Nobody said anything for this long: give up.
+    const NOTHING_SAID: Duration = Duration::from_secs(8);
+    const LONGEST_TURN: Duration = Duration::from_secs(90);
+
+    fn ended_with(status: SpeechRecognitionResultStatus, used: &str) -> Option<VoiceError> {
+        match status {
+            SpeechRecognitionResultStatus::Success
+            | SpeechRecognitionResultStatus::TimeoutExceeded
+            | SpeechRecognitionResultStatus::UserCanceled
+            | SpeechRecognitionResultStatus::PauseLimitExceeded => None,
+            SpeechRecognitionResultStatus::NetworkFailure => Some("Windows couldn't reach its online speech service. Check your connection.".into()),
+            SpeechRecognitionResultStatus::MicrophoneUnavailable => Some("No microphone is available.".into()),
+            SpeechRecognitionResultStatus::AudioQualityFailure => Some("The audio was too quiet or noisy to understand. Try again closer to the microphone.".into()),
+            SpeechRecognitionResultStatus::TopicLanguageNotSupported => Some(format!("Dictation isn't available for {used}.").into()),
+            other => Some(format!("Windows speech recognition stopped unexpectedly (status {}). Try again.", other.0).into()),
+        }
+    }
+
+    /// One spoken turn: listens continuously, waits out short pauses, and ends
+    /// once the user has been quiet for `END_PAUSE` (or presses stop).
     pub fn listen(language: &str, state: &VoiceState, send: &dyn Fn(VoiceEvent)) -> Result<(), VoiceError> {
         let fail = |e: windows::core::Error| describe(e.code().0, language);
         let recognizer = if language == "auto" {
@@ -109,85 +147,122 @@ mod win {
         };
         let used = recognizer.CurrentLanguage().and_then(|l| l.LanguageTag()).map(|t| t.to_string()).unwrap_or_else(|_| language.to_string());
         let timeouts = recognizer.Timeouts().map_err(fail)?;
-        // Give the user time to start; end shortly after they stop talking.
-        let _ = timeouts.SetInitialSilenceTimeout(span(7000));
-        let _ = timeouts.SetEndSilenceTimeout(span(900));
+        // Phrases end at short pauses; NOVA decides when the whole turn is over.
+        let _ = timeouts.SetInitialSilenceTimeout(span(NOTHING_SAID.as_millis() as i64 + 2000));
+        let _ = timeouts.SetEndSilenceTimeout(span(600));
         let compiled = recognizer.CompileConstraintsAsync().map_err(fail)?.join().map_err(fail)?;
         if compiled.Status().map_err(fail)? != SpeechRecognitionResultStatus::Success {
             return Err(format!("Windows couldn't prepare speech recognition for {used}.").into());
         }
 
-        // Live transcript while the user speaks.
-        let (hypotheses, receiver) = std::sync::mpsc::channel::<String>();
-        let token = recognizer
+        let (tx, heard) = std::sync::mpsc::channel::<Heard>();
+        let hypothesis_tx = tx.clone();
+        let hypothesis_token = recognizer
             .HypothesisGenerated(&TypedEventHandler::<SpeechRecognizer, SpeechRecognitionHypothesisGeneratedEventArgs>::new(move |_, args| {
-                if let Some(args) = args.as_ref() {
-                    if let Ok(text) = args.Hypothesis().and_then(|h| h.Text()) {
-                        let _ = hypotheses.send(text.to_string());
+                if let Some(text) = args.as_ref().and_then(|a| a.Hypothesis().and_then(|h| h.Text()).ok()) {
+                    let _ = hypothesis_tx.send(Heard::Hypothesis(text.to_string()));
+                }
+                Ok(())
+            }))
+            .map_err(fail)?;
+        let session = recognizer.ContinuousRecognitionSession().map_err(fail)?;
+        let _ = session.SetAutoStopSilenceTimeout(span(LONGEST_TURN.as_millis() as i64));
+        let phrase_tx = tx.clone();
+        let result_token = session
+            .ResultGenerated(&TypedEventHandler::<SpeechContinuousRecognitionSession, SpeechContinuousRecognitionResultGeneratedEventArgs>::new(move |_, args| {
+                if let Some(result) = args.as_ref().and_then(|a| a.Result().ok()) {
+                    let rejected = result.Confidence().is_ok_and(|c| c == SpeechRecognitionConfidence::Rejected);
+                    if result.Status()? == SpeechRecognitionResultStatus::Success && !rejected {
+                        let _ = phrase_tx.send(Heard::Phrase(result.Text()?.to_string()));
                     }
                 }
                 Ok(())
             }))
             .map_err(fail)?;
-
-        let operation = recognizer.RecognizeAsync().map_err(fail)?;
+        let completed_token = session
+            .Completed(&TypedEventHandler::<SpeechContinuousRecognitionSession, SpeechContinuousRecognitionCompletedEventArgs>::new(move |_, args| {
+                let status = args.as_ref().and_then(|a| a.Status().ok()).unwrap_or(SpeechRecognitionResultStatus::Unknown);
+                let _ = tx.send(Heard::Ended(status));
+                Ok(())
+            }))
+            .map_err(fail)?;
+        let cleanup = || {
+            let _ = recognizer.RemoveHypothesisGenerated(hypothesis_token);
+            let _ = session.RemoveResultGenerated(result_token);
+            let _ = session.RemoveCompleted(completed_token);
+            let _ = recognizer.Close();
+        };
+        if let Err(error) = session.StartAsync().and_then(|start| start.join()) {
+            cleanup();
+            return Err(fail(error));
+        }
         send(VoiceEvent::Listening { language: used.clone() });
+
         let meter = meter();
-        let mut stopping = false;
         let started = Instant::now();
+        let mut phrases: Vec<String> = Vec::new();
+        let mut current = String::new();
+        let mut last_words: Option<Instant> = None;
+        let mut stopping: Option<Instant> = None;
+        let mut ended = None;
         loop {
-            match operation.Status().map_err(fail)? {
-                AsyncStatus::Started => {}
-                AsyncStatus::Completed => break,
-                AsyncStatus::Canceled => {
-                    let _ = recognizer.RemoveHypothesisGenerated(token);
-                    send(VoiceEvent::NoSpeech);
-                    return Ok(());
+            while let Ok(event) = heard.try_recv() {
+                match event {
+                    Heard::Hypothesis(text) => {
+                        current = text;
+                        last_words = Some(Instant::now());
+                    }
+                    Heard::Phrase(text) => {
+                        if !text.trim().is_empty() {
+                            phrases.push(text.trim().to_string());
+                        }
+                        current.clear();
+                        last_words = Some(Instant::now());
+                    }
+                    Heard::Ended(status) => ended = Some(status),
                 }
-                _ => {
-                    let code = operation.ErrorCode().map(|c| c.0).unwrap_or(0);
-                    let _ = recognizer.RemoveHypothesisGenerated(token);
-                    return Err(describe(code, &used));
-                }
+                send(VoiceEvent::Hypothesis { text: transcript(&phrases, &current) });
             }
-            while let Ok(text) = receiver.try_recv() {
-                send(VoiceEvent::Hypothesis { text });
-            }
-            if state.stop.load(super::Ordering::SeqCst) && !stopping {
-                // "I'm done": finish with what was said so far.
-                stopping = true;
-                send(VoiceEvent::Processing);
-                let _ = recognizer.StopRecognitionAsync();
-            }
-            if started.elapsed() > Duration::from_secs(60) {
-                let _ = operation.Cancel();
+            if ended.is_some() {
+                break;
             }
             if let Some(meter) = &meter {
                 // SAFETY: plain COM call returning a float.
                 let level = unsafe { meter.GetPeakValue() }.unwrap_or(0.0);
                 send(VoiceEvent::Level { value: level.clamp(0.0, 1.0) });
             }
+            let wants_stop = state.stop.load(super::Ordering::SeqCst)
+                || last_words.is_some_and(|t| t.elapsed() >= END_PAUSE)
+                || (last_words.is_none() && started.elapsed() >= NOTHING_SAID)
+                || started.elapsed() >= LONGEST_TURN;
+            match stopping {
+                None if wants_stop => {
+                    // Finish politely: Windows delivers the phrase in progress, then ends.
+                    send(VoiceEvent::Processing);
+                    let _ = session.StopAsync();
+                    stopping = Some(Instant::now());
+                }
+                Some(since) if since.elapsed() > Duration::from_secs(3) => {
+                    let _ = session.CancelAsync();
+                    break;
+                }
+                _ => {}
+            }
             std::thread::sleep(Duration::from_millis(50));
         }
-        let _ = recognizer.RemoveHypothesisGenerated(token);
-        if !stopping {
+        cleanup();
+        if stopping.is_none() {
             send(VoiceEvent::Processing);
         }
-        let result = operation.GetResults().map_err(fail)?;
-        let status = result.Status().map_err(fail)?;
-        let text = result.Text().map(|t| t.to_string()).unwrap_or_default();
-        match status {
-            SpeechRecognitionResultStatus::Success if !text.trim().is_empty() => send(VoiceEvent::Result { text: text.trim().to_string() }),
-            SpeechRecognitionResultStatus::Success | SpeechRecognitionResultStatus::TimeoutExceeded | SpeechRecognitionResultStatus::UserCanceled => {
-                send(VoiceEvent::NoSpeech)
-            }
-            SpeechRecognitionResultStatus::NetworkFailure => {
-                return Err("Windows couldn't reach its online speech service. Check your connection.".into());
-            }
-            SpeechRecognitionResultStatus::MicrophoneUnavailable => return Err("No microphone is available.".into()),
-            SpeechRecognitionResultStatus::AudioQualityFailure => return Err("The audio was too quiet or noisy to understand. Try again closer to the microphone.".into()),
-            SpeechRecognitionResultStatus::TopicLanguageNotSupported => return Err(format!("Dictation isn't available for {used}.").into()),
-            other => return Err(format!("Speech recognition stopped ({}).", other.0).into()),
+        // Words still in progress when the turn ended count too.
+        let text = transcript(&phrases, &current);
+        if let Some(error) = ended.and_then(|status| ended_with(status, &used)).filter(|_| text.is_empty()) {
+            return Err(error);
+        }
+        if text.is_empty() {
+            send(VoiceEvent::NoSpeech);
+        } else {
+            send(VoiceEvent::Result { text });
         }
         Ok(())
     }
@@ -268,6 +343,14 @@ pub async fn voice_stop<R: Runtime>(app: AppHandle<R>) -> CommandResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn joins_phrases_of_a_turn() {
+        let phrases = vec!["Öffne bitte".to_string(), " meine Downloads ".to_string()];
+        assert_eq!(transcript(&phrases, "und die neueste"), "Öffne bitte meine Downloads und die neueste");
+        assert_eq!(transcript(&phrases, "  "), "Öffne bitte meine Downloads");
+        assert_eq!(transcript(&[], ""), "");
+    }
 
     #[test]
     fn explains_common_failures() {

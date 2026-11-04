@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.2 — 2026-11-04
+
+### Changed
+- Talking to NOVA is a real conversation turn now: after "Hey NOVA" or a double clap, NOVA greets you ("Was kann ich für dich tun?"), then listens with a voice line whose bars jump up while you speak and sink back slowly when you're quiet, with your words appearing live. Short pauses are waited out; after about 1.6 s of quiet your request is sent by itself (or press ✓; ✕ cancels).
+- Once sent, NOVA says a short "one moment" ("Alles klar, ich schau mir das direkt an …") and reads the answer aloud when it's ready. Lines are German when NOVA listens in German.
+
+### Fixed
+- Voice input often ended at the first short pause or stopped with "Speech recognition stopped" and sent nothing: it now listens continuously and keeps everything said in the turn.
+
 ## 1.3.1 — 2026-11-03
 
 ### Changed

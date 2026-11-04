@@ -161,3 +161,29 @@ export function stopSpeaking(): void {
   decay = null;
   if (useVoice.getState().mode === "speaking") useVoice.setState({ mode: "idle", level: 0 });
 }
+
+// ---------------------------------------------------------------------------
+// What NOVA says around a spoken turn
+// ---------------------------------------------------------------------------
+
+const LINES = {
+  de: {
+    greet: ["Hey! Was kann ich für dich tun?", "Ich bin da. Was liegt an?", "Was kann ich heute für dich tun?", "Hi! Womit kann ich dir helfen?", "Schön, dich zu hören. Was brauchst du?"],
+    ack: ["Alles klar, ich schau mir das direkt an. Einen Moment.", "Geht klar, ich kümmere mich drum.", "Okay, gib mir einen kurzen Moment.", "Mach ich, das ist gleich fertig.", "Alles klar, einen Moment bitte."],
+  },
+  en: {
+    greet: ["Hey! What can I do for you?", "I'm here. What's up?", "What can I do for you today?", "Hi! How can I help?", "Good to hear you. What do you need?"],
+    ack: ["On it, give me a moment.", "Sure, I'll take care of that.", "Okay, one moment please.", "Got it, this will be ready in a second.", "Alright, let me look into that."],
+  },
+} as const;
+
+/** German when NOVA listens in German (or "auto" on a German system). */
+export function speaksGerman(language: string, systemLanguage = typeof navigator === "undefined" ? "en" : navigator.language): boolean {
+  return language.toLowerCase().startsWith("de") || (language === "auto" && systemLanguage.toLowerCase().startsWith("de"));
+}
+
+/** A friendly line: a greeting after waking, or an acknowledgement once a spoken request is sent. */
+export function voiceLine(kind: "greet" | "ack", language: string, random = Math.random): string {
+  const lines = LINES[speaksGerman(language) ? "de" : "en"][kind];
+  return lines[Math.floor(random() * lines.length) % lines.length]!;
+}

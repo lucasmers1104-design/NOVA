@@ -15,7 +15,8 @@ import { reduceReply, replyText, useConversation } from "./conversation";
 import { displayedState } from "./panel/PanelApp";
 import { captureShortcut, shortcutLabels } from "./shortcut";
 import { type AgentEvent, type AgentStatus, type AssistantStatus, DEFAULT_DOT_LOOK, type FinderStatus } from "./types";
-import { speakableText } from "./voice";
+import { speakableText, speaksGerman, voiceLine } from "./voice";
+import { NovaVoiceLine } from "./components/NovaVoiceLine";
 import { describeHeard, listenerLabel, type WakeStatus } from "./wake";
 
 // The assistant windows talk over Tauri events, which need the native bridge.
@@ -398,6 +399,32 @@ describe("conversation helpers", () => {
     expect(container).toHaveTextContent("Gefunden: LEGO_Berechnung_v2.xlsx und wichtig und fett");
     expect(container.querySelectorAll("em")).toHaveLength(1);
     expect(container.querySelectorAll("strong")).toHaveLength(1);
+  });
+
+  it("greets and acknowledges in the language NOVA listens in", () => {
+    expect(speaksGerman("de-DE")).toBe(true);
+    expect(speaksGerman("auto", "de-AT")).toBe(true);
+    expect(speaksGerman("en-US", "de-DE")).toBe(false);
+    expect(voiceLine("greet", "de-DE", () => 0)).toBe("Hey! Was kann ich für dich tun?");
+    expect(voiceLine("ack", "de-DE", () => 0)).toMatch(/Einen Moment/);
+    expect(voiceLine("ack", "en-US", () => 0.99)).toBe("Alright, let me look into that.");
+  });
+
+  it("shows what was understood with a voice line to finish or cancel", async () => {
+    const user = userEvent.setup();
+    const done = vi.fn();
+    const cancel = vi.fn();
+    const { rerender } = render(<NovaVoiceLine level={0.4} active transcript="" german onDone={done} onCancel={cancel} />);
+    expect(screen.getByRole("group", { name: "NOVA is listening" })).toHaveTextContent("Ich höre zu");
+    rerender(<NovaVoiceLine level={0.4} active transcript="Öffne meine Downloads" german onDone={done} onCancel={cancel} />);
+    expect(screen.getByText("Öffne meine Downloads")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Done, send it" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(done).toHaveBeenCalledOnce();
+    expect(cancel).toHaveBeenCalledOnce();
+    rerender(<NovaVoiceLine level={0} active={false} transcript="" german={false} onDone={done} onCancel={cancel} />);
+    expect(screen.getByText("One moment …")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Done, send it" })).toBeDisabled();
   });
 
   it("prefers voice states in the header", () => {
