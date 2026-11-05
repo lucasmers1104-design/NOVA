@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.6.0 — 2026-11-05
 
 ### Added
 - **NOVA AI runs your Productivity page**: it lists your tasks and, after your OK, adds tasks (with due date, time, priority, project and reminder), notes and projects, and marks tasks done. The page updates right away.
