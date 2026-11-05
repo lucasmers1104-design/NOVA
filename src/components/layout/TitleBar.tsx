@@ -1,13 +1,17 @@
 import { ChevronRight, Search } from "lucide-react";
 import { getNavItem } from "@/app/navigation";
 import { Kbd } from "@/components/ui/Badge";
+import { uiLocale, useNow } from "@/lib/time";
+import { type TitleBarClock as TitleBarClockMode, useSettings } from "@/stores/settings";
 import { useUi } from "@/stores/ui";
 import { NotificationButton } from "@/features/notifications/NotificationUI";
+import { clockParts } from "@/widgets/builtin/clocks/time";
 import { WindowControls } from "./WindowControls";
 
 export function TitleBar() {
   const route = useUi((s) => s.route);
   const setPaletteOpen = useUi((s) => s.setPaletteOpen);
+  const titleBarClock = useSettings((s) => s.titleBarClock);
   const current = getNavItem(route);
 
   return (
@@ -36,9 +40,27 @@ export function TitleBar() {
       </button>
 
       <div data-tauri-drag-region className="flex h-full items-center justify-end gap-2">
+        {titleBarClock !== "off" && <TitleBarClock mode={titleBarClock} />}
         <NotificationButton />
         <WindowControls />
       </div>
     </header>
+  );
+}
+
+/** Its own component, so no minute timer runs and the bar stays still while the clock is off. */
+function TitleBarClock({ mode }: { mode: Exclude<TitleBarClockMode, "off"> }) {
+  const now = useNow(60_000);
+  const use24Hour = useSettings((s) => s.use24HourClock);
+  const locale = uiLocale();
+  const clock = clockParts(now, use24Hour, locale);
+  const date = new Intl.DateTimeFormat(locale, { weekday: "short", day: "numeric", month: "short" }).format(now);
+
+  return (
+    <span data-tauri-drag-region className="mr-1 text-[12px] whitespace-nowrap text-fg-muted tabular-nums">
+      {mode === "time-date" ? `${date} · ` : ""}
+      {clock.time}
+      {clock.period ? ` ${clock.period}` : ""}
+    </span>
   );
 }

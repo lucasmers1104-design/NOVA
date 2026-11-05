@@ -161,14 +161,14 @@ function NavButton({ item, active, collapsed, onSelect }: NavButtonProps) {
           />
           <motion.span
             layoutId="nav-active-bar"
-            className="absolute top-2.5 bottom-2.5 left-0 w-[3px] rounded-full bg-accent shadow-[0_0_12px_var(--nova-accent-glow)]"
+            className="absolute top-3 bottom-3 left-0 w-[2px] rounded-full bg-accent"
             transition={{ type: "spring", stiffness: 520, damping: 42 }}
           />
         </>
       )}
       <Icon
         size={18}
-        strokeWidth={active ? 2.1 : 1.8}
+        strokeWidth={1.8}
         aria-hidden
         className={cn("relative shrink-0 transition-colors", active ? "text-accent-text" : "text-fg-subtle group-hover:text-fg-muted")}
       />

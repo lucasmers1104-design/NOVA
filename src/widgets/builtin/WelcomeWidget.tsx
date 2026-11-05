@@ -1,29 +1,19 @@
 import { Skeleton } from "@/components/ui/Skeleton";
 import { useProfile } from "@/features/profile/useProfile";
 import { useSystemSnapshot } from "@/features/system/api";
+import { cn } from "@/lib/cn";
 import { formatPercent, formatUptime, ratioPercent } from "@/lib/format";
 import { NativeUnavailableError } from "@/lib/native";
 import { greetingFor, isoWeek, uiLocale, useNow } from "@/lib/time";
 import { useSettings } from "@/stores/settings";
 import { useWidgetConfig } from "../config";
-
-export function clockParts(date: Date, use24Hour: boolean, locale: string) {
-  const parts = new Intl.DateTimeFormat(locale, {
-    hour: use24Hour ? "2-digit" : "numeric",
-    minute: "2-digit",
-    hourCycle: use24Hour ? "h23" : "h12",
-  }).formatToParts(date);
-  const get = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value ?? "";
-  return {
-    time: `${get("hour")}:${get("minute")}`,
-    seconds: String(date.getSeconds()).padStart(2, "0"),
-    period: use24Hour ? null : get("dayPeriod").toUpperCase() || null,
-  };
-}
+import { AnalogFace, FlipFace, MinimalFace, WordsFace } from "./clocks/faces";
+import { type ClockParts, type ClockStyle, clockParts, wallClock } from "./clocks/time";
 
 export function WelcomeWidget() {
-  const { showSeconds, showPulse } = useWidgetConfig<{ showSeconds: boolean; showPulse: boolean }>();
-  const now = useNow(showSeconds ? 1000 : 60_000);
+  const { style, showSeconds, showPulse } = useWidgetConfig<{ style: ClockStyle; showSeconds: boolean; showPulse: boolean }>();
+  // The word clock only changes per minute, so it never needs second ticks.
+  const now = useNow(showSeconds && style !== "words" ? 1000 : 60_000);
   const profile = useProfile();
   const use24Hour = useSettings((s) => s.use24HourClock);
   const locale = uiLocale();
@@ -53,18 +43,39 @@ export function WelcomeWidget() {
         )}
       </div>
 
-      <div className="relative flex shrink-0 flex-col items-end justify-between text-right">
+      <div className={cn("relative flex shrink-0 flex-col items-end text-right", style === "minimal" ? "justify-center" : "justify-between")}>
+        <WelcomeClock style={style} now={now} clock={clock} showSeconds={showSeconds} />
+        {style !== "minimal" && (
+          <p className="text-[12px] text-fg-subtle tabular-nums">
+            {/* Words round to five minutes, so the exact time stays readable beside them. */}
+            {style === "words" ? `${clock.time}${clock.period ? ` ${clock.period}` : ""} · ` : ""}
+            {timeZone ? `${timeZone} · ` : ""}Week {isoWeek(now)}
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function WelcomeClock({ style, now, clock, showSeconds }: { style: ClockStyle; now: Date; clock: ClockParts; showSeconds: boolean }) {
+  switch (style) {
+    case "minimal":
+      return <MinimalFace clock={clock} showSeconds={showSeconds} className="text-[76px]" />;
+    case "analog":
+      return <AnalogFace wall={wallClock(now)} label={clock.time} showSeconds={showSeconds} className="size-[124px]" />;
+    case "flip":
+      return <FlipFace clock={clock} showSeconds={showSeconds} size="lg" />;
+    case "words":
+      return <WordsFace wall={wallClock(now)} className="max-w-[260px] text-[28px]" />;
+    default:
+      return (
         <p className="flex items-baseline tabular-nums" aria-label={`Current time ${clock.time}`}>
           <span className="text-[60px] leading-none font-extralight tracking-tight text-fg">{clock.time}</span>
           {showSeconds && <span className="ml-1.5 text-xl font-light text-fg-subtle">{clock.seconds}</span>}
           {clock.period && <span className="ml-1.5 text-sm font-medium text-fg-muted">{clock.period}</span>}
         </p>
-        <p className="text-[12px] text-fg-subtle tabular-nums">
-          {timeZone ? `${timeZone} · ` : ""}Week {isoWeek(now)}
-        </p>
-      </div>
-    </section>
-  );
+      );
+  }
 }
 
 function SystemPulse() {

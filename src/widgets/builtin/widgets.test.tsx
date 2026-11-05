@@ -142,3 +142,56 @@ describe("world clock", () => {
     expect(screen.getByRole("heading", { name: "Local time" })).toBeInTheDocument();
   });
 });
+
+describe("clock styles", () => {
+  it("keep the digital look by default", () => {
+    renderWidget("clock");
+    expect(screen.getByRole("heading", { name: "Local time" })).toBeInTheDocument();
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  });
+
+  it("fall back to digital for an unknown style", () => {
+    renderWidget("clock", { style: "sundial" });
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  });
+
+  it("render every style in the world clock and the welcome widget", () => {
+    vi.spyOn(native, "callNative").mockRejectedValue(new NativeUnavailableError("system_snapshot"));
+    for (const widget of ["clock", "welcome"]) {
+      for (const style of ["digital", "minimal", "analog", "flip"]) {
+        const { unmount } = renderWidget(widget, { style });
+        // The world clock's digital style is the one face without a time label.
+        if (widget !== "clock" || style !== "digital") expect(screen.getByLabelText(/^Current time /), `${widget} ${style}`).toBeInTheDocument();
+        unmount();
+      }
+      const { unmount } = renderWidget(widget, { style: "words" });
+      expect(screen.getByText(/^It's /), `${widget} words`).toBeInTheDocument();
+      unmount();
+    }
+  });
+
+  it("show only the time in the minimal world clock", () => {
+    renderWidget("clock", { style: "minimal", timeZone: "Asia/Tokyo" });
+    expect(screen.getByRole("region", { name: "Tokyo" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading")).not.toBeInTheDocument();
+  });
+});
+
+describe("analog clock widget", () => {
+  it("draws numbers and a second hand only when configured", () => {
+    const { container, unmount } = renderWidget("analog-clock");
+    expect(screen.getByRole("img", { name: /^Current time / })).toBeInTheDocument();
+    expect(container.querySelector("[data-hand='second']")).toBeNull();
+    expect(container.querySelectorAll("text")).toHaveLength(0);
+    unmount();
+
+    const configured = renderWidget("analog-clock", { showSeconds: true, showNumbers: true });
+    expect(configured.container.querySelector("[data-hand='second']")).not.toBeNull();
+    expect(configured.container.querySelectorAll("text")).toHaveLength(12);
+  });
+
+  it("names a configured zone", () => {
+    renderWidget("analog-clock", { timeZone: "Asia/Tokyo" });
+    expect(screen.getByText("Tokyo")).toBeInTheDocument();
+  });
+});

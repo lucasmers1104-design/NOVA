@@ -16,12 +16,12 @@ export default function MediaPage() {
     <Page>
       <PageHeader title="Media" description="Controls whatever Windows reports as playing — Spotify, browsers, Media Player and more." />
       <div className="grid grid-cols-12 gap-4">
-        <section aria-label="Now playing" className="glass relative col-span-8 overflow-hidden rounded-[26px] p-8">
+        <section aria-label="Now playing" className="glass relative col-span-8 overflow-hidden rounded-widget p-7">
           {error ? (
             <StatusMessage error={error} subject="media sessions" onRetry={() => void refetch()} />
           ) : isPending ? (
-            <div className="flex gap-8">
-              <Skeleton className="size-56 rounded-[18%]" />
+            <div className="flex gap-7">
+              <Skeleton className="size-[220px] rounded-[18%]" />
               <div className="flex-1 space-y-3 pt-6">
                 <Skeleton className="h-8 w-2/3" />
                 <Skeleton className="h-5 w-1/3" />
@@ -38,18 +38,18 @@ export default function MediaPage() {
           ) : (
             <>
               <BlurredBackdrop state={state} />
-              <div className="relative flex items-center gap-8">
+              <div className="relative flex items-center gap-7">
                 <Artwork state={state} size={220} />
                 <div className="min-w-0 flex-1">
-                  <p className="text-[12px] font-semibold tracking-wider text-fg-subtle uppercase">
+                  <p className="text-[11px] font-semibold tracking-wider text-fg-subtle uppercase">
                     {state.status === "playing" ? "Now playing" : state.status === "paused" ? "Paused" : "Ready"} · {sourceAppName(state.sourceAppId)}
                   </p>
-                  <h2 className="mt-2 line-clamp-2 text-[30px] leading-tight font-semibold tracking-tight text-fg select-text">{state.title}</h2>
-                  <p className="mt-1 truncate text-[16px] text-fg-muted select-text">{[state.artist, state.album].filter(Boolean).join(" — ")}</p>
+                  <h2 className="mt-2 line-clamp-2 text-[26px] leading-tight font-semibold tracking-tight text-fg select-text">{state.title}</h2>
+                  <p className="mt-1 truncate text-[15px] text-fg-muted select-text">{[state.artist, state.album].filter(Boolean).join(" — ")}</p>
                   <div className="mt-6 max-w-md">
                     <ProgressBar state={state} />
                   </div>
-                  <div className="mt-5">
+                  <div className="mt-4">
                     <TransportControls state={state} />
                   </div>
                 </div>
@@ -60,7 +60,7 @@ export default function MediaPage() {
 
         <div className="col-span-4 flex flex-col gap-4">
           <section aria-label="Volume" className="glass rounded-widget p-5">
-            <p className="mb-3 text-[13px] font-semibold text-fg-muted">System volume</p>
+            <p className="mb-2.5 text-[13px] font-medium text-fg-muted">System volume</p>
             <VolumeControl />
           </section>
           <div className="min-h-72 flex-1">

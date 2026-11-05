@@ -17,7 +17,7 @@ import { useSystemInfo } from "@/features/system/api";
 import { cn } from "@/lib/cn";
 import { callNative, isDesktop } from "@/lib/native";
 import { useStorageHealth } from "@/lib/persistence";
-import { type MotionPreference, REFRESH_INTERVALS_MS, useSettings } from "@/stores/settings";
+import { type MotionPreference, REFRESH_INTERVALS_MS, type TitleBarClock, useSettings } from "@/stores/settings";
 import { useUi } from "@/stores/ui";
 import { AccentSettings } from "./AccentSettings";
 import { AiProviderSettings, IntegrationsSettings, ProfilesSettings, StartupSettings, UpdatesSettings, useExternalConnections } from "./ExtraSettings";
@@ -49,6 +49,12 @@ const MOTION_OPTIONS = [
   { value: "reduced", label: "Reduced" },
   { value: "full", label: "Full" },
 ] as const satisfies readonly { value: MotionPreference; label: string }[];
+
+const TITLE_BAR_CLOCK_OPTIONS = [
+  { value: "off", label: "Off" },
+  { value: "time", label: "Time" },
+  { value: "time-date", label: "Time & date" },
+] as const satisfies readonly { value: TitleBarClock; label: string }[];
 
 const REFRESH_OPTIONS = REFRESH_INTERVALS_MS.map((ms) => ({ value: ms, label: `${ms / 1000}s` }));
 
@@ -171,6 +177,8 @@ function DashboardSection() {
   const setDisplayName = useSettings((s) => s.setDisplayName);
   const use24HourClock = useSettings((s) => s.use24HourClock);
   const setUse24HourClock = useSettings((s) => s.setUse24HourClock);
+  const titleBarClock = useSettings((s) => s.titleBarClock);
+  const setTitleBarClock = useSettings((s) => s.setTitleBarClock);
   const { data: info } = useSystemInfo();
   const nameId = useId();
 
@@ -192,6 +200,9 @@ function DashboardSection() {
       </SettingRow>
       <SettingRow label="24-hour clock" description="Show times as 18:30 instead of 6:30 PM.">
         <Switch label="24-hour clock" checked={use24HourClock} onChange={setUse24HourClock} />
+      </SettingRow>
+      <SettingRow label="Title bar clock" description="Keeps the time in view on every page, next to the notifications.">
+        <SegmentedControl label="Title bar clock" value={titleBarClock} options={TITLE_BAR_CLOCK_OPTIONS} onChange={setTitleBarClock} />
       </SettingRow>
     </SettingsSection>
   );

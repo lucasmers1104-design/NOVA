@@ -27,6 +27,12 @@ describe("sanitizeSettings", () => {
     expect(sanitized.navHidden).toEqual(["files"]);
   });
 
+  it("validates the title bar clock", () => {
+    expect(defaultSettings().titleBarClock).toBe("off");
+    expect(sanitizeSettings({ titleBarClock: "time-date" }).titleBarClock).toBe("time-date");
+    expect(sanitizeSettings({ titleBarClock: "sundial" }).titleBarClock).toBeUndefined();
+  });
+
   it("accepts wallpaper-following accents", () => {
     expect(sanitizeSettings({ accent: { kind: "wallpaper", color: "#3366ff" } }).accent).toEqual({ kind: "wallpaper", color: "#3366ff" });
   });

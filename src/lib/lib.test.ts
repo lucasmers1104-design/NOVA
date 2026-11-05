@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { columnSpan } from "@/features/home/DashboardGrid";
 import { profileFromName } from "@/features/profile/useProfile";
 import { volumeLabel } from "@/widgets/builtin/StorageWidget";
-import { clockParts } from "@/widgets/builtin/WelcomeWidget";
+import { clockParts } from "@/widgets/builtin/clocks/time";
 import { buildMonthGrid, weekdayLabels } from "./calendar";
 import { formatBytes, formatFrequency, formatUptime, prettifyCpuBrand, ratioPercent } from "./format";
 import { dayOfYear, greetingFor, isoWeek } from "./time";
@@ -60,7 +60,7 @@ describe("time", () => {
 
   it("splits clock parts for 24h and 12h formats", () => {
     const date = new Date(2026, 10, 1, 18, 5, 9);
-    expect(clockParts(date, true, "en-GB")).toEqual({ time: "18:05", seconds: "09", period: null });
+    expect(clockParts(date, true, "en-GB")).toEqual({ time: "18:05", hour: "18", minute: "05", seconds: "09", period: null });
     expect(clockParts(date, false, "en-US")).toMatchObject({ time: "6:05", period: "PM" });
   });
 });

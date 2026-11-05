@@ -6,6 +6,8 @@ import { NetworkWidget } from "./builtin/NetworkWidget";
 import { QuickLaunchWidget } from "./builtin/QuickLaunchWidget";
 import { TasksWidget } from "./builtin/TasksWidget";
 import { CalendarWidget } from "./builtin/CalendarWidget";
+import { AnalogClockWidget } from "./builtin/AnalogClockWidget";
+import { CLOCK_STYLE_FIELD } from "./builtin/clocks/time";
 import { CLOCK_TIME_ZONES, ClockWidget, LOCAL_TIME_ZONE } from "./builtin/ClockWidget";
 import { CpuWidget } from "./builtin/CpuWidget";
 import { DeviceWidget } from "./builtin/DeviceWidget";
@@ -30,6 +32,7 @@ export const WIDGETS: readonly WidgetDefinition[] = [
     maxSize: { w: 12, h: 3 },
     dataSource: "system",
     configSchema: [
+      CLOCK_STYLE_FIELD,
       { type: "boolean", key: "showSeconds", label: "Show seconds", default: true },
       { type: "boolean", key: "showPulse", label: "Live system status", description: "CPU, memory and uptime chips.", default: true },
     ],
@@ -46,10 +49,28 @@ export const WIDGETS: readonly WidgetDefinition[] = [
     maxSize: { w: 6, h: 2 },
     dataSource: "local",
     configSchema: [
+      CLOCK_STYLE_FIELD,
       { type: "select", key: "timeZone", label: "Time zone", default: LOCAL_TIME_ZONE, options: CLOCK_TIME_ZONES },
       { type: "boolean", key: "showSeconds", label: "Show seconds", default: false },
     ],
     component: ClockWidget,
+  },
+  {
+    id: "analog-clock",
+    name: "Analog clock",
+    description: "A clean clock face, for your own time or any major city.",
+    category: "time",
+    icon: Clock,
+    defaultSize: { w: 3, h: 3 },
+    minSize: { w: 3, h: 2 },
+    maxSize: { w: 6, h: 6 },
+    dataSource: "local",
+    configSchema: [
+      { type: "select", key: "timeZone", label: "Time zone", default: LOCAL_TIME_ZONE, options: CLOCK_TIME_ZONES },
+      { type: "boolean", key: "showSeconds", label: "Show seconds", default: false },
+      { type: "boolean", key: "showNumbers", label: "Show numbers", default: false },
+    ],
+    component: AnalogClockWidget,
   },
   {
     id: "calendar",
