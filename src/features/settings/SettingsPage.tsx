@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { getTauriVersion, getVersion } from "@tauri-apps/api/app";
-import { Activity, AudioLines, Check, CloudDownload, Ear, FolderSearch, Globe, Info, Keyboard, KeyRound, LayoutDashboard, Layers, type LucideIcon, Palette, PanelLeft, Plug, Power, RotateCcw, ShieldCheck, Sparkles, TriangleAlert } from "lucide-react";
+import { Activity, AudioLines, Check, CloudDownload, Cpu, Ear, FolderSearch, Globe, Info, Keyboard, KeyRound, LayoutDashboard, Layers, type LucideIcon, Palette, PanelLeft, Plug, Power, RotateCcw, ShieldCheck, Sparkles, TriangleAlert } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { SHORTCUTS } from "@/app/shortcuts";
 import { NovaMark } from "@/components/brand/NovaMark";
@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/Button";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { Switch } from "@/components/ui/Switch";
 import { AgentSettings, AssistantHistoryRow, FinderSettings } from "@/features/nova-assistant/AgentSettings";
+import { SpeechSettings } from "@/features/nova-assistant/SpeechSettings";
 import { AssistantSettings } from "@/features/nova-assistant/AssistantSettings";
 import { WakeSettings } from "@/features/nova-assistant/WakeSettings";
 import { useSystemInfo } from "@/features/system/api";
@@ -31,6 +32,7 @@ const SECTIONS: readonly { id: string; label: string; icon: LucideIcon }[] = [
   { id: "assistant", label: "NOVA AI assistant", icon: Sparkles },
   { id: "wake", label: "Hey NOVA & claps", icon: Ear },
   { id: "assistant-brain", label: "Assistant model & voice", icon: AudioLines },
+  { id: "local-ai", label: "Local AI & performance", icon: Cpu },
   { id: "finder", label: "NOVA Finder", icon: FolderSearch },
   { id: "ai", label: "AI providers", icon: KeyRound },
   { id: "integrations", label: "Integrations", icon: Plug },
@@ -102,6 +104,7 @@ export default function SettingsPage() {
           <AssistantSettings />
           <WakeSettings />
           <AgentSettings />
+          <SpeechSettings />
           <FinderSettings />
           <AiProviderSettings />
           <IntegrationsSettings />

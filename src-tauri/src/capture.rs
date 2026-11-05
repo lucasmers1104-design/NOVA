@@ -173,7 +173,7 @@ mod win {
 
     /// BGRA (alpha ignored) → opaque RGBA.
     fn to_rgba(mut bgra: Vec<u8>) -> Vec<u8> {
-        for px in bgra.chunks_exact_mut(4) {
+        for px in bgra.as_chunks_mut::<4>().0 {
             px.swap(0, 2);
             px[3] = 255;
         }

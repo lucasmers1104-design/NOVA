@@ -10,7 +10,7 @@
 
 pub mod clap;
 #[cfg(windows)]
-mod mic;
+pub(crate) mod mic;
 #[cfg(windows)]
 mod word;
 
@@ -371,7 +371,8 @@ fn wake_up<R: Runtime>(app: &AppHandle<R>, source: Source) {
         inner.last_wake = Some(Instant::now());
         inner.prefs.clone()
     };
-    let listen = prefs.after_wake == AfterWake::Listen && dictation_allowed();
+    // Listening needs Windows' online recognition, or NOVA's offline one.
+    let listen = prefs.after_wake == AfterWake::Listen && (dictation_allowed() || crate::speech::stt::ready(app));
     if cfg!(debug_assertions) && std::env::var_os("NOVA_WAKE_LOG").is_some() {
         eprintln!("[wake] woke by {source:?} (listen: {listen})");
     }

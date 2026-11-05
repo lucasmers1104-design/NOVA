@@ -374,7 +374,7 @@ impl ClapDetector {
 
     fn update_floor(&mut self, peak: f32, index: u64) {
         self.block_peak = self.block_peak.max(peak);
-        if (index + 1) % FLOOR_BLOCK as u64 != 0 {
+        if !(index + 1).is_multiple_of(FLOOR_BLOCK as u64) {
             return;
         }
         if self.blocks.len() == FLOOR_BLOCKS {

@@ -150,8 +150,8 @@ unsafe fn read_bitmap(bitmap: windows::Win32::Graphics::Gdi::HBITMAP) -> Result<
 /// Converts premultiplied BGRA to straight RGBA in place. Legacy icons
 /// without an alpha channel (all alpha bytes zero) are treated as opaque.
 pub fn bgra_premultiplied_to_rgba(pixels: &mut [u8]) {
-    let has_alpha = pixels.chunks_exact(4).any(|px| px[3] != 0);
-    for px in pixels.chunks_exact_mut(4) {
+    let has_alpha = pixels.as_chunks::<4>().0.iter().any(|px| px[3] != 0);
+    for px in pixels.as_chunks_mut::<4>().0 {
         let (b, g, r) = (px[0] as u32, px[1] as u32, px[2] as u32);
         let a = if has_alpha { px[3] as u32 } else { 255 };
         let unpremultiply = |c: u32| if a == 0 || a == 255 { c } else { ((c * 255 + a / 2) / a).min(255) };

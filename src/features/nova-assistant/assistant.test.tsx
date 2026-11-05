@@ -250,7 +250,7 @@ describe("NovaPanel", () => {
     const user = userEvent.setup();
     let emit: (event: AgentEvent) => void = () => {};
     let finish: () => void = () => {};
-    vi.mocked(api.sendMessage).mockImplementation((_text, onEvent) => {
+    vi.mocked(api.sendMessage).mockImplementation((_text, _voice, onEvent) => {
       emit = onEvent;
       return new Promise<void>((resolve) => {
         finish = resolve;
@@ -260,7 +260,7 @@ describe("NovaPanel", () => {
     renderPanel();
 
     await user.type(screen.getByRole("textbox", { name: "Message NOVA" }), "Finde meine LEGO-Berechnung{Enter}");
-    expect(api.sendMessage).toHaveBeenCalledWith("Finde meine LEGO-Berechnung", expect.any(Function));
+    expect(api.sendMessage).toHaveBeenCalledWith("Finde meine LEGO-Berechnung", false, expect.any(Function));
     expect(screen.getByText("Finde meine LEGO-Berechnung")).toBeInTheDocument();
 
     act(() => {
@@ -295,7 +295,7 @@ describe("NovaPanel", () => {
 
   it("shows errors with a retry", async () => {
     const user = userEvent.setup();
-    vi.mocked(api.sendMessage).mockImplementation(async (_text, onEvent) => onEvent({ type: "failed", error: "The API key was rejected" }));
+    vi.mocked(api.sendMessage).mockImplementation(async (_text, _voice, onEvent) => onEvent({ type: "failed", error: "The API key was rejected" }));
     renderPanel();
     await user.type(screen.getByRole("textbox", { name: "Message NOVA" }), "Hallo{Enter}");
     expect(await screen.findByRole("alert")).toHaveTextContent("The API key was rejected");
@@ -305,7 +305,7 @@ describe("NovaPanel", () => {
 
   it("copies a reply and brings the last message back with Up", async () => {
     const user = userEvent.setup();
-    vi.mocked(api.sendMessage).mockImplementation(async (_text, onEvent) => {
+    vi.mocked(api.sendMessage).mockImplementation(async (_text, _voice, onEvent) => {
       onEvent({ type: "text", text: "Hier ist die Antwort." });
       onEvent({ type: "done" });
     });
@@ -324,7 +324,7 @@ describe("NovaPanel", () => {
 
   it("starts a new conversation with Ctrl+N and copies the last reply with Ctrl+Shift+C", async () => {
     const user = userEvent.setup();
-    vi.mocked(api.sendMessage).mockImplementation(async (_text, onEvent) => {
+    vi.mocked(api.sendMessage).mockImplementation(async (_text, _voice, onEvent) => {
       onEvent({ type: "text", text: "Erledigt." });
       onEvent({ type: "done" });
     });
@@ -407,8 +407,8 @@ describe("conversation helpers", () => {
     expect(speaksGerman("auto", "de-AT")).toBe(true);
     expect(speaksGerman("en-US", "de-DE")).toBe(false);
     expect(voiceLine("greet", "de-DE", () => 0)).toBe("Hey! Was kann ich für dich tun?");
-    expect(voiceLine("ack", "de-DE", () => 0)).toMatch(/Einen Moment/);
-    expect(voiceLine("ack", "en-US", () => 0.99)).toBe("Alright, let me look into that.");
+    expect(voiceLine("ack", "de-DE", () => 0)).toBe("Einen Moment.");
+    expect(voiceLine("ack", "en-US", () => 0.99)).toBe("Got it.");
   });
 
   it("shows what was understood with a voice line to finish or cancel", async () => {
@@ -436,6 +436,13 @@ describe("conversation helpers", () => {
     expect(usesNovaVoice("I found three files.", "")).toBe(false);
     expect(usesNovaVoice("I found three files.", NOVA_VOICE)).toBe(true);
     expect(usesNovaVoice("Ich habe drei Dateien gefunden.", "Microsoft Katja")).toBe(false);
+    // Speaking German: short lines without a telltale word still get NOVA's voice, English doesn't.
+    expect(usesNovaVoice("Super.", "")).toBe(false);
+    expect(usesNovaVoice("Super.", "", true)).toBe(true);
+    expect(usesNovaVoice("Geht klar.", "")).toBe(true);
+    expect(usesNovaVoice("Sure, I can do that.", "", true)).toBe(false);
+    expect(usesNovaVoice("Hi! Womit kann ich dir helfen?", "")).toBe(true);
+    expect(usesNovaVoice("Hallo", "nova:eva")).toBe(true);
     expect(voiceDescription("", { state: "downloading", percent: 42 })).toMatch(/42 %/);
     expect(voiceDescription("Microsoft Katja", { state: "ready" })).toMatch(/Windows voice/);
   });

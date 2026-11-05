@@ -2,6 +2,9 @@ import { Channel } from "@tauri-apps/api/core";
 import { listen as listenTo } from "@tauri-apps/api/event";
 import { create } from "zustand";
 import { callNative } from "@/lib/native";
+import { normalizeGerman } from "./speech/normalize.de";
+import { type ReplySpeaker, type SpeakerHooks, StreamingSpeaker, WindowsSpeaker } from "./speech/streamingSpeaker";
+import { addTime, count, mark, note } from "./speech/timings";
 import type { AgentPrefs } from "./types";
 import { setSpeaking } from "./wake";
 
@@ -30,6 +33,8 @@ interface VoiceState {
   errorSettings: "privacy-speech" | "privacy-microphone" | "speech" | null;
   /** NOVA's own voice: null until known. */
   novaVoice: NovaVoiceStatus | null;
+  /** What NOVA just said around a spoken turn (a greeting, "one moment"), shown in the panel. */
+  line: string | null;
   setLevel: (level: number) => void;
 }
 
@@ -41,6 +46,7 @@ export const useVoice = create<VoiceState>()((set) => ({
   error: null,
   errorSettings: null,
   novaVoice: null,
+  line: null,
   setLevel: (level) => set({ level }),
 }));
 
@@ -61,6 +67,7 @@ const NO_WORDS = {
  */
 export async function listen(german = false, onTranscript?: (text: string) => void): Promise<string | null> {
   stopSpeaking();
+  mark("listenCall");
   useVoice.setState({ mode: "listening", ready: false, level: 0, transcript: "", error: null, errorSettings: null });
   let result: string | null = null;
   const channel = new Channel<VoiceEvent>();
@@ -74,9 +81,11 @@ export async function listen(german = false, onTranscript?: (text: string) => vo
         onTranscript?.(event.text);
         break;
       case "processing":
+        mark("speechEnd");
         useVoice.setState({ mode: "processing", level: 0 });
         break;
       case "result":
+        mark("sttResult");
         result = event.text;
         useVoice.setState({ transcript: event.text });
         break;
@@ -87,6 +96,7 @@ export async function listen(german = false, onTranscript?: (text: string) => vo
         useVoice.setState({ error: event.message, errorSettings: event.settings });
         break;
       case "listening":
+        mark("micReady");
         useVoice.setState({ ready: true });
         break;
     }
@@ -124,8 +134,11 @@ export function speakableText(markdown: string): string {
     .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
     .replace(/^#{1,6}\s+/gm, "")
     .replace(/^\s*[-*•]\s+/gm, "")
+    // "1. Foo" in a list is read "1: Foo", not as a sentence end.
+    .replace(/^\s*(\d{1,3})[.)]\s+/gm, "$1: ")
     .replace(/(\*\*|__|\*|_)(.+?)\1/g, "$2")
     .replace(/[A-Za-z]:\\[^\s,;]+/g, "")
+    .replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}]/gu, "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -160,11 +173,18 @@ export function voices(): SpeechSynthesisVoice[] {
   return typeof speechSynthesis === "undefined" ? [] : speechSynthesis.getVoices();
 }
 
-const GERMAN = /\b(und|ich|nicht|der|die|das|ist|du|sie|mit|für|auf|eine?n?)\b|[äöüß]/i;
+const GERMAN = /\b(und|ich|nicht|der|die|das|ist|du|sie|mit|für|auf|eine?n?|dir|mir|dich|mich|bin|bist|kann|womit|hallo|moment|klar|geht|mach|bitte|danke|nein|gerne?|heute|wird|sind|hast|haben)\b|[äöüß]/i;
+const ENGLISH = /\b(the|and|you|is|are|what|this|that|with|for|of|it|can|sure|got)\b/i;
 
-/** Whether NOVA's own voice says `text`: chosen, or automatic and the text is German. */
-export function usesNovaVoice(text: string, preferred: string): boolean {
-  return preferred === NOVA_VOICE || (preferred === "" && GERMAN.test(text));
+/**
+ * Whether NOVA's own (German) voice says `text`: chosen, or automatic and
+ * the text is German — or, when NOVA talks German (`german`), the text is
+ * at least not recognizably English ("Geht klar." has no telltale word).
+ */
+export function usesNovaVoice(text: string, preferred: string, german = false): boolean {
+  if (preferred.startsWith("nova:")) return true;
+  if (preferred !== "") return false;
+  return GERMAN.test(text) || (german && !ENGLISH.test(text));
 }
 
 function pickVoice(text: string, preferred: string): SpeechSynthesisVoice | undefined {
@@ -175,33 +195,48 @@ function pickVoice(text: string, preferred: string): SpeechSynthesisVoice | unde
   return all.find((v) => v.lang.toLowerCase().startsWith(lang) && v.localService) ?? all.find((v) => v.lang.toLowerCase().startsWith(lang)) ?? all.find((v) => v.default);
 }
 
-/** Stops whatever NOVA says now; anything still queued sees a newer turn and ends. */
-let turn = 0;
-let decay: ReturnType<typeof setInterval> | null = null;
-let playing: AudioBufferSourceNode | null = null;
+/**
+ * What speaks now; anything still queued sees a newer turn and ends. Turn
+ * numbers start at the clock so they keep growing across panel reloads (the
+ * backend remembers which turns were stopped).
+ */
+let turn = Date.now();
+let active: ReplySpeaker | null = null;
 let audio: AudioContext | null = null;
+/** A reply being spoken while it streams in (see speech/director.ts). */
+let activeReply: { cancel: () => void } | null = null;
 
 type SpeechPrefs = Pick<AgentPrefs, "voice" | "speechRate" | "speechVolume">;
 
 /** NOVA's fixed lines (greetings, "one moment") made ahead, so they play at once. */
 const madeAhead = new Map<string, ArrayBuffer>();
-const aheadKey = (text: string, rate: number) => `${rate}|${text}`;
+const aheadKey = (voice: string, text: string, rate: number) => `${voice}|${rate}|${text}`;
 
-function synthesizeChunk(text: string, rate: number): Promise<ArrayBuffer> {
-  const ready = madeAhead.get(aheadKey(text, rate));
-  // Playing detaches the buffer: hand out a copy.
-  return ready ? Promise.resolve(ready.slice(0)) : callNative<ArrayBuffer>("tts_speak", { text, rate });
+/** The NOVA voice id used for `preferred` ("" = automatic → Thorsten). */
+function novaVoiceId(preferred: string): string {
+  return preferred.startsWith("nova:") ? preferred : NOVA_VOICE;
 }
 
-/** Makes NOVA's greetings and acknowledgements ahead of time (and keeps its voice warm). */
-export async function prepareNovaLines(language: string, rate: number): Promise<void> {
+function synthesizeChunk(text: string, rate: number, voice: string): Promise<ArrayBuffer> {
+  const ready = madeAhead.get(aheadKey(voice, text, rate));
+  // Playing detaches the buffer: hand out a copy.
+  return ready ? Promise.resolve(ready.slice(0)) : callNative<ArrayBuffer>("tts_speak", { text, rate, voice, turn });
+}
+
+/**
+ * Makes NOVA's fixed lines (greetings, "one moment", …) ahead of time, and
+ * keeps its voice warm. `busy`: a reply is on its way; it goes first.
+ */
+export async function prepareNovaLines(language: string, rate: number, preferred = "", busy: () => boolean = () => false): Promise<void> {
+  const voice = novaVoiceId(preferred);
   const lines = LINES[speaksGerman(language) ? "de" : "en"];
-  for (const line of [...lines.greet, ...lines.ack]) {
-    for (const chunk of speechChunks(speakableText(line))) {
-      const key = aheadKey(chunk, rate);
+  for (const line of [...lines.greet, ...lines.ack, ...lines.confirm, ...lines.failed, ...lines.code]) {
+    for (const chunk of speechChunks(normalizeGerman(speakableText(line)))) {
+      const key = aheadKey(voice, chunk, rate);
       if (madeAhead.has(key)) continue;
+      while (speechActive() || busy()) await new Promise((resolve) => setTimeout(resolve, 500));
       try {
-        madeAhead.set(key, await callNative<ArrayBuffer>("tts_speak", { text: chunk, rate }));
+        madeAhead.set(key, await callNative<ArrayBuffer>("tts_speak", { text: chunk, rate, voice }));
       } catch {
         return;
       }
@@ -209,143 +244,211 @@ export async function prepareNovaLines(language: string, rate: number): Promise<
   }
 }
 
-/** Reads `text` aloud. Resolves when finished or interrupted. */
-export async function speak(text: string, prefs: SpeechPrefs): Promise<void> {
+/**
+ * Keeps "Hey NOVA" and the clap detector paused while NOVA speaks: renewed
+ * while a long reply plays, let go a few seconds after the audio runs out (a
+ * reply waiting for a tool or a confirmation) or right at the end.
+ */
+class SpeakingLease {
+  private held = false;
+  private heartbeat: ReturnType<typeof setInterval> | null = null;
+  private letGo: ReturnType<typeof setTimeout> | null = null;
+
+  hold() {
+    if (this.letGo) clearTimeout(this.letGo);
+    this.letGo = null;
+    if (this.held) return;
+    this.held = true;
+    setSpeaking(true);
+    this.heartbeat = setInterval(() => setSpeaking(true), 30_000);
+  }
+
+  /** Lets go after `afterMs` unless audio comes back first. */
+  release(afterMs = 0) {
+    if (!this.held) return;
+    if (this.letGo) clearTimeout(this.letGo);
+    const go = () => {
+      this.letGo = null;
+      if (this.heartbeat) clearInterval(this.heartbeat);
+      this.heartbeat = null;
+      this.held = false;
+      setSpeaking(false);
+    };
+    if (afterMs > 0) this.letGo = setTimeout(go, afterMs);
+    else go();
+  }
+}
+
+const lease = new SpeakingLease();
+
+export interface ReplySpeakerOptions {
+  /** Names the pieces in the turn timings ("reply", "greet", …). */
+  label?: string;
+  /** NOVA talks German now (its language setting). */
+  german?: boolean;
+  /** Pieces that go through `onPiece` (for shown lines and timings). */
+  onPiece?: (tag: string, text: string, delayMs: number) => void;
+}
+
+/**
+ * A speaker for one reply, chosen for its first piece: NOVA's own voice when
+ * it is picked (or automatic and the text is German) and downloaded, else a
+ * Windows voice. If NOVA's voice fails part-way, a Windows voice says the rest.
+ */
+export function createReplySpeaker(sample: string, prefs: SpeechPrefs, options: ReplySpeakerOptions = {}): { speaker: ReplySpeaker; nova: boolean } {
+  const label = options.label ?? "reply";
+  let fallback: ReplySpeaker | null = null;
+  const hooks: SpeakerHooks = {
+    onAudio: (playing) => {
+      if (playing) {
+        lease.hold();
+        useVoice.setState({ mode: "speaking", level: 0.5, error: null });
+      } else {
+        // Waiting for more of the reply (a tool, a confirmation) lets the wake listener back in after a while.
+        lease.release(8_000);
+        if (useVoice.getState().mode === "speaking") useVoice.setState({ mode: "idle", level: 0 });
+      }
+    },
+    onFirstAudio: () => mark(`${label}FirstAudio`),
+    onLevel: (level) => useVoice.setState({ level }),
+    onGap: (ms) => addTime("audioGapMs", ms),
+    onPiece: (tag, text, delayMs) => {
+      count("pieces");
+      options.onPiece?.(tag, text, delayMs);
+    },
+  };
+  const windows = (text: string, more: SpeakerHooks = hooks) =>
+    new WindowsSpeaker((utterance) => {
+      const voice = pickVoice(text, prefs.voice.startsWith("nova:") ? "" : prefs.voice);
+      if (voice) {
+        utterance.voice = voice;
+        utterance.lang = voice.lang;
+      }
+      utterance.rate = prefs.speechRate;
+      utterance.volume = prefs.speechVolume;
+    }, more);
+
+  const status = useVoice.getState().novaVoice;
+  const wantsNova = usesNovaVoice(sample, prefs.voice, options.german);
+  if (wantsNova && status?.state === "missing") void installNovaVoice();
+  if (!wantsNova || status?.state !== "ready") {
+    note("voice", "windows");
+    return { speaker: windows(sample), nova: false };
+  }
+  const voice = novaVoiceId(prefs.voice);
+  note("voice", voice);
+  audio ??= new AudioContext();
+  const context = audio;
+  void context.resume().catch(() => {});
+  const nova = new StreamingSpeaker(
+    {
+      synth: (text) => {
+        const started = performance.now();
+        return synthesizeChunk(text, prefs.speechRate, voice).then((wav) => {
+          addTime("synthMs", performance.now() - started);
+          return wav;
+        });
+      },
+      cached: (text) => madeAhead.get(aheadKey(voice, text, prefs.speechRate))?.slice(0) ?? null,
+      context: () => context,
+    },
+    prefs.speechVolume,
+    {
+      ...hooks,
+      onFailed: (unsaid) => {
+        count("voiceFailures");
+        fallback ??= windows(unsaid.join(" "));
+        for (const text of unsaid) fallback.enqueue(text);
+      },
+    },
+  );
+  // One object for the caller: the fallback takes over once NOVA's voice failed.
+  const speaker: ReplySpeaker = {
+    enqueue: (text, opts) => (fallback ? fallback.enqueue(text, opts) : nova.enqueue(text, opts)),
+    finish: async () => {
+      await nova.finish();
+      if (fallback) await fallback.finish();
+    },
+    cancel: () => {
+      nova.cancel();
+      fallback?.cancel();
+    },
+    get busy() {
+      return nova.busy || (fallback?.busy ?? false);
+    },
+  };
+  return { speaker, nova: true };
+}
+
+/**
+ * Reads `text` aloud. Resolves when finished or interrupted. `label` names
+ * it in the turn timings; `german`: NOVA talks German now.
+ */
+export async function speak(text: string, prefs: SpeechPrefs, label = "reply", german = false): Promise<void> {
   const spoken = speakableText(text);
   if (!spoken) return;
   stopSpeaking();
   const mine = ++turn;
-  if (usesNovaVoice(spoken, prefs.voice)) {
-    const status = useVoice.getState().novaVoice ?? (await refreshNovaVoice());
-    if (mine !== turn) return;
-    if (status?.state === "ready") {
-      const rest = await speakWithNovaVoice(spoken, prefs, mine);
-      if (rest === null || mine !== turn) return;
-      // NOVA's voice failed part-way: a Windows voice says the rest.
-      return speakWithWindows(rest, { ...prefs, voice: prefs.voice === NOVA_VOICE ? "" : prefs.voice });
-    }
-    if (status?.state === "missing") void installNovaVoice();
-  }
-  return speakWithWindows(spoken, prefs.voice === NOVA_VOICE ? { ...prefs, voice: "" } : prefs);
+  mark(`${label}SpeakCall`);
+  const { speaker, nova } = createReplySpeaker(spoken, prefs, { label, german });
+  active = speaker;
+  for (const chunk of speechChunks(nova ? normalizeGerman(spoken) : spoken)) speaker.enqueue(chunk);
+  await speaker.finish();
+  if (mine !== turn) return;
+  active = null;
+  lease.release();
+  mark(`${label}End`);
+  if (useVoice.getState().mode === "speaking") useVoice.setState({ mode: "idle", level: 0 });
 }
 
-function began() {
-  setSpeaking(true);
-  useVoice.setState({ mode: "speaking", level: 0.5, error: null });
+/** The reply director registers what it is speaking, so `stopSpeaking` reaches it. */
+export function setActiveReply(reply: { cancel: () => void } | null): void {
+  activeReply = reply;
 }
 
-function ended() {
-  if (decay) clearInterval(decay);
-  decay = null;
-  setSpeaking(false);
-  useVoice.setState({ mode: "idle", level: 0 });
+/** Called by the director when a reply has been said completely. */
+export function replySpoken(): void {
+  lease.release();
 }
 
-/** Says `spoken` sentence by sentence; resolves with what's left unsaid if the voice failed, else null. */
-async function speakWithNovaVoice(spoken: string, prefs: SpeechPrefs, mine: number): Promise<string | null> {
-  const chunks = speechChunks(spoken.slice(0, 4000));
-  const synthesize = (chunk: string) => synthesizeChunk(chunk, prefs.speechRate);
-  audio ??= new AudioContext();
-  const context = audio;
-  await context.resume().catch(() => {});
-  const gain = context.createGain();
-  gain.gain.value = prefs.speechVolume;
-  const analyser = context.createAnalyser();
-  analyser.fftSize = 512;
-  gain.connect(analyser);
-  analyser.connect(context.destination);
-  const samples = new Uint8Array(analyser.fftSize);
-  began();
-  // The meter follows how loud the voice actually is.
-  decay = setInterval(() => {
-    analyser.getByteTimeDomainData(samples);
-    let sum = 0;
-    for (const s of samples) sum += ((s - 128) / 128) ** 2;
-    useVoice.setState({ level: Math.min(1, Math.sqrt(sum / samples.length) * 4) });
-  }, 70);
-  try {
-    // The next sentence is made while this one plays.
-    let next = synthesize(chunks[0]!);
-    for (let i = 0; i < chunks.length; i++) {
-      let wav: ArrayBuffer;
-      try {
-        wav = await next;
-      } catch {
-        return mine === turn ? chunks.slice(i).join(" ") : null;
-      }
-      if (mine !== turn) return null;
-      if (i + 1 < chunks.length) {
-        next = synthesize(chunks[i + 1]!);
-        next.catch(() => {});
-      }
-      const buffer = await context.decodeAudioData(wav);
-      if (mine !== turn) return null;
-      await new Promise<void>((resolve) => {
-        const source = context.createBufferSource();
-        source.buffer = buffer;
-        source.connect(gain);
-        source.onended = () => resolve();
-        playing = source;
-        source.start();
-      });
-      if (mine !== turn) return null;
-    }
-    return null;
-  } finally {
-    gain.disconnect();
-    analyser.disconnect();
-    if (mine === turn) {
-      playing = null;
-      ended();
-    }
-  }
+/**
+ * Whether `text` can be said right away: a Windows voice can, NOVA's voice
+ * only once the line was made ahead (otherwise it would hold up the reply).
+ */
+export function lineReady(text: string, prefs: SpeechPrefs): boolean {
+  const spoken = speakableText(text);
+  if (!usesNovaVoice(spoken, prefs.voice) || useVoice.getState().novaVoice?.state !== "ready") return true;
+  const voice = novaVoiceId(prefs.voice);
+  return speechChunks(normalizeGerman(spoken)).every((chunk) => madeAhead.has(aheadKey(voice, chunk, prefs.speechRate)));
 }
 
-function speakWithWindows(spoken: string, prefs: SpeechPrefs): Promise<void> {
-  if (typeof speechSynthesis === "undefined") return Promise.resolve();
-  return new Promise((resolve) => {
-    const utterance = new SpeechSynthesisUtterance(spoken.slice(0, 4000));
-    const voice = pickVoice(spoken, prefs.voice);
-    if (voice) {
-      utterance.voice = voice;
-      utterance.lang = voice.lang;
-    }
-    utterance.rate = prefs.speechRate;
-    utterance.volume = prefs.speechVolume;
-    const finish = () => {
-      ended();
-      resolve();
-    };
-    // Each word makes the visualizer jump; it settles between words.
-    utterance.onboundary = () => useVoice.setState({ level: 0.6 + Math.random() * 0.4 });
-    utterance.onstart = () => {
-      began();
-      decay = setInterval(() => useVoice.setState((s) => ({ level: Math.max(0.12, s.level * 0.8) })), 80);
-    };
-    utterance.onend = finish;
-    utterance.onerror = finish;
-    speechSynthesis.speak(utterance);
-  });
+/** Something is being said, or a reply is still being spoken as it arrives. */
+export function speechActive(): boolean {
+  return activeReply !== null || (active?.busy ?? false) || useVoice.getState().mode === "speaking";
 }
 
+/** A new turn number; work for older turns is dropped. */
+export function nextSpeechTurn(): number {
+  return ++turn;
+}
+
+export function speechTurn(): number {
+  return turn;
+}
+
+/** Stops whatever NOVA says now, including a reply still streaming in. */
 export function stopSpeaking(): void {
+  const stopped = turn;
   turn++;
+  void callNative("tts_cancel", { turn: stopped }).catch(() => {});
   if (typeof speechSynthesis !== "undefined" && (speechSynthesis.speaking || speechSynthesis.pending)) speechSynthesis.cancel();
-  if (playing) {
-    playing.onended = null;
-    try {
-      playing.stop();
-    } catch {
-      // Already finished.
-    }
-    playing = null;
-  }
-  if (decay) clearInterval(decay);
-  decay = null;
-  if (useVoice.getState().mode === "speaking") {
-    setSpeaking(false);
-    useVoice.setState({ mode: "idle", level: 0 });
-  }
+  active?.cancel();
+  active = null;
+  const reply = activeReply;
+  activeReply = null;
+  reply?.cancel();
+  lease.release();
+  if (useVoice.getState().mode === "speaking") useVoice.setState({ mode: "idle", level: 0 });
 }
 
 // ---------------------------------------------------------------------------
@@ -385,11 +488,18 @@ export function watchNovaVoice(): () => void {
 const LINES = {
   de: {
     greet: ["Hey! Was kann ich für dich tun?", "Ich bin da. Was liegt an?", "Was kann ich heute für dich tun?", "Hi! Womit kann ich dir helfen?", "Schön, dich zu hören. Was brauchst du?"],
-    ack: ["Alles klar, ich schau mir das direkt an. Einen Moment.", "Geht klar, ich kümmere mich drum.", "Okay, gib mir einen kurzen Moment.", "Mach ich, das ist gleich fertig.", "Alles klar, einen Moment bitte."],
+    // Short: they only play when the answer takes a moment, and the answer waits until they are said.
+    ack: ["Einen Moment.", "Alles klar, Moment.", "Mach ich.", "Okay, Moment.", "Geht klar."],
+    confirm: ["Bitte bestätige das kurz im Fenster."],
+    failed: ["Da ist leider etwas schiefgegangen."],
+    code: ["Den Code findest du im Chat."],
   },
   en: {
     greet: ["Hey! What can I do for you?", "I'm here. What's up?", "What can I do for you today?", "Hi! How can I help?", "Good to hear you. What do you need?"],
-    ack: ["On it, give me a moment.", "Sure, I'll take care of that.", "Okay, one moment please.", "Got it, this will be ready in a second.", "Alright, let me look into that."],
+    ack: ["One moment.", "On it.", "Sure, one sec.", "Okay, one moment.", "Got it."],
+    confirm: ["Please confirm that in the window."],
+    failed: ["Sorry, something went wrong."],
+    code: ["You'll find the code in the chat."],
   },
 } as const;
 
@@ -398,8 +508,12 @@ export function speaksGerman(language: string, systemLanguage = typeof navigator
   return language.toLowerCase().startsWith("de") || (language === "auto" && systemLanguage.toLowerCase().startsWith("de"));
 }
 
-/** A friendly line: a greeting after waking, or an acknowledgement once a spoken request is sent. */
-export function voiceLine(kind: "greet" | "ack", language: string, random = Math.random): string {
+/**
+ * A line NOVA says around a spoken turn: a greeting after waking, an
+ * acknowledgement once a spoken request is sent, a request to confirm, a
+ * failure, or a pointer to code it won't read out.
+ */
+export function voiceLine(kind: keyof (typeof LINES)["de"], language: string, random = Math.random): string {
   const lines = LINES[speaksGerman(language) ? "de" : "en"][kind];
   return lines[Math.floor(random() * lines.length) % lines.length]!;
 }

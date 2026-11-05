@@ -350,5 +350,6 @@ export function useExternalConnections(): string[] {
     const host = updateSource.includes("://") ? updateSource.replace(/^https?:\/\//, "").split("/")[0] : `raw.githubusercontent.com/${updateSource}`;
     list.push(`Updates: ${host} — ${autoUpdate ? "at every start" : "only when you check"}`);
   }
+  list.push("Voices and offline speech recognition: huggingface.co, api.nuget.org, github.com — only for downloads you start (each file checked against a fixed hash)");
   return list;
 }

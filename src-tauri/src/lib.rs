@@ -12,9 +12,11 @@ mod http;
 mod live;
 mod media;
 mod shell;
+pub mod speech;
 mod storage;
 mod system;
 mod tts;
+mod turnlog;
 mod updates;
 mod voice;
 pub mod wake;
@@ -25,6 +27,11 @@ use std::sync::atomic::Ordering;
 use tauri::{Manager, WindowEvent};
 use tauri_plugin_global_shortcut::ShortcutState;
 use tauri_plugin_window_state::StateFlags;
+
+/// `nova.exe --speech-probe <task>`: measures one speech model (see `speech::probe`).
+pub fn speech_probe(request: &str) -> i32 {
+    speech::probe::run(request)
+}
 
 pub fn run() {
     tauri::Builder::default()
@@ -55,6 +62,7 @@ pub fn run() {
         .manage(finder::FinderState::default())
         .manage(voice::VoiceState::default())
         .manage(tts::TtsState::default())
+        .manage(speech::SpeechState::default())
         .manage(wake::WakeState::default())
         .manage(system::SystemMonitor::new())
         .manage(apps::AppCatalog::default())
@@ -74,6 +82,7 @@ pub fn run() {
             agent::init(app.handle(), agent::load_prefs(&database));
             let finder_prefs = finder::load_prefs(&database);
             let wake_prefs = wake::load_prefs(&database);
+            let speech_prefs = speech::load_prefs(&database);
             app.state::<desktop::DesktopState>().close_to_tray.store(close_to_tray, Ordering::Relaxed);
             app.manage(database);
             desktop::create_tray(app.handle())?;
@@ -90,6 +99,7 @@ pub fn run() {
             }
             assistant::init(app.handle(), assistant_prefs);
             finder::init(app.handle(), finder_prefs);
+            speech::init(app.handle(), speech_prefs);
             wake::init(app.handle(), wake_prefs);
             capture::watch_foreground();
             Ok(())
@@ -191,6 +201,7 @@ pub fn run() {
             assistant::assistant_open_main,
             assistant::assistant_appearance,
             agent::assistant_send,
+            agent::assistant_prewarm,
             agent::assistant_cancel,
             agent::assistant_confirm,
             agent::assistant_reset,
@@ -211,15 +222,24 @@ pub fn run() {
             finder::finder_reindex,
             finder::finder_search,
             voice::voice_listen,
+            voice::voice_prepare,
             voice::voice_stop,
             voice::voice_open_settings,
             tts::tts_status,
             tts::tts_install,
             tts::tts_speak,
+            tts::tts_cancel,
             wake::wake_status,
             wake::wake_configure,
             wake::wake_test,
             wake::wake_set_speaking,
+            turnlog::voice_report_turn,
+            speech::speech_status,
+            speech::speech_configure,
+            speech::speech_install,
+            speech::speech_remove,
+            speech::speech_warm,
+            speech::speech_benchmark,
         ])
         .run(tauri::generate_context!())
         .expect("error while running NOVA");

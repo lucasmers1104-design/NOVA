@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { answerConfirmation, cancelRequest, resetConversation, sendMessage } from "./api";
+import { beginTurn, count, endTurn, mark } from "./speech/timings";
 import type { AgentEvent, AssistantState, AttachmentView, Risk, ToolCard } from "./types";
 
 export interface ToolItem {
@@ -25,7 +26,7 @@ export type Segment = { type: "text"; text: string } | { type: "tool"; tool: Too
 
 export type Item =
   | { kind: "user"; id: string; text: string; attachments: AttachmentView[] }
-  | { kind: "assistant"; id: string; segments: Segment[]; streaming: boolean; usage: UsageInfo[]; error: string | null };
+  | { kind: "assistant"; id: string; segments: Segment[]; streaming: boolean; usage: UsageInfo[]; error: string | null; stopped?: boolean };
 
 export type AssistantItem = Extract<Item, { kind: "assistant" }>;
 
@@ -37,7 +38,7 @@ interface ConversationState {
   /** Screenshots and files that go with the next message. */
   attachments: AttachmentView[];
   lastPrompt: string | null;
-  send: (text: string) => Promise<void>;
+  send: (text: string, options?: SendOptions) => Promise<void>;
   apply: (event: AgentEvent) => void;
   cancel: () => Promise<void>;
   confirm: (id: string, approved: boolean) => Promise<void>;
@@ -47,6 +48,31 @@ interface ConversationState {
   /** Voice states the panel drives itself (listening, processing, speaking). */
   setState: (state: AssistantState, detail?: string | null) => void;
 }
+
+export interface SendOptions {
+  /** The user spoke this request: the reply is read aloud. */
+  voice?: boolean;
+  /** Said if the reply takes a moment ("one moment"). */
+  ack?: string;
+}
+
+/** A reply as it streams in, for whoever reads it aloud. */
+export type ReplyEvent = { replyId: string; voice: boolean } & ({ type: "start"; ack: string | null } | { type: "stopped" } | AgentEvent);
+
+const replyListeners = new Set<(event: ReplyEvent) => void>();
+
+/** Follows every reply as it streams in; returns the unsubscribe function. */
+export function onReply(listener: (event: ReplyEvent) => void): () => void {
+  replyListeners.add(listener);
+  return () => replyListeners.delete(listener);
+}
+
+function emitReply(event: ReplyEvent) {
+  for (const listener of replyListeners) listener(event);
+}
+
+/** The reply streaming in now. */
+let currentReply: { id: string; voice: boolean } | null = null;
 
 let nextId = 1;
 const id = () => `m${nextId++}`;
@@ -98,7 +124,8 @@ export function reduceReply(item: AssistantItem, event: AgentEvent): AssistantIt
     case "failed":
       return { ...item, streaming: false, error: event.error };
     case "status":
-      return item;
+      // The backend ends a cancelled run with "Done"; the reply stays as far as it got.
+      return event.state === "completed" && event.detail === "Stopped" ? { ...item, stopped: true } : item;
   }
 }
 
@@ -118,9 +145,10 @@ export const useConversation = create<ConversationState>()((set, get) => ({
   attachments: [],
   lastPrompt: null,
 
-  send: async (text) => {
+  send: async (text, options = {}) => {
     const { busy, attachments } = get();
     if (busy || (!text.trim() && attachments.length === 0)) return;
+    const voice = options.voice ?? false;
     const reply: AssistantItem = { kind: "assistant", id: id(), segments: [], streaming: true, usage: [], error: null };
     set((s) => ({
       items: [...s.items, { kind: "user", id: id(), text: text.trim(), attachments }, reply],
@@ -130,16 +158,39 @@ export const useConversation = create<ConversationState>()((set, get) => ({
       detail: null,
       lastPrompt: text,
     }));
+    beginTurn(voice ? "voice" : "reply");
+    mark("send");
+    const current = { id: reply.id, voice };
+    currentReply = current;
+    emitReply({ replyId: reply.id, voice, type: "start", ack: options.ack ?? null });
     try {
-      await sendMessage(text, (event) => get().apply(event));
+      await sendMessage(text, voice, (event) => {
+        get().apply(event);
+        if (currentReply === current) emitReply({ replyId: reply.id, voice, ...event });
+      });
     } catch (error) {
-      get().apply({ type: "failed", error: error instanceof Error ? error.message : String(error) });
+      const failed: AgentEvent = { type: "failed", error: error instanceof Error ? error.message : String(error) };
+      get().apply(failed);
+      if (currentReply === current) emitReply({ replyId: reply.id, voice, ...failed });
     }
+    if (currentReply === current) currentReply = null;
     // The command returns after its last event; make sure the turn is closed.
     set((s) => ({ busy: false, items: s.items.map((i) => (i.kind === "assistant" && i.streaming ? { ...i, streaming: false } : i)) }));
   },
 
-  apply: (event) =>
+  apply: (event) => {
+    if (event.type === "text") mark("firstDelta");
+    if (event.type === "usage") {
+      count("inputTokens", event.inputTokens);
+      count("cacheReadTokens", event.cacheReadTokens ?? 0);
+      count("cacheWriteTokens", event.cacheWriteTokens ?? 0);
+      count("requests");
+    }
+    if (event.type === "done" || event.type === "failed") {
+      mark("replyDone");
+      // A spoken reply ends the turn when it has been said; otherwise this does.
+      endTurn(90_000);
+    }
     set((s) => {
       const items = [...s.items];
       const index = items.findLastIndex((i) => i.kind === "assistant");
@@ -156,9 +207,17 @@ export const useConversation = create<ConversationState>()((set, get) => ({
         default:
           return { items };
       }
-    }),
+    });
+  },
 
   cancel: async () => {
+    // Whatever arrives after this is not read aloud.
+    const reply = currentReply;
+    if (reply) {
+      currentReply = null;
+      set((s) => ({ items: s.items.map((i) => (i.kind === "assistant" && i.id === reply.id ? { ...i, stopped: true } : i)) }));
+      emitReply({ replyId: reply.id, voice: reply.voice, type: "stopped" });
+    }
     await cancelRequest().catch(() => {});
   },
 

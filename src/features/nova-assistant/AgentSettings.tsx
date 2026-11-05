@@ -22,6 +22,7 @@ import {
   finderStatus,
 } from "./api";
 import { ASSISTANT_EVENTS, type AgentPrefs, type AgentStatus, type FinderStatus, type ProviderId } from "./types";
+import { useSpeech } from "./speech/api";
 import { installNovaVoice, NOVA_VOICE, type NovaVoiceStatus, speak, useVoice, voices, watchNovaVoice } from "./voice";
 
 const AGENT_KEY = ["assistant", "agent"] as const;
@@ -71,6 +72,9 @@ export function AgentSettings() {
   const [limitDraft, setLimitDraft] = useState<string | null>(null);
   const [voiceList, setVoiceList] = useState<SpeechSynthesisVoice[]>(() => voices());
   const novaVoice = useVoice((s) => s.novaVoice);
+  const speech = useSpeech();
+  // NOVA's own voices that are downloaded (Thorsten is always offered: it downloads itself).
+  const novaVoices = (speech.status?.items ?? []).filter((i) => i.kind === "voice" && i.id !== "thorsten" && i.install.state === "ready");
 
   useEffect(() => (isDesktop() ? watchNovaVoice() : undefined), []);
 
@@ -182,13 +186,18 @@ export function AgentSettings() {
           <select aria-label="Voice" className={selectClass} disabled={!prefs} value={prefs?.voice ?? ""} onChange={(e) => update({ voice: e.target.value })}>
             <option value="">Automatic (Thorsten for German, else Windows)</option>
             <option value={NOVA_VOICE}>Thorsten — NOVA's natural voice</option>
+            {novaVoices.map((v) => (
+              <option key={v.id} value={`nova:${v.id}`}>
+                {v.label} — NOVA voice{v.experimental ? " (experimental)" : ""}
+              </option>
+            ))}
             {voiceList.map((v) => (
               <option key={v.name} value={v.name}>
                 {v.name} ({v.lang})
               </option>
             ))}
           </select>
-          {(prefs?.voice === "" || prefs?.voice === NOVA_VOICE) && (novaVoice?.state === "missing" || novaVoice?.state === "failed") && (
+          {(prefs?.voice === "" || prefs?.voice.startsWith("nova:")) && (novaVoice?.state === "missing" || novaVoice?.state === "failed") && (
             <Button size="sm" variant="ghost" onClick={() => void installNovaVoice()}>
               {novaVoice.state === "failed" ? "Retry" : "Download"}
             </Button>
@@ -200,8 +209,9 @@ export function AgentSettings() {
             onClick={() =>
               prefs &&
               void speak(
-                prefs.voice === NOVA_VOICE || /^de/i.test(voiceList.find((v) => v.name === prefs.voice)?.lang ?? navigator.language) ? "Hallo, ich bin NOVA. So klinge ich." : "Hi, I'm NOVA. This is how I sound.",
+                prefs.voice.startsWith("nova:") || /^de/i.test(voiceList.find((v) => v.name === prefs.voice)?.lang ?? navigator.language) ? "Hallo, ich bin NOVA. So klinge ich." : "Hi, I'm NOVA. This is how I sound.",
                 prefs,
+                "test",
               )
             }
           >
@@ -239,7 +249,7 @@ export function AgentSettings() {
           </label>
         </div>
       </SettingRow>
-      <SettingRow label="Speech recognition language" description="Push-to-talk uses Windows speech recognition. Dictation may need “Online speech recognition” in Windows Settings → Privacy → Speech.">
+      <SettingRow label="Speech recognition language" description="Windows speech recognition may need “Online speech recognition” in Windows Settings → Privacy → Speech. NOVA's offline recognizer (Local AI & performance) understands German and English by itself.">
         <select aria-label="Speech recognition language" className={selectClass} disabled={!prefs} value={prefs?.language ?? "auto"} onChange={(e) => update({ language: e.target.value })}>
           {LANGUAGES.map((l) => (
             <option key={l.value} value={l.value}>
@@ -254,7 +264,8 @@ export function AgentSettings() {
 
 /** What the voice row says about the chosen voice and NOVA's own voice. */
 export function voiceDescription(voice: string, nova: NovaVoiceStatus | null): string {
-  if (voice !== "" && voice !== NOVA_VOICE) return "A Windows voice installed on this PC.";
+  if (voice.startsWith("nova:") && voice !== NOVA_VOICE && nova?.state === "ready") return "One of NOVA's own voices, running on this PC (see Local AI & performance).";
+  if (voice !== "" && !voice.startsWith("nova:")) return "A Windows voice installed on this PC.";
   switch (nova?.state) {
     case "downloading":
       return `Downloading Thorsten (about 85 MB, once) … ${nova.percent} %. Until then NOVA speaks with a Windows voice.`;

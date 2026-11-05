@@ -1,0 +1,17 @@
+{
+  "replies": [
+    {
+      "ttftMs": 1200,
+      "chunkMs": 40,
+      "chunkChars": 8,
+      "text": "Ich schaue mir das kurz an.",
+      "tool": { "name": "system_info", "input": {} }
+    },
+    {
+      "ttftMs": 1400,
+      "chunkMs": 40,
+      "chunkChars": 8,
+      "text": "Dein Rechner ist gerade gut ausgelastet, aber nicht überlastet. Am meisten braucht im Moment der Browser mit 23 % der CPU, danach kommt NOVA selbst mit 4 %. Der Arbeitsspeicher ist zu 71 % belegt, also 5,6 GB von 7,9 GB. Wenn du willst, schließe ich dir ein paar Tabs oder zeige dir die fünf größten Prozesse."
+    }
+  ]
+}

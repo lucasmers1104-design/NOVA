@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.5.0 — 2026-11-05
+
+### Added
+- **NOVA speaks while it writes.** Spoken replies start with the first finished sentence instead of after the whole answer, also around the tools NOVA uses. A sentence counts as finished only once the next character proves it, so "z. B.", "3. Mai", "2,5 GB" and "v1.4" stay whole, and the first piece is kept short so NOVA starts talking early. A short "one moment" plays only when the answer takes a while, and NOVA asks out loud when something needs your OK in the window.
+- **German that sounds right**: times, dates, amounts, percentages, units, numbers, abbreviations and symbols are read the way people say them ("14:30 Uhr" → "vierzehn Uhr dreißig", "12,50 €" → "zwölf Euro fünfzig", "z. B." → "zum Beispiel").
+- **Nine German voices of NOVA's own**: Thorsten (medium and high), Thorsten emotional, Kerstin, Ramona, Eva, Karlsson, Pavoque and Martin (Kokoro, experimental). Each is downloaded on demand in Settings → Local AI & performance, checked against a pinned SHA-256 hash, and can be listened to and picked there; the measured speed on your PC is shown next to it.
+- **Voices run inside NOVA** on ONNX Runtime 1.24 with the same sound as piper.exe (identical phonemes for all 62 test sentences, identical length and waveform without noise) and about 20 % faster on the development PC. piper.exe remains the fallback and covers the first sentences while a voice loads; a Windows voice remains the last resort. Phonemes come from `nova-phonemize`, a small separate program under GPL-3.0, like the eSpeak NG it uses.
+- **Offline speech recognition** (optional, about 670 MB): NVIDIA Parakeet TDT 0.6B v3 with Silero VAD transcribes each phrase as soon as you pause, so when you stop only the last phrase is left. Pick Windows, Offline or Automatic; Offline also steps in when Windows can't listen (online recognition off, no connection, no recognizer).
+- **Any PC, any graphics card**: one runtime runs voices and recognition on the processor or, through DirectML, on any DirectX 12 graphics card — NVIDIA, AMD or Intel. NOVA never decides by brand: it measures each model on each device in a separate process (a crashing graphics driver can't take NOVA down) and uses the graphics card only where it is clearly faster. CUDA, ROCm and Vulkan are detected and shown but not needed.
+- **Performance modes**: Auto, Max performance (fastest measured setup, models stay loaded) and Low resource (processor with one thread, models unloaded soon). Settings show the processor, memory, graphics cards with drivers, what each model runs on and why, and the measurements.
+- Downloads continue where they stopped after a restart or a dropped connection, and from NuGet packages NOVA takes only the files it needs (35 MB instead of 214 MB).
+- Each spoken turn's timings — never what was said — are kept in `voice-turns.jsonl` and `voice-last-reply.txt` in NOVA's local data folder.
+
+### Changed
+- **Answers come sooner**: the AI provider's prompt cache holds the system prompt, tools and conversation, and is warmed when NOVA opens or wakes. Spoken questions ask for a short spoken answer. Cost estimates count cached tokens at their real price.
+- **Listening starts and ends sooner**: the recognizer gets ready while NOVA greets you, and a turn ends after a pause that fits what you said — shorter after a complete phrase, longer after "und", "weil" or "ähm".
+- Stopping a reply also stops what NOVA was about to say (a stopped reply used to be read out anyway).
+- Settings → Assistant model & voice lists the downloaded voices; testing a voice there now pauses "Hey NOVA" as it should.
+
+### Measured on the development PC (Intel Core i3-6006U, HD Graphics 520, 8 GB)
+- First spoken words after sending (scripted replies with one tool round): 1.9 s instead of 5.3 s.
+- First words from Claude Haiku 5.5: 0.57–0.77 s, with 2,800–3,900 prompt tokens read from the cache on every request.
+- Windows recognizer ready 0.12–0.14 s after the greeting instead of 1.0 s; offline recognition finished 0.5–1.0 s after the end of speech.
+- Thorsten: 0.18 s of work per second of speech in NOVA (piper.exe: 0.20). The HD 520 was slower than the processor for every model, so Auto uses the processor; Thorsten (high) and Martin are too slow for real time on this PC.
+- Round trip voice → Parakeet over 60 sentences: 7.2–8.0 % word errors, mostly numbers written as digits.
+
 ## 1.4.1 — 2026-11-04
 
 ### Changed

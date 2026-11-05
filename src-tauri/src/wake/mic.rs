@@ -91,7 +91,13 @@ fn to_mono(bytes: &[u8], layout: Layout, out: &mut Vec<f32>) {
 /// Captures the default microphone until `stop` is set, handing mono samples
 /// and the sample rate to `sink` every ~20 ms (also with no samples, so the
 /// caller can do its periodic work). Needs COM on the calling thread.
-pub fn capture(stop: &AtomicBool, mut sink: impl FnMut(&[f32], u32)) -> Result<(), MicError> {
+pub fn capture(stop: &AtomicBool, sink: impl FnMut(&[f32], u32)) -> Result<(), MicError> {
+    capture_with(stop, true, sink)
+}
+
+/// The same; `raw`: without Windows' noise suppression and gain control
+/// (right for claps; speech recognition wants them on).
+pub fn capture_with(stop: &AtomicBool, raw: bool, mut sink: impl FnMut(&[f32], u32)) -> Result<(), MicError> {
     // SAFETY: standard WASAPI calls on objects this function owns; the mix
     // format is freed once and buffers are released after each read.
     unsafe {
@@ -99,7 +105,7 @@ pub fn capture(stop: &AtomicBool, mut sink: impl FnMut(&[f32], u32)) -> Result<(
         let device = enumerator.GetDefaultAudioEndpoint(eCapture, eConsole)?;
         let client: IAudioClient = device.Activate(CLSCTX_ALL, None)?;
         // Raw audio: noise suppression and automatic gain smear claps.
-        if let Ok(client2) = client.cast::<IAudioClient2>() {
+        if let Some(client2) = raw.then(|| client.cast::<IAudioClient2>().ok()).flatten() {
             let properties = AudioClientProperties {
                 cbSize: size_of::<AudioClientProperties>() as u32,
                 bIsOffload: BOOL(0),

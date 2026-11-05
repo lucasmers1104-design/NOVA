@@ -4,9 +4,9 @@
   "version": "../package.json",
   "identifier": "dev.nova.commandcenter",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "node scripts/build-helpers.mjs && npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "node scripts/build-helpers.mjs && npm run build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -42,7 +42,10 @@
     ],
     "shortDescription": "Your Personal Command Center",
     "longDescription": "NOVA brings system monitoring, launchers, productivity and AI tools together in one local-first desktop command center.",
-    "createUpdaterArtifacts": true
+    "createUpdaterArtifacts": true,
+    "externalBin": [
+      "binaries/nova-phonemize"
+    ]
   },
   "plugins": {
     "updater": {

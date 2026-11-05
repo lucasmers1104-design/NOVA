@@ -116,7 +116,7 @@ export type AgentEvent =
   | { type: "toolStarted"; id: string; name: string; title: string; risk: Risk }
   | { type: "confirmRequired"; id: string; title: string; detail: string | null; risk: Risk }
   | { type: "toolFinished"; id: string; ok: boolean; summary: string; card: ToolCard | null }
-  | { type: "usage"; provider: string; model: string; inputTokens: number; outputTokens: number; costUsd: number | null }
+  | { type: "usage"; provider: string; model: string; inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number; costUsd: number | null }
   | { type: "done" }
   | { type: "failed"; error: string };
 

@@ -113,6 +113,15 @@ Legend: ✅ done · ⬜ planned
 - ✅ The dot in the taskbar, a quieter default look and a full look editor with preview
 - ✅ A cleaner NOVA AI panel
 
+## 1.5 — Voice & speed ✅
+- ✅ Replies spoken sentence by sentence while they stream in (tool rounds, confirmations, stop), with German text normalization
+- ✅ Prompt caching, a cache prewarm while the user speaks, and lighter effort for spoken questions
+- ✅ Windows recognizer prepared during the greeting; an end-of-turn pause that fits what was said
+- ✅ NOVA's own voices in-process on ONNX Runtime (Piper parity verified; Kokoro experimental), piper.exe and Windows voices as fallbacks
+- ✅ Offline speech recognition (Parakeet TDT + Silero VAD), also as the fallback when Windows can't listen
+- ✅ Hardware detection, measurements in a separate process, CPU or DirectML (NVIDIA, AMD, Intel) by measurement, three performance modes
+- ⚠️ Speaking into NOVA while it talks (barge-in) is not supported: it needs echo cancellation Windows doesn't reliably provide
+
 ## Next ideas
 - Calendar sync adapters (Outlook, Google) behind explicit opt-in
 - AI agent mode with permission-gated tools (see [PLUGIN_API.md](PLUGIN_API.md#agents))

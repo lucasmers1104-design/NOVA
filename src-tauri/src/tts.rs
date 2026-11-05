@@ -3,11 +3,13 @@
 //!
 //! Engine and voice are downloaded once (about 85 MB) into NOVA's local data
 //! folder and checked against pinned SHA-256 hashes before anything runs;
-//! until then NOVA speaks with a Windows voice. Piper then runs as one hidden
-//! process that keeps the voice loaded: each sentence goes in as a line of
-//! JSON and comes back as a WAV file, which is handed to the panel and
-//! deleted. The process ends after a few idle minutes, and by itself when
-//! NOVA exits (its input closes).
+//! until then NOVA speaks with a Windows voice. The bundle also brings eSpeak
+//! NG, which NOVA's in-process voices (see `speech`) use for phonemes.
+//!
+//! piper.exe is the fallback engine: one hidden process that keeps a voice
+//! loaded; each sentence goes in as a line of JSON and comes back as a WAV
+//! file, which is handed to the panel and deleted. The process ends after a
+//! few idle minutes, and by itself when NOVA exits (its input closes).
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -77,6 +79,15 @@ pub struct TtsState {
     install: Mutex<VoiceInstall>,
     engine: Arc<Mutex<Option<Engine>>>,
     next_file: std::sync::atomic::AtomicU64,
+    /// Speech for this turn and earlier ones was stopped: don't make it.
+    cancelled_turn: std::sync::atomic::AtomicU64,
+}
+
+impl TtsState {
+    /// Whether speech for `turn` was stopped in the meantime.
+    pub(crate) fn cancelled(&self, turn: Option<u64>) -> bool {
+        turn.is_some_and(|t| t <= self.cancelled_turn.load(Ordering::SeqCst))
+    }
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -242,6 +253,8 @@ async fn install<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
 
 struct Engine {
     child: std::process::Child,
+    /// The voice it speaks with.
+    voice: ExeVoice,
     stdin: std::process::ChildStdin,
     /// Paths Piper prints once a sentence is written.
     written: std::sync::mpsc::Receiver<String>,
@@ -263,17 +276,30 @@ fn length_for(rate: f32) -> u32 {
     (100.0 / rate).round() as u32
 }
 
-fn start_engine(dir: &Path, length: u32) -> Result<Engine, String> {
+/// A Piper voice piper.exe can speak with.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExeVoice {
+    pub model: PathBuf,
+    pub config: PathBuf,
+    /// For voices with several speakers.
+    pub speaker: Option<i64>,
+}
+
+fn start_engine(dir: &Path, voice: &ExeVoice, length: u32) -> Result<Engine, String> {
     use std::io::BufRead;
     let f = files(dir);
     let mut command = std::process::Command::new(&f.exe);
     command
         .arg("--model")
-        .arg(&f.model)
+        .arg(&voice.model)
         .arg("--config")
-        .arg(&f.config)
+        .arg(&voice.config)
         .args(["--json-input", "--quiet", "--sentence_silence", "0.25", "--length_scale"])
-        .arg(format!("{:.2}", length as f32 / 100.0))
+        .arg(format!("{:.2}", length as f32 / 100.0));
+    if let Some(speaker) = voice.speaker {
+        command.arg("--speaker").arg(speaker.to_string());
+    }
+    command
         .current_dir(dir)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -295,7 +321,7 @@ fn start_engine(dir: &Path, length: u32) -> Result<Engine, String> {
             }
         }
     });
-    Ok(Engine { child, stdin, written, length, last_used: Instant::now() })
+    Ok(Engine { child, stdin, written, voice: voice.clone(), length, last_used: Instant::now() })
 }
 
 /// Ends the engine once it has been idle for a while.
@@ -314,14 +340,14 @@ fn watch_idle(engine: Arc<Mutex<Option<Engine>>>) {
     });
 }
 
-fn synthesize(state: &TtsState, dir: &Path, text: &str, rate: f32) -> Result<Vec<u8>, String> {
+fn synthesize(state: &TtsState, dir: &Path, voice: &ExeVoice, text: &str, rate: f32) -> Result<Vec<u8>, String> {
     use std::io::Write;
     let length = length_for(rate);
     let mut guard = lock(&state.engine);
-    let usable = guard.as_mut().is_some_and(|e| e.length == length && matches!(e.child.try_wait(), Ok(None)));
+    let usable = guard.as_mut().is_some_and(|e| e.length == length && e.voice == *voice && matches!(e.child.try_wait(), Ok(None)));
     if !usable {
         let fresh = guard.is_none();
-        *guard = Some(start_engine(dir, length)?);
+        *guard = Some(start_engine(dir, voice, length)?);
         if fresh {
             watch_idle(state.engine.clone());
         }
@@ -343,6 +369,66 @@ fn synthesize(state: &TtsState, dir: &Path, text: &str, rate: f32) -> Result<Vec
     let wav = std::fs::read(&file).map_err(|e| format!("NOVA's voice wrote no audio: {e}"));
     let _ = std::fs::remove_file(&file);
     wav
+}
+
+/// The Piper bundle (piper.exe, eSpeak NG), once downloaded.
+pub fn bundle_dir<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
+    let dir = voice_dir(app).ok()?;
+    (installed(&dir) && !app.state::<TtsState>().downloading.load(Ordering::SeqCst)).then(|| dir.join("piper"))
+}
+
+/// Thorsten (medium), which comes with the bundle.
+pub fn bundled_voice<R: Runtime>(app: &AppHandle<R>) -> Option<ExeVoice> {
+    let dir = voice_dir(app).ok()?;
+    let f = files(&dir);
+    (installed(&dir) && !app.state::<TtsState>().downloading.load(Ordering::SeqCst)).then_some(ExeVoice { model: f.model, config: f.config, speaker: None })
+}
+
+/// Speaks `text` with piper.exe (the fallback when NOVA's speech runtime isn't there).
+pub fn speak_with_exe<R: Runtime>(app: &AppHandle<R>, voice: &ExeVoice, text: &str, rate: f32) -> Result<Vec<u8>, String> {
+    let dir = voice_dir(app)?;
+    if bundle_dir(app).is_none() {
+        return Err("NOVA's voice isn't downloaded yet".into());
+    }
+    synthesize(&app.state::<TtsState>(), &dir, voice, text, rate)
+}
+
+/// Starts piper.exe with `voice` in the background (NOVA just woke up), so
+/// the first sentence doesn't wait for the voice to load.
+pub fn warm_exe<R: Runtime>(app: &AppHandle<R>, voice: ExeVoice) {
+    let Ok(dir) = voice_dir(app) else { return };
+    if bundle_dir(app).is_none() {
+        return;
+    }
+    let length = length_for(crate::agent::prefs(app).speech_rate);
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = handle.state::<TtsState>();
+        let mut guard = lock(&state.engine);
+        if let Some(running) = guard.as_mut().filter(|e| e.length == length && e.voice == voice) {
+            if matches!(running.child.try_wait(), Ok(None)) {
+                running.last_used = Instant::now();
+                return;
+            }
+        }
+        let fresh = guard.is_none();
+        if let Ok(engine) = start_engine(&dir, &voice, length) {
+            *guard = Some(engine);
+            if fresh {
+                watch_idle(state.engine.clone());
+            }
+        }
+    });
+}
+
+/// Ends piper.exe now (NOVA speaks in-process instead).
+pub fn stop_exe<R: Runtime>(app: &AppHandle<R>) {
+    *lock(&app.state::<TtsState>().engine) = None;
+}
+
+/// Gets NOVA's voice ready (NOVA just woke up).
+pub fn warm<R: Runtime>(app: &AppHandle<R>) {
+    crate::speech::warm_voice(app);
 }
 
 // ---------------------------------------------------------------------------
@@ -373,20 +459,36 @@ pub async fn tts_install<R: Runtime>(app: AppHandle<R>) -> CommandResult<VoiceIn
     Ok(VoiceInstall::Downloading { percent: 0 })
 }
 
-/// Speaks `text` with NOVA's voice: returns it as WAV audio.
+/// Speaks `text` with one of NOVA's voices (`voice`: "nova:…", default
+/// Thorsten): returns it as WAV audio. `turn` lets `tts_cancel` drop speech
+/// that is no longer wanted.
 #[tauri::command]
-pub async fn tts_speak<R: Runtime>(app: AppHandle<R>, text: String, rate: f32) -> CommandResult<tauri::ipc::Response> {
+pub async fn tts_speak<R: Runtime>(app: AppHandle<R>, text: String, rate: f32, voice: Option<String>, turn: Option<u64>) -> CommandResult<tauri::ipc::Response> {
     let text = text.trim().to_string();
     if text.is_empty() || text.chars().count() > LONGEST_TEXT {
         return Err("Nothing to say, or too much at once".into());
     }
-    let dir = voice_dir(&app)?;
-    if !installed(&dir) || app.state::<TtsState>().downloading.load(Ordering::SeqCst) {
-        return Err("NOVA's voice isn't downloaded yet".into());
+    if app.state::<TtsState>().cancelled(turn) {
+        return Err("Cancelled".into());
     }
     let handle = app.clone();
-    let wav = tauri::async_runtime::spawn_blocking(move || synthesize(&handle.state::<TtsState>(), &dir, &text, rate)).await.map_err(|e| e.to_string())??;
+    let wav = tauri::async_runtime::spawn_blocking(move || {
+        // Stopped while waiting for the engine: skip it.
+        if handle.state::<TtsState>().cancelled(turn) {
+            return Err("Cancelled".to_string());
+        }
+        crate::speech::speak(&handle, voice.as_deref(), &text, rate)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
     Ok(tauri::ipc::Response::new(wav))
+}
+
+/// Stops speech for `turn` and earlier: waiting sentences are dropped.
+#[tauri::command]
+pub async fn tts_cancel<R: Runtime>(app: AppHandle<R>, turn: u64) -> CommandResult<()> {
+    app.state::<TtsState>().cancelled_turn.fetch_max(turn, Ordering::SeqCst);
+    Ok(())
 }
 
 #[cfg(test)]

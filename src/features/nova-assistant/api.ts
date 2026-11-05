@@ -16,11 +16,15 @@ import type {
 } from "./types";
 
 /** Sends a message; events stream to `onEvent` until "done" or "failed". */
-export function sendMessage(text: string, onEvent: (event: AgentEvent) => void): Promise<void> {
+/** Sends a message; `voice`: the user spoke it (NOVA answers briefly, to be read aloud). */
+export function sendMessage(text: string, voice: boolean, onEvent: (event: AgentEvent) => void): Promise<void> {
   const channel = new Channel<AgentEvent>();
   channel.onmessage = onEvent;
-  return callNative<void>("assistant_send", { text, onEvent: channel });
+  return callNative<void>("assistant_send", { text, voice, onEvent: channel });
 }
+
+/** Warms the AI provider's prompt cache while the user is still speaking. */
+export const prewarmAssistant = () => callNative<void>("assistant_prewarm").catch(() => {});
 
 export const cancelRequest = () => callNative<void>("assistant_cancel");
 export const answerConfirmation = (id: string, approved: boolean) => callNative<void>("assistant_confirm", { id, approved });

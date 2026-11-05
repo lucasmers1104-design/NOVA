@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-speech-install"
+description = "Enables the speech_install command without any pre-configured scope."
+commands.allow = ["speech_install"]
+
+[[permission]]
+identifier = "deny-speech-install"
+description = "Denies the speech_install command without any pre-configured scope."
+commands.deny = ["speech_install"]

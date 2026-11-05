@@ -10,6 +10,8 @@ use crate::ai::{JsonBody, Provider, SseEvent};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Part {
+    /// Only in a `Role::Control` message: the effort from here on (Anthropic).
+    Effort(Effort),
     Text(String),
     Image { media_type: String, data: String },
     ToolCall { id: String, name: String, input: Value },
@@ -20,6 +22,9 @@ pub enum Part {
 pub enum Role {
     User,
     Assistant,
+    /// An instruction for the provider between turns (an effort change);
+    /// only Anthropic understands it, the others skip it.
+    Control,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -53,7 +58,7 @@ pub enum Effort {
 }
 
 impl Effort {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Effort::Low => "low",
             Effort::Medium => "medium",
@@ -85,6 +90,18 @@ fn anthropic_supports_fallbacks(model: &str) -> bool {
 }
 
 pub const ANTHROPIC_FALLBACK_BETA: &str = "server-side-fallback-2026-07-01";
+/// Effort changes inside the conversation (keep the prompt cache).
+pub const ANTHROPIC_MESSAGE_EFFORT_BETA: &str = "mid-conversation-output-config-2026-07-01";
+
+/// Models that take an effort change as a message (with adaptive thinking, NOVA's default).
+pub fn anthropic_supports_message_effort(model: &str) -> bool {
+    ["claude-fable-5-1", "claude-mythos-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-haiku-5-5"].iter().any(|p| model == *p || model.starts_with(&format!("{p}-")))
+}
+
+/// Cache breakpoint: the provider keeps everything up to here for a few minutes.
+fn ephemeral() -> Value {
+    json!({ "type": "ephemeral" })
+}
 
 /// Debug builds only: `NOVA_DEV_ANTHROPIC_URL` points NOVA AI at a local mock
 /// server for end-to-end tests without a real key. Release builds ignore it.
@@ -104,33 +121,17 @@ pub fn build(request: &Request<'_>) -> reqwest::RequestBuilder {
     let client = crate::http::client();
     match request.provider {
         Provider::Anthropic => {
-            let mut body = json!({
-                "model": request.model,
-                "max_tokens": 32000,
-                "stream": true,
-                "system": request.system,
-                "messages": anthropic_messages(request.messages),
-            });
-            if !request.tools.is_empty() {
-                body["tools"] = request
-                    .tools
-                    .iter()
-                    .map(|t| json!({ "name": t.name, "description": t.description, "input_schema": t.schema, "eager_input_streaming": true }))
-                    .collect();
-            }
-            if anthropic_supports_effort(request.model) {
-                body["output_config"] = json!({ "effort": request.effort.as_str() });
-            }
-            let endpoint = dev_endpoint().unwrap_or_else(|| "https://api.anthropic.com/v1/messages".into());
-            let mut builder = client
-                .post(endpoint)
-                .header("x-api-key", request.key)
-                .header("anthropic-version", "2023-06-01");
+            let mut body = anthropic_body(request);
+            body["stream"] = json!(true);
+            // Tools and system prompt stay cached (explicit breakpoint), and the
+            // conversation so far too (automatic breakpoint on the newest block).
+            body["cache_control"] = ephemeral();
+            let mut betas = anthropic_betas(request);
             if anthropic_supports_fallbacks(request.model) {
                 body["fallbacks"] = json!("default");
-                builder = builder.header("anthropic-beta", ANTHROPIC_FALLBACK_BETA);
+                betas.push(ANTHROPIC_FALLBACK_BETA);
             }
-            builder.json_body(&body)
+            anthropic_request(client, request.key, &betas).json_body(&body)
         }
         Provider::Openai => {
             let mut messages = vec![json!({ "role": "system", "content": request.system })];
@@ -172,10 +173,89 @@ pub fn build(request: &Request<'_>) -> reqwest::RequestBuilder {
     }
 }
 
+/// The parts every Anthropic request shares, so a prewarm and the real request
+/// cache the same prefix byte for byte.
+fn anthropic_body(request: &Request<'_>) -> Value {
+    let mut body = json!({
+        "model": request.model,
+        "max_tokens": 32000,
+        "system": [{ "type": "text", "text": request.system, "cache_control": ephemeral() }],
+        "messages": anthropic_messages(request.messages),
+    });
+    if !request.tools.is_empty() {
+        body["tools"] = request
+            .tools
+            .iter()
+            .map(|t| json!({ "name": t.name, "description": t.description, "input_schema": t.schema, "eager_input_streaming": true }))
+            .collect();
+    }
+    if anthropic_supports_effort(request.model) {
+        body["output_config"] = json!({ "effort": request.effort.as_str() });
+    }
+    body
+}
+
+fn anthropic_betas(request: &Request<'_>) -> Vec<&'static str> {
+    let mut betas = Vec::new();
+    if request.messages.iter().any(|m| m.role == Role::Control) {
+        betas.push(ANTHROPIC_MESSAGE_EFFORT_BETA);
+    }
+    betas
+}
+
+fn anthropic_request(client: &reqwest::Client, key: &str, betas: &[&str]) -> reqwest::RequestBuilder {
+    let endpoint = dev_endpoint().unwrap_or_else(|| "https://api.anthropic.com/v1/messages".into());
+    let mut builder = client.post(endpoint).header("x-api-key", key).header("anthropic-version", "2023-06-01");
+    if !betas.is_empty() {
+        builder = builder.header("anthropic-beta", betas.join(","));
+    }
+    builder
+}
+
+/// A request that only fills Anthropic's prompt cache (no reply, max_tokens 0),
+/// sent while the user is still speaking so the real request starts warm. It
+/// marks the system prompt and the newest earlier message; the placeholder
+/// question after them is read but never answered.
+pub fn build_prewarm(request: &Request<'_>) -> Option<reqwest::RequestBuilder> {
+    if request.provider != Provider::Anthropic {
+        return None;
+    }
+    let mut body = anthropic_body(request);
+    body["max_tokens"] = json!(0);
+    if let Some(messages) = body["messages"].as_array_mut() {
+        if let Some(blocks) = messages.last_mut().and_then(|m| m["content"].as_array_mut()) {
+            // Thinking blocks can't carry a breakpoint; the newest other block can.
+            if let Some(block) = blocks.iter_mut().rev().find(|b| !matches!(b["type"].as_str(), Some("thinking" | "redacted_thinking"))) {
+                block["cache_control"] = ephemeral();
+            }
+        }
+        messages.push(json!({ "role": "user", "content": [{ "type": "text", "text": "." }] }));
+    }
+    Some(anthropic_request(crate::http::client(), request.key, &anthropic_betas(request)).json_body(&body))
+}
+
+/// Usage from a non-streamed Anthropic response (a prewarm).
+pub fn anthropic_usage(body: &Value) -> Usage {
+    let usage = &body["usage"];
+    Usage {
+        input: usage["input_tokens"].as_u64().unwrap_or(0),
+        output: usage["output_tokens"].as_u64().unwrap_or(0),
+        cache_read: usage["cache_read_input_tokens"].as_u64().unwrap_or(0),
+        cache_write: usage["cache_creation_input_tokens"].as_u64().unwrap_or(0),
+    }
+}
+
 fn anthropic_messages(messages: &[Message]) -> Vec<Value> {
     let mut out = Vec::new();
     for message in messages {
         match message.role {
+            Role::Control => {
+                for part in &message.parts {
+                    if let Part::Effort(effort) = part {
+                        out.push(json!({ "role": "system", "content": [], "output_config": { "effort": effort.as_str() } }));
+                    }
+                }
+            }
             Role::Assistant => {
                 let content = match &message.native {
                     Some((Provider::Anthropic, native)) => native.clone(),
@@ -229,6 +309,7 @@ fn openai_messages(messages: &[Message]) -> Vec<Value> {
     let mut out = Vec::new();
     for message in messages {
         match message.role {
+            Role::Control => {}
             Role::Assistant => {
                 let text: String = message.parts.iter().filter_map(|p| if let Part::Text(t) = p { Some(t.as_str()) } else { None }).collect();
                 let calls: Vec<Value> = message
@@ -284,6 +365,7 @@ fn gemini_contents(messages: &[Message]) -> Vec<Value> {
     let mut out = Vec::new();
     for message in messages {
         let parts: Vec<Value> = match (message.role, &message.native) {
+            (Role::Control, _) => continue,
             (Role::Assistant, Some((Provider::Gemini, Value::Array(native)))) => native.clone(),
             (Role::Assistant, _) => message
                 .parts
@@ -326,8 +408,20 @@ fn gemini_contents(messages: &[Message]) -> Vec<Value> {
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Usage {
+    /// Prompt tokens read fresh (without the cached ones below).
     pub input: u64,
     pub output: u64,
+    /// Prompt tokens served from the provider's cache (much cheaper).
+    pub cache_read: u64,
+    /// Prompt tokens written to the cache (a little dearer).
+    pub cache_write: u64,
+}
+
+impl Usage {
+    /// All prompt tokens, cached or not.
+    pub fn prompt(&self) -> u64 {
+        self.input + self.cache_read + self.cache_write
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -430,10 +524,9 @@ impl Accumulator {
         match value["type"].as_str()? {
             "message_start" => {
                 let usage = &value["message"]["usage"];
-                self.usage.input = ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"]
-                    .iter()
-                    .filter_map(|k| usage[*k].as_u64())
-                    .sum();
+                self.usage.input = usage["input_tokens"].as_u64().unwrap_or(0);
+                self.usage.cache_read = usage["cache_read_input_tokens"].as_u64().unwrap_or(0);
+                self.usage.cache_write = usage["cache_creation_input_tokens"].as_u64().unwrap_or(0);
                 self.model = value["message"]["model"].as_str().map(str::to_string);
                 None
             }
@@ -495,6 +588,12 @@ impl Accumulator {
                 if let Some(input) = value["usage"]["input_tokens"].as_u64() {
                     self.usage.input = self.usage.input.max(input);
                 }
+                if let Some(read) = value["usage"]["cache_read_input_tokens"].as_u64() {
+                    self.usage.cache_read = self.usage.cache_read.max(read);
+                }
+                if let Some(write) = value["usage"]["cache_creation_input_tokens"].as_u64() {
+                    self.usage.cache_write = self.usage.cache_write.max(write);
+                }
                 if let Some(reason) = value["delta"]["stop_reason"].as_str() {
                     self.stop = Some(match reason {
                         "end_turn" | "stop_sequence" => Stop::EndTurn,
@@ -515,7 +614,7 @@ impl Accumulator {
             self.model = Some(model.to_string());
         }
         if let Some(usage) = value.get("usage").filter(|u| u.is_object()) {
-            self.usage = Usage { input: usage["prompt_tokens"].as_u64().unwrap_or(0), output: usage["completion_tokens"].as_u64().unwrap_or(0) };
+            self.usage = Usage { input: usage["prompt_tokens"].as_u64().unwrap_or(0), output: usage["completion_tokens"].as_u64().unwrap_or(0), ..Usage::default() };
         }
         let choice = &value["choices"][0];
         if let Some(calls) = choice["delta"]["tool_calls"].as_array() {
@@ -557,6 +656,7 @@ impl Accumulator {
             self.usage = Usage {
                 input: usage["promptTokenCount"].as_u64().unwrap_or(0),
                 output: usage["candidatesTokenCount"].as_u64().unwrap_or(0) + usage["thoughtsTokenCount"].as_u64().unwrap_or(0),
+                ..Usage::default()
             };
         }
         let candidate = &value["candidates"][0];
@@ -646,23 +746,26 @@ impl Accumulator {
 // Prices
 // ---------------------------------------------------------------------------
 
-/// US dollars per million input / output tokens, from Anthropic's published
-/// prices (as of 2026-10-06). Other providers' prices change too often to
-/// hard-code, so NOVA shows their token counts without a cost estimate.
-const ANTHROPIC_PRICES: &[(&str, f64, f64)] = &[
-    ("claude-fable-5-1", 10.0, 50.0),
-    ("claude-fable-5", 10.0, 50.0),
-    ("claude-opus-5-5", 4.0, 20.0),
-    ("claude-opus-5", 5.0, 25.0),
-    ("claude-opus-4-8", 5.0, 25.0),
-    ("claude-opus-4-7", 5.0, 25.0),
-    ("claude-opus-4-6", 5.0, 25.0),
-    ("claude-sonnet-5-5", 2.0, 10.0),
-    ("claude-sonnet-5", 2.0, 10.0),
-    ("claude-sonnet-4-6", 3.0, 15.0),
-    ("claude-haiku-5-5", 0.10, 0.50),
-    ("claude-haiku-4-5", 1.0, 5.0),
+/// US dollars per million input / output / cache-read tokens, from
+/// Anthropic's published prices (as of 2026-10-06; cache writes cost 1.25x
+/// input). Other providers' prices change too often to hard-code, so NOVA
+/// shows their token counts without a cost estimate.
+const ANTHROPIC_PRICES: &[(&str, f64, f64, f64)] = &[
+    ("claude-fable-5-1", 10.0, 50.0, 0.25),
+    ("claude-fable-5", 10.0, 50.0, 1.0),
+    ("claude-opus-5-5", 4.0, 20.0, 0.20),
+    ("claude-opus-5", 5.0, 25.0, 0.50),
+    ("claude-opus-4-8", 5.0, 25.0, 0.50),
+    ("claude-opus-4-7", 5.0, 25.0, 0.50),
+    ("claude-opus-4-6", 5.0, 25.0, 0.50),
+    ("claude-sonnet-5-5", 2.0, 10.0, 0.20),
+    ("claude-sonnet-5", 2.0, 10.0, 0.20),
+    ("claude-sonnet-4-6", 3.0, 15.0, 0.30),
+    ("claude-haiku-5-5", 0.10, 0.50, 0.01),
+    ("claude-haiku-4-5", 1.0, 5.0, 0.10),
 ];
+/// Writing a prompt to the cache (5-minute lifetime) costs this much more than reading it fresh.
+const CACHE_WRITE_FACTOR: f64 = 1.25;
 
 /// Estimated cost in millionths of a US dollar, when NOVA knows the model's price.
 pub fn estimate_cost_micros(provider: Provider, model: &str, usage: Usage) -> Option<i64> {
@@ -670,15 +773,16 @@ pub fn estimate_cost_micros(provider: Provider, model: &str, usage: Usage) -> Op
         return None;
     }
     // Exact id, or a dated snapshot of it (claude-haiku-4-5-20251001).
-    let (_, mut input, mut output) = *ANTHROPIC_PRICES
+    let (_, mut input, mut output, mut read) = *ANTHROPIC_PRICES
         .iter()
         .find(|(id, ..)| model == *id || model.strip_prefix(id).is_some_and(|rest| rest.starts_with("-20")))?;
-    if model.starts_with("claude-haiku-5-5") && usage.input > 100_000 {
+    if model.starts_with("claude-haiku-5-5") && usage.prompt() > 100_000 {
         // Long prompts on Haiku 5.5 are billed at a higher rate.
-        (input, output) = (0.50, 2.50);
+        (input, output, read) = (0.50, 2.50, 0.05);
     }
     // $ per million tokens = micro-dollars per token.
-    Some((usage.input as f64 * input + usage.output as f64 * output).round() as i64)
+    let cost = usage.input as f64 * input + usage.cache_write as f64 * input * CACHE_WRITE_FACTOR + usage.cache_read as f64 * read + usage.output as f64 * output;
+    Some(cost.round() as i64)
 }
 
 pub const DEFAULT_ANTHROPIC_MODEL: &str = "claude-opus-5-5";
@@ -722,7 +826,8 @@ mod tests {
         assert_eq!(shown, ["Ich suche ", "danach."]);
         assert_eq!(turn.text, "Ich suche danach.");
         assert_eq!(turn.stop, Stop::ToolUse);
-        assert_eq!(turn.usage, Usage { input: 150, output: 42 });
+        assert_eq!(turn.usage, Usage { input: 120, output: 42, cache_read: 30, cache_write: 0 });
+        assert_eq!(turn.usage.prompt(), 150);
         assert_eq!(turn.calls, vec![ToolCall { id: "toolu_1".into(), name: "search_files".into(), input: Ok(json!({ "text": "lego" })) }]);
         let native = &turn.native.as_ref().unwrap().1;
         assert_eq!(native[0]["signature"], "sig==", "thinking blocks are kept for replay");
@@ -781,7 +886,7 @@ mod tests {
         );
         assert_eq!(shown, ["Okay. "]);
         assert_eq!(turn.stop, Stop::ToolUse);
-        assert_eq!(turn.usage, Usage { input: 80, output: 12 });
+        assert_eq!(turn.usage, Usage { input: 80, output: 12, ..Usage::default() });
         assert_eq!(turn.calls[0].input, Ok(json!({ "name": "Spotify" })));
         assert_eq!(turn.model.as_deref(), Some("gpt-x"));
     }
@@ -797,7 +902,7 @@ mod tests {
         );
         assert_eq!(shown, ["Moment."]);
         assert_eq!(turn.stop, Stop::ToolUse, "a function call means tool use even with STOP");
-        assert_eq!(turn.usage, Usage { input: 50, output: 10 });
+        assert_eq!(turn.usage, Usage { input: 50, output: 10, ..Usage::default() });
         assert_eq!(turn.native.as_ref().unwrap().1[1]["thoughtSignature"], "abc");
     }
 
@@ -828,6 +933,8 @@ mod tests {
             match provider {
                 Provider::Anthropic => {
                     assert_eq!(body["output_config"]["effort"], "low");
+                    assert_eq!(body["system"][0]["cache_control"]["type"], "ephemeral", "tools and system prompt are cached");
+                    assert_eq!(body["cache_control"]["type"], "ephemeral", "and the conversation so far");
                     assert_eq!(body["fallbacks"], "default");
                     assert_eq!(request.headers()["anthropic-beta"], ANTHROPIC_FALLBACK_BETA);
                     assert_eq!(body["tools"][0]["eager_input_streaming"], true);
@@ -846,6 +953,49 @@ mod tests {
     }
 
     #[test]
+    fn prewarm_marks_the_shared_prefix_and_asks_for_nothing() {
+        let tools = [ToolSpec { name: "search_files", description: "Search", schema: json!({ "type": "object", "properties": {} }) }];
+        let mut history = sample_history();
+        history.push(Message { role: Role::Assistant, parts: vec![Part::Text("Zwei Dateien.".into())], native: None });
+        let request = Request { provider: Provider::Anthropic, key: "k", model: "claude-haiku-5-5", system: "Be NOVA", messages: &history, tools: &tools, effort: Effort::Medium };
+        let prewarm = build_prewarm(&request).unwrap().build().unwrap();
+        let body: Value = serde_json::from_slice(prewarm.body().unwrap().as_bytes().unwrap()).unwrap();
+        assert_eq!(body["max_tokens"], 0);
+        assert!(body.get("stream").is_none() && body.get("cache_control").is_none() && body.get("fallbacks").is_none());
+        assert_eq!(body["system"][0]["cache_control"]["type"], "ephemeral");
+        let messages = body["messages"].as_array().unwrap();
+        assert_eq!(messages[messages.len() - 2]["content"][0]["cache_control"]["type"], "ephemeral", "the newest real message is marked");
+        assert_eq!(messages.last().unwrap()["content"][0]["text"], ".");
+        // The real request shares tools and system byte for byte.
+        let real = build(&request).build().unwrap();
+        let real: Value = serde_json::from_slice(real.body().unwrap().as_bytes().unwrap()).unwrap();
+        assert_eq!(real["tools"], body["tools"]);
+        assert_eq!(real["system"], body["system"]);
+        assert!(build_prewarm(&Request { provider: Provider::Openai, ..request }).is_none());
+    }
+
+    #[test]
+    fn effort_changes_become_system_messages_for_anthropic_only() {
+        let history = vec![
+            Message::user(vec![Part::Text("a".into())]),
+            Message { role: Role::Assistant, parts: vec![Part::Text("b".into())], native: None },
+            Message { role: Role::Control, parts: vec![Part::Effort(Effort::Low)], native: None },
+            Message::user(vec![Part::Text("c".into())]),
+        ];
+        let body_of = |provider| {
+            let request = build(&Request { provider, key: "k", model: "claude-haiku-5-5", system: "s", messages: &history, tools: &[], effort: Effort::Medium }).build().unwrap();
+            let beta = request.headers().get("anthropic-beta").map(|h| h.to_str().unwrap().to_string());
+            (serde_json::from_slice::<Value>(request.body().unwrap().as_bytes().unwrap()).unwrap(), beta)
+        };
+        let (anthropic, beta) = body_of(Provider::Anthropic);
+        assert_eq!(anthropic["messages"][2], json!({ "role": "system", "content": [], "output_config": { "effort": "low" } }));
+        assert_eq!(beta.as_deref(), Some(ANTHROPIC_MESSAGE_EFFORT_BETA));
+        assert_eq!(body_of(Provider::Openai).0["messages"].as_array().unwrap().len(), 4, "system prompt + 3 turns");
+        assert_eq!(body_of(Provider::Gemini).0["contents"].as_array().unwrap().len(), 3);
+        assert!(anthropic_supports_message_effort("claude-haiku-5-5") && !anthropic_supports_message_effort("claude-haiku-4-5"));
+    }
+
+    #[test]
     fn older_anthropic_models_get_no_effort_or_fallbacks() {
         let request = build(&Request { provider: Provider::Anthropic, key: "k", model: "claude-haiku-4-5", system: "s", messages: &[], tools: &[], effort: Effort::High })
             .build()
@@ -857,11 +1007,14 @@ mod tests {
 
     #[test]
     fn estimates_costs_only_for_known_prices() {
-        let usage = Usage { input: 1_000_000, output: 100_000 };
+        let usage = Usage { input: 1_000_000, output: 100_000, ..Usage::default() };
         assert_eq!(estimate_cost_micros(Provider::Anthropic, "claude-opus-5-5", usage), Some(6_000_000));
         assert_eq!(estimate_cost_micros(Provider::Anthropic, "claude-opus-5", usage), Some(7_500_000));
         assert_eq!(estimate_cost_micros(Provider::Anthropic, "claude-haiku-4-5-20251001", usage), Some(1_500_000));
-        assert_eq!(estimate_cost_micros(Provider::Anthropic, "claude-haiku-5-5", Usage { input: 200_000, output: 0 }), Some(100_000));
+        assert_eq!(estimate_cost_micros(Provider::Anthropic, "claude-haiku-5-5", Usage { input: 200_000, ..Usage::default() }), Some(100_000));
+        // Cached prompt tokens: reads at a tenth, writes at 1.25x.
+        let cached = Usage { input: 100, output: 50, cache_read: 10_000, cache_write: 2_000 };
+        assert_eq!(estimate_cost_micros(Provider::Anthropic, "claude-haiku-5-5", cached), Some((100.0 * 0.1 + 2_000.0 * 0.125 + 10_000.0 * 0.01 + 50.0 * 0.5_f64).round() as i64));
         assert_eq!(estimate_cost_micros(Provider::Anthropic, "claude-unknown", usage), None);
         assert_eq!(estimate_cost_micros(Provider::Openai, "gpt-x", usage), None);
     }

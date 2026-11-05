@@ -23,6 +23,7 @@ import {
   captureScreen,
   captureTargets,
   clearAttachments,
+  prewarmAssistant,
 } from "../api";
 import { replyText, useConversation } from "../conversation";
 import type {
@@ -42,6 +43,7 @@ import {
   useVoice,
   voiceLine,
 } from "../voice";
+import { beginTurn, discardTurn, mark } from "../speech/timings";
 import { playChime } from "../wake";
 import { NovaConversation } from "./NovaConversation";
 import { NovaHistory } from "./NovaHistory";
@@ -79,8 +81,6 @@ interface NovaPanelProps {
   onOpenProviders: () => void;
   onIndexFolders: () => void;
   onToggleSpeech: () => void;
-  /** Voice turns get spoken replies. */
-  onVoiceTurn: () => void;
 }
 
 /** The expanded NOVA AI panel: a quiet header, the conversation and one input. */
@@ -117,17 +117,20 @@ export function NovaPanel(props: NovaPanelProps) {
   const language = agent?.prefs.language ?? "auto";
   const german = speaksGerman(language);
   // What NOVA just said around a spoken turn (a greeting, "one moment").
-  const [line, setLine] = useState<string | null>(null);
+  const line = voice.line;
+  const setLine = (text: string | null) => useVoice.setState({ line: text });
   const discard = useRef(false);
 
   const report = (error: unknown) =>
     setActionError(error instanceof Error ? error.message : String(error));
   /** Shows and speaks a short line; resolves when it has been said. */
-  const say = (text: string) => {
+  const say = (text: string, label?: string) => {
     setLine(text);
     return speak(
       text,
       agent?.prefs ?? { voice: "", speechRate: 1, speechVolume: 1 },
+      label,
+      german,
     );
   };
   const startVoice = async () => {
@@ -137,12 +140,16 @@ export function NovaPanel(props: NovaPanelProps) {
     }
     setActionError(null);
     discard.current = false;
+    beginTurn("voice");
+    // Warm the AI provider while the user speaks (skipped when the panel just did).
+    void prewarmAssistant();
     const text = await listen(german);
     if (text && !discard.current) {
-      props.onVoiceTurn();
       setView("chat");
-      void send(text);
-      void say(voiceLine("ack", language));
+      // The reply is read aloud as it arrives; "one moment" plays only if it takes a while.
+      void send(text, { voice: true, ack: voiceLine("ack", language) });
+    } else {
+      discardTurn();
     }
   };
 
@@ -155,10 +162,13 @@ export function NovaPanel(props: NovaPanelProps) {
     if (!wake) return;
     let cancelled = false;
     void (async () => {
+      beginTurn("wake");
+      mark("wake");
       if (wake.call.chime) await playChime();
+      mark("chimeEnd");
       if (cancelled) return;
       // Said before the microphone opens, so NOVA doesn't hear itself.
-      await sayRef.current(voiceLine("greet", language));
+      await sayRef.current(voiceLine("greet", language), "greet");
       if (
         !cancelled &&
         wake.call.listen &&

@@ -1,10 +1,10 @@
 [package]
 name = "nova"
-version = "1.4.1"
+version = "1.5.0"
 description = "NOVA — Your Personal Command Center"
 authors = ["Luca Warmers"]
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.92"
 
 [lib]
 # Desktop-only for now: a plain rlib keeps link times short. Add
@@ -34,6 +34,9 @@ png = "0.18"
 base64 = "0.23"
 tauri-plugin-global-shortcut = "2"
 tokio = { version = "1", features = ["sync", "macros", "time"] }
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "load-dynamic", "directml", "api-24"] }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+sha2 = "0.10"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
@@ -46,7 +49,11 @@ windows = { version = "0.62", features = [
     "Media_Control",
     "Storage_Streams",
     "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D12",
     "Win32_Graphics_Dwm",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Gdi",
     "Win32_Media_Audio",
     "Win32_Media_Audio_Endpoints",
@@ -57,6 +64,9 @@ windows = { version = "0.62", features = [
     "Win32_Storage_Xps",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_LibraryLoader",
+    "Win32_System_ProcessStatus",
     "Win32_System_Registry",
     "Win32_System_StationsAndDesktops",
     "Win32_System_SystemInformation",

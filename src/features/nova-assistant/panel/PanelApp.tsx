@@ -1,13 +1,26 @@
-import { emitTo, listen } from "@tauri-apps/api/event";
+import { emit, emitTo, listen } from "@tauri-apps/api/event";
 import { AnimatePresence, MotionConfig } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import type { MotionPreference } from "@/stores/settings";
 import { agentStatus, collapseAssistant, configureAgent, finderAddStandardFolders, finderStatus, openNova, panelHidden, panelReady } from "../api";
 import { useAssistantAppearance } from "../appearance";
 import { NovaPanel } from "../components/NovaPanel";
-import { type AssistantItem, replyText, useConversation } from "../conversation";
+import { onReply, useConversation } from "../conversation";
+import { ReplyDirector } from "../speech/director";
 import { ASSISTANT_EVENTS, type AgentStatus, type AssistantState, type DotCorner, type FinderStatus, type WakeCall } from "../types";
-import { installNovaVoice, NOVA_VOICE, prepareNovaLines, speak, stopListening, stopSpeaking, useVoice, watchNovaVoice } from "../voice";
+import { installNovaVoice, listen as listenOnce, prepareNovaLines, speechActive, stopListening, stopSpeaking, useVoice, watchNovaVoice } from "../voice";
+
+// Dev builds: a handle for end-to-end checks over the DevTools protocol (scripts/cdp.mjs).
+if (import.meta.env.DEV && typeof window !== "undefined") {
+  Object.assign(window, {
+    __novaDev: {
+      conversation: useConversation,
+      voice: useVoice,
+      wake: (listen = false) => emit(ASSISTANT_EVENTS.wake, { source: "clap", listen, chime: true }),
+      listen: (german = true) => listenOnce(german),
+    },
+  });
+}
 
 const REDUCED_MOTION: Record<MotionPreference, "user" | "always" | "never"> = { system: "user", reduced: "always", full: "never" };
 
@@ -34,10 +47,8 @@ export function PanelApp() {
   const openRef = useRef(open);
   openRef.current = open;
   const pendingHide = useRef<number | null>(null);
-  const voiceTurn = useRef(false);
 
   const conversationState = useConversation((s) => s.state);
-  const busy = useConversation((s) => s.busy);
   const voiceMode = useVoice((s) => s.mode);
   const level = useVoice((s) => s.level);
   const state = displayedState(conversationState, voiceMode);
@@ -45,16 +56,17 @@ export function PanelApp() {
 
   useEffect(() => watchNovaVoice(), []);
   // NOVA's own voice is downloaded once, in the background, when it will be used.
-  const usesNovaVoice = agent ? agent.prefs.voice === "" || agent.prefs.voice === NOVA_VOICE : false;
+  const usesNovaVoice = agent ? agent.prefs.voice === "" || agent.prefs.voice.startsWith("nova:") : false;
   useEffect(() => {
     if (usesNovaVoice && novaVoice?.state === "missing") void installNovaVoice();
   }, [usesNovaVoice, novaVoice?.state]);
   // Greetings play right after a wake-up instead of being made then.
   const language = agent?.prefs.language;
   const rate = agent?.prefs.speechRate;
+  const voicePref = agent?.prefs.voice;
   useEffect(() => {
-    if (usesNovaVoice && novaVoice?.state === "ready" && language !== undefined && rate !== undefined) void prepareNovaLines(language, rate);
-  }, [usesNovaVoice, novaVoice?.state, language, rate]);
+    if (usesNovaVoice && novaVoice?.state === "ready" && language !== undefined && rate !== undefined) void prepareNovaLines(language, rate, voicePref, () => useConversation.getState().busy);
+  }, [usesNovaVoice, novaVoice?.state, language, rate, voicePref]);
 
   useEffect(() => {
     let alive = true;
@@ -101,7 +113,7 @@ export function PanelApp() {
     if (!open) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented) return;
-      if (useVoice.getState().mode === "speaking") stopSpeaking();
+      if (speechActive()) stopSpeaking();
       else void collapseAssistant();
     };
     window.addEventListener("keydown", onKeyDown);
@@ -120,20 +132,17 @@ export function PanelApp() {
     return () => clearTimeout(timer);
   }, [conversationState]);
 
-  // Speak finished replies when spoken replies are on, or when the user spoke.
-  const wasBusy = useRef(false);
+  // Replies are read aloud while they stream in: spoken requests always, typed ones when spoken replies are on.
+  const agentRef = useRef(agent);
+  agentRef.current = agent;
   useEffect(() => {
-    if (wasBusy.current && !busy) {
-      const last = useConversation.getState().items.findLast((i): i is AssistantItem => i.kind === "assistant");
-      const shouldSpeak = (agent?.prefs.speakReplies ?? false) || voiceTurn.current;
-      voiceTurn.current = false;
-      if (last && !last.error && shouldSpeak) {
-        const text = replyText(last);
-        if (text && agent) void speak(text, agent.prefs);
-      }
-    }
-    wasBusy.current = busy;
-  }, [busy, agent]);
+    const director = new ReplyDirector();
+    const stop = onReply((event) => director.handle(event, agentRef.current?.prefs));
+    return () => {
+      stop();
+      director.cancel();
+    };
+  }, []);
 
   return (
     <MotionConfig reducedMotion={REDUCED_MOTION[appearance.motion]}>
@@ -160,9 +169,6 @@ export function PanelApp() {
             onToggleSpeech={() => {
               if (!agent) return;
               void configureAgent({ ...agent.prefs, speakReplies: !agent.prefs.speakReplies }).then(setAgent, () => {});
-            }}
-            onVoiceTurn={() => {
-              voiceTurn.current = true;
             }}
           />
         )}

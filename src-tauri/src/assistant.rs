@@ -714,6 +714,11 @@ fn show_panel<R: Runtime>(app: &AppHandle<R>, panel: &WebviewWindow<R>, origin: 
     let _ = panel.set_focus();
     let wake = state(app).lock().pending_wake.take();
     let _ = app.emit_to(PANEL_LABEL, EVENT_EXPAND, ExpandEvent { origin, wake });
+    // A question is likely next: warm the AI provider's cache (skipped while
+    // it's still warm) and NOVA's voice.
+    crate::tts::warm(app);
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move { crate::agent::prewarm(&handle).await });
 }
 
 /// Opens the panel next to the dot (creating it on first use).
@@ -789,6 +794,17 @@ fn hide_panel<R: Runtime>(app: &AppHandle<R>, generation: u64) {
 /// "Hey NOVA" or a double clap: opens the panel, or asks an open one to listen.
 pub fn wake<R: Runtime>(app: &AppHandle<R>, source: crate::wake::Source, listen: bool, chime: bool) {
     let call = WakeCall { source, listen, chime };
+    // While NOVA greets: get recognition, the voice and the AI provider's cache ready.
+    if listen {
+        if crate::speech::stt::use_local(app) {
+            crate::speech::stt::warm(app);
+        } else {
+            crate::voice::prepare(app);
+        }
+    }
+    crate::tts::warm(app);
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move { crate::agent::prewarm(&handle).await });
     let (open, loaded) = {
         let inner = state(app).lock();
         (inner.panel_open, inner.panel_loaded)

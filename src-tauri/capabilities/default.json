@@ -89,6 +89,15 @@
     "allow-voice-open-settings",
     "allow-tts-status",
     "allow-tts-install",
-    "allow-tts-speak"
+    "allow-tts-speak",
+    "allow-tts-cancel",
+    "allow-wake-set-speaking",
+    "allow-voice-report-turn",
+    "allow-speech-status",
+    "allow-speech-configure",
+    "allow-speech-install",
+    "allow-speech-remove",
+    "allow-speech-warm",
+    "allow-speech-benchmark"
   ]
 }

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-speech-remove"
+description = "Enables the speech_remove command without any pre-configured scope."
+commands.allow = ["speech_remove"]
+
+[[permission]]
+identifier = "deny-speech-remove"
+description = "Denies the speech_remove command without any pre-configured scope."
+commands.deny = ["speech_remove"]

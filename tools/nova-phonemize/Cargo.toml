@@ -1,0 +1,22 @@
+[package]
+name = "nova-phonemize"
+version = "1.0.0"
+description = "Turns text into IPA phonemes with eSpeak NG for NOVA's voices"
+authors = ["Luca Warmers"]
+edition = "2021"
+# It loads eSpeak NG (GPL-3.0) and is distributed as a separate program; NOVA
+# only talks to it over stdin/stdout.
+license = "GPL-3.0-or-later"
+publish = false
+
+[dependencies]
+serde_json = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_LibraryLoader", "Win32_Globalization"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true

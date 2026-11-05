@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-assistant-prewarm"
+description = "Enables the assistant_prewarm command without any pre-configured scope."
+commands.allow = ["assistant_prewarm"]
+
+[[permission]]
+identifier = "deny-assistant-prewarm"
+description = "Denies the assistant_prewarm command without any pre-configured scope."
+commands.deny = ["assistant_prewarm"]

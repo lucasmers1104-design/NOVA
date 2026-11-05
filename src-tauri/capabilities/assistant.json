@@ -19,6 +19,7 @@
     "allow-assistant-open-main",
     "allow-assistant-appearance",
     "allow-assistant-send",
+    "allow-assistant-prewarm",
     "allow-assistant-cancel",
     "allow-assistant-confirm",
     "allow-assistant-reset",
@@ -33,12 +34,17 @@
     "allow-finder-add-standard-folders",
     "allow-assistant-agent-configure",
     "allow-voice-listen",
+    "allow-voice-prepare",
     "allow-voice-stop",
     "allow-voice-open-settings",
     "allow-tts-status",
     "allow-tts-install",
     "allow-tts-speak",
+    "allow-tts-cancel",
     "allow-wake-status",
-    "allow-wake-set-speaking"
+    "allow-wake-set-speaking",
+    "allow-voice-report-turn",
+    "allow-speech-status",
+    "allow-speech-warm"
   ]
 }

@@ -13,7 +13,7 @@ pub mod tools;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -35,6 +35,16 @@ const MAX_ROUNDS: usize = 10;
 const MAX_TEXT_CHARS: usize = 20_000;
 const MAX_ATTACHMENT_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_TEXT_ATTACHMENT_CHARS: usize = 60_000;
+/// Added to a spoken request: the answer will be heard, not read.
+const VOICE_NOTE: &str = "\n\n[Voice turn: the user spoke this and hears your reply read aloud. Answer in one to three short spoken sentences and start with the answer. No Markdown, lists, tables, URLs or file paths.]";
+/// Whether spoken requests get lighter thinking (an effort change kept in the
+/// conversation, so the prompt cache survives). Off: measured on Claude Haiku
+/// 5.5 on 2026-11-05 it saved only about 0.1 s before the first words (median
+/// 646 ms vs 757 ms, prompt cache warm) — not worth a beta dependency.
+const VOICE_LOW_EFFORT: bool = false;
+/// The provider keeps a prompt cached for five minutes; a prewarm is pointless
+/// while the last request is more recent than this.
+const PREWARM_AFTER: Duration = Duration::from_secs(4 * 60);
 
 // ---------------------------------------------------------------------------
 // Preferences
@@ -116,6 +126,10 @@ struct Session {
     system: Option<String>,
     last_hits: Vec<FileHit>,
     attachments: Vec<Attachment>,
+    /// The effort a control message set for the conversation (spoken turns), if any.
+    effort_override: Option<Effort>,
+    /// The provider rejected effort changes in this conversation.
+    message_effort_failed: bool,
 }
 
 struct Run {
@@ -129,6 +143,9 @@ pub struct AgentState {
     prefs: Mutex<AgentPrefs>,
     session: Mutex<Session>,
     run: Mutex<Option<Run>>,
+    /// When NOVA last asked the provider anything (a prewarm included).
+    last_request: Mutex<Option<Instant>>,
+    prewarming: AtomicBool,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -170,7 +187,8 @@ pub enum AgentEvent {
     ToolStarted { id: String, name: String, title: String, risk: Risk },
     ConfirmRequired { id: String, title: String, detail: Option<String>, risk: Risk },
     ToolFinished { id: String, ok: bool, summary: String, card: Option<Value> },
-    Usage { provider: String, model: String, input_tokens: u64, output_tokens: u64, cost_usd: Option<f64> },
+    /// `input_tokens` counts the whole prompt; the cache fields say how much of it was cached.
+    Usage { provider: String, model: String, input_tokens: u64, output_tokens: u64, cache_read_tokens: u64, cache_write_tokens: u64, cost_usd: Option<f64> },
     Done,
     Failed { error: String },
 }
@@ -335,7 +353,17 @@ fn push_user(session: &mut Session, parts: Vec<Part>) {
     }
 }
 
-async fn run_turn<R: Runtime>(app: &AppHandle<R>, text: String, channel: &Channel<AgentEvent>) -> Result<(), String> {
+/// Whether a spoken turn should switch the conversation's effort, and to what.
+fn effort_change(session: &Session, prefs: &AgentPrefs, provider: Provider, model: &str, voice: bool, lower_for_voice: bool) -> Option<Effort> {
+    if provider != Provider::Anthropic || !provider::anthropic_supports_message_effort(model) || session.message_effort_failed {
+        return None;
+    }
+    let current = session.effort_override.unwrap_or(prefs.effort);
+    let wanted = if voice && lower_for_voice { Effort::Low } else { prefs.effort };
+    (wanted != current).then_some(wanted)
+}
+
+async fn run_turn<R: Runtime>(app: &AppHandle<R>, text: String, voice: bool, channel: &Channel<AgentEvent>) -> Result<(), String> {
     let prefs = prefs(app);
     let attachments = std::mem::take(&mut lock(&state(app).session).attachments);
     let has_image = attachments.iter().any(|a| matches!(a.part, Part::Image { .. }));
@@ -349,8 +377,12 @@ async fn run_turn<R: Runtime>(app: &AppHandle<R>, text: String, channel: &Channe
         if session.system.is_none() {
             session.system = Some(system_prompt(app));
         }
+        if let Some(effort) = effort_change(&session, &prefs, provider, &model, voice, VOICE_LOW_EFFORT) {
+            session.messages.push(Message { role: Role::Control, parts: vec![Part::Effort(effort)], native: None });
+            session.effort_override = (effort != prefs.effort).then_some(effort);
+        }
         let mut parts: Vec<Part> = attachments.into_iter().map(|a| a.part).collect();
-        parts.push(Part::Text(format!("[{}] {}", local_time(), text)));
+        parts.push(Part::Text(format!("[{}] {}{}", local_time(), text, if voice { VOICE_NOTE } else { "" })));
         push_user(&mut session, parts);
     }
 
@@ -369,14 +401,21 @@ async fn run_turn<R: Runtime>(app: &AppHandle<R>, text: String, channel: &Channe
             (session.messages.clone(), session.system.clone().unwrap_or_default())
         };
         let request = provider::build(&Request { provider, key: &key, model: &model, system: &system, messages: &messages, tools: &tools, effort: prefs.effort });
-        let turn = stream(app, request, provider, channel).await?;
+        *lock(&state(app).last_request) = Some(Instant::now());
+        let turn = match stream(app, request, provider, channel).await {
+            Ok(turn) => turn,
+            // The provider doesn't take effort changes after all: drop them (they were
+            // never answered) and ask again once without.
+            Err(error) if round == 0 && rejected_effort_change(&error) && drop_effort_changes(&mut lock(&state(app).session)) => continue,
+            Err(error) => return Err(error),
+        };
 
         let cost = provider::estimate_cost_micros(provider, turn.model.as_deref().unwrap_or(&model), turn.usage);
         let served = turn.model.clone().unwrap_or_else(|| model.clone());
         let _ = app.state::<Database>().with(|c| {
             storage::usage::record(
                 c,
-                &storage::usage::UsageRecord { provider: provider.id(), model: &served, input_tokens: turn.usage.input, output_tokens: turn.usage.output, cost_micros: cost },
+                &storage::usage::UsageRecord { provider: provider.id(), model: &served, input_tokens: turn.usage.prompt(), output_tokens: turn.usage.output, cost_micros: cost },
             )
         });
         emit(
@@ -384,8 +423,10 @@ async fn run_turn<R: Runtime>(app: &AppHandle<R>, text: String, channel: &Channe
             AgentEvent::Usage {
                 provider: provider.label().into(),
                 model: served,
-                input_tokens: turn.usage.input,
+                input_tokens: turn.usage.prompt(),
                 output_tokens: turn.usage.output,
+                cache_read_tokens: turn.usage.cache_read,
+                cache_write_tokens: turn.usage.cache_write,
                 cost_usd: cost.map(|c| c as f64 / 1_000_000.0),
             },
         );
@@ -425,6 +466,83 @@ async fn run_turn<R: Runtime>(app: &AppHandle<R>, text: String, channel: &Channe
         }
     }
     Err("That took too many steps. Try splitting it into smaller requests.".into())
+}
+
+/// A 400 about the effort-change messages (an account or model without the beta).
+fn rejected_effort_change(error: &str) -> bool {
+    let error = error.to_lowercase();
+    error.contains("output_config") || error.contains("mid-conversation") || error.contains("role 'system'") || error.contains("system message")
+}
+
+/// Removes the effort changes of the turn that was just rejected; true if there were any.
+fn drop_effort_changes(session: &mut Session) -> bool {
+    let before = session.messages.len();
+    // Only the newest ones: they sit right before the last user message and were never answered.
+    let keep_until = session.messages.iter().rposition(|m| m.role == Role::Assistant).map_or(0, |i| i + 1);
+    let mut index = 0;
+    session.messages.retain(|m| {
+        let keep = index < keep_until || m.role != Role::Control;
+        index += 1;
+        keep
+    });
+    session.message_effort_failed = true;
+    session.effort_override = None;
+    session.messages.len() != before
+}
+
+/// Fills the provider's prompt cache with the conversation so far (Anthropic
+/// only), so the request that follows starts answering sooner. Called when
+/// NOVA wakes or the microphone opens; skipped when the cache is still warm.
+pub async fn prewarm<R: Runtime>(app: &AppHandle<R>) {
+    let agent = state(app);
+    if agent.prewarming.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let _done = PrewarmGuard(&agent.prewarming);
+    let recent = lock(&agent.last_request).is_some_and(|at| at.elapsed() < PREWARM_AFTER);
+    if recent || lock(&agent.run).is_some() {
+        return;
+    }
+    let prefs = prefs(app);
+    let db = app.state::<Database>();
+    let Some((provider, model, key)) = resolve_provider(&db, &prefs) else { return };
+    if provider != Provider::Anthropic {
+        return;
+    }
+    if let Some(limit) = prefs.monthly_limit_usd {
+        let spent = db.with(|c| storage::usage::totals_since(c, month_start_millis())).map(|t| t.cost_micros as f64 / 1_000_000.0).unwrap_or(f64::MAX);
+        if spent >= limit {
+            return;
+        }
+    }
+    let (messages, system) = {
+        let mut session = lock(&agent.session);
+        if session.system.is_none() {
+            session.system = Some(system_prompt(app));
+        }
+        (session.messages.clone(), session.system.clone().unwrap_or_default())
+    };
+    let tools = tools::definitions();
+    let Some(request) = provider::build_prewarm(&Request { provider, key: &key, model: &model, system: &system, messages: &messages, tools: &tools, effort: prefs.effort }) else { return };
+    *lock(&agent.last_request) = Some(Instant::now());
+    let Ok(response) = request.timeout(Duration::from_secs(30)).send().await else { return };
+    if !response.status().is_success() {
+        return;
+    }
+    let Ok(body) = crate::http::read_limited(response, 64 * 1024).await else { return };
+    let Ok(value) = serde_json::from_slice::<Value>(&body) else { return };
+    let usage = provider::anthropic_usage(&value);
+    let served = value["model"].as_str().unwrap_or(&model).to_string();
+    let cost = provider::estimate_cost_micros(provider, &served, usage);
+    let _ = db.with(|c| storage::usage::record(c, &storage::usage::UsageRecord { provider: provider.id(), model: &served, input_tokens: usage.prompt(), output_tokens: 0, cost_micros: cost }));
+}
+
+struct PrewarmGuard<'a>(&'a AtomicBool);
+
+impl Drop for PrewarmGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
 }
 
 fn tool_results_for_unrun(calls: &[provider::ToolCall], why: &str) -> Vec<Part> {
@@ -611,7 +729,7 @@ async fn run_local<R: Runtime>(app: &AppHandle<R>, text: &str, has_image: bool, 
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub async fn assistant_send<R: Runtime>(app: AppHandle<R>, text: String, on_event: Channel<AgentEvent>) -> CommandResult<()> {
+pub async fn assistant_send<R: Runtime>(app: AppHandle<R>, text: String, voice: Option<bool>, on_event: Channel<AgentEvent>) -> CommandResult<()> {
     let text = text.trim().to_string();
     let has_attachment = !lock(&state(&app).session).attachments.is_empty();
     if text.is_empty() && !has_attachment {
@@ -629,7 +747,7 @@ pub async fn assistant_send<R: Runtime>(app: AppHandle<R>, text: String, on_even
     }
     let _guard = RunGuard { app: &app };
     let text = if text.is_empty() { "What do you see?".to_string() } else { text };
-    match run_turn(&app, text, &on_event).await {
+    match run_turn(&app, text, voice.unwrap_or(false), &on_event).await {
         Ok(()) => {
             status(&on_event, Status::Completed, None);
             emit(&on_event, AgentEvent::Done);
@@ -643,6 +761,13 @@ pub async fn assistant_send<R: Runtime>(app: AppHandle<R>, text: String, on_even
             emit(&on_event, AgentEvent::Failed { error });
         }
     }
+    Ok(())
+}
+
+/// Warms the provider's prompt cache in the background (the microphone just opened).
+#[tauri::command]
+pub async fn assistant_prewarm<R: Runtime>(app: AppHandle<R>) -> CommandResult<()> {
+    tauri::async_runtime::spawn(async move { prewarm(&app).await });
     Ok(())
 }
 
@@ -863,6 +988,41 @@ mod tests {
         assert_eq!(start % 86_400_000, 0);
         let days_back = (storage::now_millis() - start) / 86_400_000;
         assert!(days_back < 31);
+    }
+
+    #[test]
+    fn spoken_turns_lower_the_effort_and_typed_ones_restore_it() {
+        let prefs = AgentPrefs::default();
+        let mut session = Session::default();
+        assert_eq!(effort_change(&session, &prefs, Provider::Anthropic, "claude-haiku-5-5", true, true), Some(Effort::Low));
+        assert_eq!(effort_change(&session, &prefs, Provider::Anthropic, "claude-haiku-5-5", true, VOICE_LOW_EFFORT), None, "off, as measured");
+        assert_eq!(effort_change(&session, &prefs, Provider::Anthropic, "claude-haiku-5-5", false, true), None);
+        assert_eq!(effort_change(&session, &prefs, Provider::Openai, "gpt-x", true, true), None);
+        assert_eq!(effort_change(&session, &prefs, Provider::Anthropic, "claude-haiku-4-5", true, true), None);
+        session.effort_override = Some(Effort::Low);
+        assert_eq!(effort_change(&session, &prefs, Provider::Anthropic, "claude-haiku-5-5", true, true), None, "already low");
+        assert_eq!(effort_change(&session, &prefs, Provider::Anthropic, "claude-haiku-5-5", false, true), Some(Effort::Medium));
+        session.message_effort_failed = true;
+        assert_eq!(effort_change(&session, &prefs, Provider::Anthropic, "claude-haiku-5-5", false, true), None);
+    }
+
+    #[test]
+    fn a_rejected_effort_change_is_removed_from_the_unanswered_turn_only() {
+        let mut session = Session::default();
+        let control = |e| Message { role: Role::Control, parts: vec![Part::Effort(e)], native: None };
+        session.messages = vec![
+            control(Effort::Low),
+            Message::user(vec![Part::Text("a".into())]),
+            Message { role: Role::Assistant, parts: vec![Part::Text("b".into())], native: None },
+            control(Effort::Medium),
+            Message::user(vec![Part::Text("c".into())]),
+        ];
+        assert!(rejected_effort_change("role 'system' is not supported on this model"));
+        assert!(!rejected_effort_change("The API key was rejected"));
+        assert!(drop_effort_changes(&mut session));
+        assert_eq!(session.messages.len(), 4, "the answered turn keeps its history");
+        assert_eq!(session.messages[0].role, Role::Control);
+        assert!(session.message_effort_failed && session.effort_override.is_none());
     }
 
     #[test]
