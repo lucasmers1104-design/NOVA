@@ -1,3 +1,4 @@
+import { listen } from "@tauri-apps/api/event";
 import { create } from "zustand";
 import { notifyError } from "@/features/notifications/store";
 import { callNative, isDesktop } from "@/lib/native";
@@ -132,6 +133,18 @@ export const useProductivity = create<ProductivityState>()((set, get) => {
     deleteNote: (id) => destroy("notes", "note", id),
   };
 });
+
+// NOVA AI writes tasks and notes on the Rust side: show them without a flash of the loading state.
+if (isDesktop()) {
+  void listen("productivity://changed", async () => {
+    try {
+      const data = await callNative<ProductivityData>("productivity_load");
+      useProductivity.setState({ ...data, status: "ready", error: null });
+    } catch {
+      // Keeps what's on screen; the next load reports the problem.
+    }
+  });
+}
 
 export function newTask(partial: Partial<Task> & Pick<Task, "title">): Task {
   return {

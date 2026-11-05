@@ -12,10 +12,28 @@ pub enum Intent {
     /// "open Spotify" — an app, or else a file by that name.
     Open(String),
     LookAtScreen,
+    /// "lauter" — an action of the media_control tool.
+    Media(&'static str),
+    /// "spiele Entspannungsmusik".
+    Spotify(String),
+    /// "suche im Internet nach Kinoprogramm".
+    WebSearch(String),
+    /// "neue Aufgabe Müll rausbringen".
+    AddTask(String),
     Greeting,
     Help,
     Unknown,
 }
+
+/// Whole requests about what's playing.
+const MEDIA: &[(&str, &str)] = &[
+    ("pause", "pause"), ("pausiere", "pause"), ("musik aus", "pause"), ("musik stoppen", "pause"), ("stopp die musik", "pause"), ("stop the music", "pause"),
+    ("play", "play"), ("weiterspielen", "play"), ("spiel weiter", "play"), ("spiele weiter", "play"), ("musik an", "play"), ("resume", "play"),
+    ("nächster titel", "next"), ("nächstes lied", "next"), ("nächster song", "next"), ("überspringen", "next"), ("next song", "next"), ("next track", "next"), ("skip", "next"),
+    ("vorheriger titel", "previous"), ("voriges lied", "previous"), ("previous song", "previous"), ("previous track", "previous"),
+    ("lauter", "volume_up"), ("louder", "volume_up"), ("leiser", "volume_down"), ("quieter", "volume_down"),
+    ("stumm", "mute"), ("mute", "mute"), ("ton aus", "mute"), ("ton an", "unmute"), ("unmute", "unmute"),
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Lang {
@@ -82,6 +100,43 @@ pub fn parse(text: &str) -> Intent {
     }
     if ["screen", "bildschirm", "screenshot"].iter().any(|k| lower.contains(k)) && ["look", "schau", "see", "sieh", "analy", "take", "mach"].iter().any(|k| lower.contains(k)) {
         return Intent::LookAtScreen;
+    }
+    let polite = lower.strip_prefix("bitte ").unwrap_or(&lower);
+    if let Some((_, action)) = MEDIA.iter().find(|(phrase, _)| *phrase == polite) {
+        return Intent::Media(*action);
+    }
+    // Only at the start: "das spiel" further along is about something else.
+    let original = cleaned.get(lower.len() - polite.len()..).unwrap_or(&cleaned);
+    for verb in ["spiele ", "spiel ", "play "] {
+        if polite.starts_with(verb) {
+            if let Some(mut query) = find_after(original, verb) {
+                for tail in [" ab", " auf spotify", " on spotify"] {
+                    if query.to_lowercase().ends_with(tail) {
+                        query.truncate(query.len() - tail.len());
+                    }
+                }
+                return Intent::Spotify(query);
+            }
+        }
+    }
+    for verb in ["google ", "googel "] {
+        if polite.starts_with(verb) {
+            if let Some(query) = original.get(verb.len()..).map(str::trim).filter(|q| !q.is_empty()) {
+                return Intent::WebSearch(query.to_string());
+            }
+        }
+    }
+    const WEB: &[&str] = &["suche im internet nach ", "such im internet nach ", "suche im web nach ", "suche online nach ", "search the web for ", "search the internet for ", "search online for "];
+    for verb in WEB {
+        if let Some(rest) = find_after(&cleaned, verb) {
+            return Intent::WebSearch(rest);
+        }
+    }
+    const NEW_TASK: &[&str] = &["neue aufgabe: ", "neue aufgabe ", "aufgabe hinzufügen: ", "aufgabe hinzufügen ", "new task: ", "new task ", "add a task: ", "add a task ", "add task: ", "add task "];
+    for verb in NEW_TASK {
+        if let Some(rest) = find_after(&cleaned, verb) {
+            return Intent::AddTask(rest);
+        }
     }
     let refers_to_result = words.iter().any(|w| ["one", "result", "file", "eine", "ergebnis", "datei", "das", "die", "den"].contains(w)) || words.len() <= 3;
     if let Some(n) = ordinal(&words).filter(|_| refers_to_result) {
@@ -156,6 +211,23 @@ mod tests {
         assert_eq!(parse("öffne nummer 4"), Intent::OpenResult(4));
         assert_eq!(parse("zeig mir den Ordner der ersten Datei"), Intent::RevealResult(1));
         assert_eq!(parse("die letzte"), Intent::OpenResult(usize::MAX));
+    }
+
+    #[test]
+    fn recognizes_music_web_and_tasks() {
+        assert_eq!(parse("Lauter"), Intent::Media("volume_up"));
+        assert_eq!(parse("Hey NOVA, nächster Titel"), Intent::Media("next"));
+        assert_eq!(parse("bitte pause!"), Intent::Media("pause"));
+        assert_eq!(parse("Spiele Entspannungsmusik"), Intent::Spotify("Entspannungsmusik".into()));
+        assert_eq!(parse("Nova, spiel bitte Daft Punk auf Spotify ab"), Intent::Spotify("Daft Punk".into()));
+        assert_eq!(parse("play Daft Punk on Spotify"), Intent::Spotify("Daft Punk".into()));
+        assert_eq!(parse("Suche im Internet nach Kino Köln"), Intent::WebSearch("Kino Köln".into()));
+        assert_eq!(parse("google Wetter Köln"), Intent::WebSearch("Wetter Köln".into()));
+        assert_eq!(parse("Neue Aufgabe: Müll rausbringen"), Intent::AddTask("Müll rausbringen".into()));
+        assert_eq!(parse("add task call Sam"), Intent::AddTask("call Sam".into()));
+        // Not taken for music or the web.
+        assert_eq!(parse("Wo ist das Spiel Hogwarts"), Intent::Search("das Spiel Hogwarts".into()));
+        assert_eq!(parse("Öffne Google Chrome"), Intent::Open("Google Chrome".into()));
     }
 
     #[test]

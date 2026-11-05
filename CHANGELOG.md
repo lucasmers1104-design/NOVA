@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **NOVA AI runs your Productivity page**: it lists your tasks and, after your OK, adds tasks (with due date, time, priority, project and reminder), notes and projects, and marks tasks done. The page updates right away.
+- **NOVA AI knows the internet**: it searches the web with Claude and names its source (about 1 cent per search, included in the cost estimate), reads public web pages (never addresses in your own network), opens a search in your browser and finds websites for you ("find me KFC's website").
+- **NOVA AI controls your music**: play, pause, next, previous, volume and what's playing, for any player. It opens searches in Spotify; pressing play stays with you for now.
+- **File paths you can use**: wherever NOVA AI touches a file or folder you can open it, show it in Explorer, copy its path or copy its name, and full paths in a reply become clickable.
+- Without an AI provider, NOVA understands "lauter", "nächster Titel", "spiele …", "suche im Internet nach …", "google …" and "neue Aufgabe …".
+- **Clock styles**: digital, minimal, analog, flip and word clock ("Es ist halb zehn") for Welcome and World clock, a new Analog clock widget, and an optional clock in the title bar (Settings → Dashboard).
+
+### Changed
+- Calmer page titles, widget headers and sidebar; the Welcome card makes room for its clock on narrow layouts.
+
+### Fixed
+- Links in NOVA AI's replies now open from the panel.
+- An allowed action could keep spinning after it had finished.
+
 ## 1.5.0 — 2026-11-05
 
 ### Added

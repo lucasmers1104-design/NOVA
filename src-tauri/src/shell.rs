@@ -69,6 +69,37 @@ pub fn open_url(_url: &str) -> Result<(), String> {
     Err("Opening links requires Windows".into())
 }
 
+/// Percent-encodes a search so it stays one harmless part of a link.
+pub fn encode_query(query: &str) -> String {
+    url::form_urlencoded::byte_serialize(query.as_bytes()).collect::<String>().replace('+', "%20")
+}
+
+/// Opens Spotify's search in the app, or on the web when the app isn't installed.
+/// Returns whether the app took it.
+#[cfg(windows)]
+pub fn open_spotify_search(query: &str) -> Result<bool, String> {
+    use windows::core::{w, HSTRING, PCWSTR};
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    let encoded = encode_query(query);
+    let link = format!("spotify:search:{encoded}");
+    let opened = with_com(true, || {
+        // SAFETY: valid NUL-terminated wide strings for the duration of the call.
+        let result = unsafe { ShellExecuteW(None, w!("open"), &HSTRING::from(link.as_str()), PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL) };
+        Ok(result.0 as isize > 32)
+    })?;
+    if !opened {
+        open_url(&format!("https://open.spotify.com/search/{encoded}"))?;
+    }
+    Ok(opened)
+}
+
+#[cfg(not(windows))]
+pub fn open_spotify_search(_query: &str) -> Result<bool, String> {
+    Err("Opening Spotify requires Windows".into())
+}
+
 /// Opens Explorer with the item selected.
 #[cfg(windows)]
 pub fn reveal_path(path: &Path) -> Result<(), String> {

@@ -35,6 +35,29 @@ pub struct VolumeState {
     muted: bool,
 }
 
+impl MediaState {
+    pub(crate) fn is_playing(&self) -> bool {
+        self.status == "playing"
+    }
+
+    /// "Song by Artist (Spotify, playing)", for NOVA AI.
+    pub(crate) fn describe(&self) -> String {
+        let source = if self.source_app_id.to_lowercase().contains("spotify") { "Spotify" } else { self.source_app_id.as_str() };
+        let by = if self.artist.is_empty() { String::new() } else { format!(" by {}", self.artist) };
+        format!("{}{by} ({source}, {})", self.title, self.status)
+    }
+}
+
+impl VolumeState {
+    pub(crate) fn level(&self) -> f32 {
+        self.level
+    }
+
+    pub(crate) fn describe(&self) -> String {
+        format!("Volume {} %{}", (self.level * 100.0).round(), if self.muted { ", muted" } else { "" })
+    }
+}
+
 fn unix_millis() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -59,7 +82,7 @@ pub fn extrapolate_position(position_ms: u64, updated_ms: Option<u64>, now_ms: u
 }
 
 #[cfg(windows)]
-mod platform {
+pub(crate) mod platform {
     use super::*;
     use crate::shell::with_com;
     use windows::Media::Control::{
@@ -216,7 +239,7 @@ mod platform {
 }
 
 #[cfg(not(windows))]
-mod platform {
+pub(crate) mod platform {
     use super::*;
     const UNSUPPORTED: &str = "Media controls require Windows";
     pub fn state() -> CommandResult<Option<MediaState>> {

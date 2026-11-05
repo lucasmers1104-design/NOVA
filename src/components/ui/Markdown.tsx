@@ -1,5 +1,5 @@
 import { Check, Copy } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { createContext, type ReactNode, useContext, useState } from "react";
 import { callNative, isDesktop } from "@/lib/native";
 
 /**
@@ -76,6 +76,16 @@ export function parseBlocks(source: string): Block[] {
 // Underscores only mark emphasis at word edges, so names like LEGO_Plan_v2.xlsx stay intact.
 const INLINE = /(`[^`]+`)|(\*\*[^*]+\*\*|(?<!\w)__[^_]+__(?!\w))|(~~[^~]+~~)|(\*[^*\s][^*]*\*|(?<!\w)_[^_\s][^_]*_(?!\w))|(\[[^\]]+\]\([^)\s]+\))/g;
 
+/** Lets a surface turn inline code it recognizes into something richer; null keeps the code. */
+export const InlineCodeRenderer = createContext<((code: string) => ReactNode | null) | null>(null);
+
+function InlineCode({ code }: { code: string }) {
+  const render = useContext(InlineCodeRenderer);
+  return (
+    render?.(code) ?? <code className="rounded-[5px] bg-white/[0.08] px-1.5 py-0.5 font-mono text-[0.88em] text-fg">{code}</code>
+  );
+}
+
 export function renderInline(text: string, keyPrefix = "i"): ReactNode[] {
   const nodes: ReactNode[] = [];
   let last = 0;
@@ -86,11 +96,7 @@ export function renderInline(text: string, keyPrefix = "i"): ReactNode[] {
     const token = match[0];
     const key = `${keyPrefix}-${index++}`;
     if (match[1]) {
-      nodes.push(
-        <code key={key} className="rounded-[5px] bg-white/[0.08] px-1.5 py-0.5 font-mono text-[0.88em] text-fg">
-          {token.slice(1, -1)}
-        </code>,
-      );
+      nodes.push(<InlineCode key={key} code={token.slice(1, -1)} />);
     } else if (match[2]) {
       nodes.push(<strong key={key} className="font-semibold text-fg">{renderInline(token.slice(2, -2), key)}</strong>);
     } else if (match[3]) {

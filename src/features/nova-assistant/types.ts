@@ -107,7 +107,9 @@ export type ToolCard =
   | { kind: "document"; document: SavedDocument }
   | { kind: "screenshot"; label: string; dataUrl: string }
   | { kind: "app"; name: string }
-  | { kind: "path"; path: string };
+  | { kind: "path"; path: string }
+  | { kind: "link"; url: string; title: string }
+  | { kind: "productivity"; label: string; detail: string };
 
 /** Mirrors `AgentEvent` in src-tauri/src/agent/mod.rs. */
 export type AgentEvent =

@@ -1,0 +1,15 @@
+{
+  "replies": [
+    { "ttftMs": 300, "text": "Mache ich.", "tool": { "name": "add_task", "input": { "title": "NOVA-TEST Müll rausbringen", "due_date": "2026-11-06", "due_time": "18:30", "priority": "high", "remind": false } } },
+    { "ttftMs": 300, "text": "Die Aufgabe steht auf deiner Liste." },
+    { "ttftMs": 300, "tool": { "name": "list_tasks", "input": { "filter": "open" } } },
+    { "ttftMs": 300, "tool": { "name": "complete_task", "input": { "task": "NOVA-TEST" } } },
+    { "ttftMs": 300, "text": "Erledigt." },
+    { "ttftMs": 300, "tool": { "name": "now_playing", "input": {} } },
+    { "ttftMs": 300, "tool": { "name": "media_control", "input": { "action": "volume_up" } } },
+    { "ttftMs": 300, "tool": { "name": "media_control", "input": { "action": "volume_down" } } },
+    { "ttftMs": 300, "tool": { "name": "read_webpage", "input": { "url": "https://example.com/" } } },
+    { "ttftMs": 300, "tool": { "name": "read_webpage", "input": { "url": "http://127.0.0.1:1420/" } } },
+    { "ttftMs": 300, "text": "Die Datei liegt hier: `C:\\Users\\Luca Warmers\\Documents\\NOVA\\README.md` und läuft mit `npm run dev`." }
+  ]
+}

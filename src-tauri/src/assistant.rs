@@ -1370,6 +1370,11 @@ pub fn assistant_dot_menu<R: Runtime>(app: AppHandle<R>, window: WebviewWindow<R
 
 #[tauri::command]
 pub async fn assistant_open_main<R: Runtime>(app: AppHandle<R>, section: Option<String>) -> CommandResult<()> {
+    if section.as_deref() == Some("productivity") {
+        open_main(&app, None);
+        let _ = app.emit_to("main", EVENT_NAVIGATE, NavigateEvent { route: "productivity", section: "" });
+        return Ok(());
+    }
     let section = match section.as_deref() {
         None => None,
         Some("assistant") => Some("assistant"),

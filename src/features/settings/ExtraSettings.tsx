@@ -351,5 +351,6 @@ export function useExternalConnections(): string[] {
     list.push(`Updates: ${host} — ${autoUpdate ? "at every start" : "only when you check"}`);
   }
   list.push("Voices and offline speech recognition: huggingface.co, api.nuget.org, github.com — only for downloads you start (each file checked against a fixed hash)");
+  list.push("Web pages: any public site — only when NOVA AI reads a page for your request (it can search the web through Anthropic too, and never reaches your own network)");
   return list;
 }

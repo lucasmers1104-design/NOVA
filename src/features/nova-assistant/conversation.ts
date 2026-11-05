@@ -222,10 +222,11 @@ export const useConversation = create<ConversationState>()((set, get) => ({
   },
 
   confirm: async (toolId, approved) => {
-    await answerConfirmation(toolId, approved);
+    // Before answering: a quick tool finishes first otherwise, and "running" would overwrite "done".
     set((s) => ({
       items: s.items.map((i) => (i.kind === "assistant" ? { ...i, segments: updateTool(i.segments, toolId, (t) => (approved ? { ...t, state: "running" } : t)) } : i)),
     }));
+    await answerConfirmation(toolId, approved);
   },
 
   reset: async () => {

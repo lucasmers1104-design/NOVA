@@ -17,6 +17,7 @@
     "allow-assistant-panel-ready",
     "allow-assistant-dot-menu",
     "allow-assistant-open-main",
+    "allow-open-url",
     "allow-assistant-appearance",
     "allow-assistant-send",
     "allow-assistant-prewarm",

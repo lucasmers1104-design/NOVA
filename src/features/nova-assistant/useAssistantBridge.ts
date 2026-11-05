@@ -15,6 +15,7 @@ export function useAssistantBridge(): void {
   const motion = useSettings((s) => s.motion);
   const displayName = useSettings((s) => s.displayName);
   const openSettings = useUi((s) => s.openSettings);
+  const navigate = useUi((s) => s.navigate);
 
   useEffect(() => {
     if (!isDesktop()) return;
@@ -25,7 +26,8 @@ export function useAssistantBridge(): void {
     if (!isDesktop()) return;
     const unlisten = listen<{ route?: unknown; section?: unknown }>(ASSISTANT_EVENTS.navigate, ({ payload }) => {
       if (payload.route === "settings" && typeof payload.section === "string") openSettings(payload.section);
+      if (payload.route === "productivity") navigate("productivity");
     });
     return () => void unlisten.then((stop) => stop());
-  }, [openSettings]);
+  }, [openSettings, navigate]);
 }

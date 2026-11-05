@@ -1,9 +1,9 @@
 import { ArrowDown, Check, Copy, RotateCcw, TriangleAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { Markdown } from "@/components/ui/Markdown";
+import { InlineCodeRenderer, Markdown } from "@/components/ui/Markdown";
 import { cn } from "@/lib/cn";
 import { type AssistantItem, type Item, replyText, type UsageInfo } from "../conversation";
-import { NovaToolCard } from "./NovaToolCard";
+import { NovaToolCard, renderPathCode } from "./NovaToolCard";
 
 function formatTokens(n: number): string {
   return n >= 10_000 ? `${Math.round(n / 1000)}k` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
@@ -53,7 +53,9 @@ function AssistantMessage({ item, onConfirm, onRetry, last }: { item: AssistantI
       {item.segments.map((segment, index) =>
         segment.type === "text" ? (
           <div key={index} className="select-text">
-            <Markdown source={segment.text} className="nova-markdown" />
+            <InlineCodeRenderer.Provider value={renderPathCode}>
+              <Markdown source={segment.text} className="nova-markdown" />
+            </InlineCodeRenderer.Provider>
           </div>
         ) : (
           <NovaToolCard key={segment.tool.id} tool={segment.tool} onConfirm={(approved) => onConfirm(segment.tool.id, approved)} />

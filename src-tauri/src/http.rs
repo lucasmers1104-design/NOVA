@@ -1,7 +1,7 @@
 //! The single outbound HTTP client. Every network connection NOVA makes goes
 //! through here, and only for features the user explicitly configured
 //! (AI providers with a key, weather with a location, news feeds they added,
-//! NOVA's voice when spoken replies use it).
+//! NOVA's voice when spoken replies use it, web pages NOVA AI is asked to read).
 
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -12,6 +12,19 @@ pub fn client() -> &'static reqwest::Client {
         reqwest::Client::builder()
             .user_agent(concat!("NOVA/", env!("CARGO_PKG_VERSION"), " (desktop command center)"))
             .connect_timeout(Duration::from_secs(10))
+            .build()
+            .expect("HTTP client configuration is static and valid")
+    })
+}
+
+/// For web pages NOVA AI reads: follows no redirects by itself, so each hop can be checked first.
+pub fn no_redirect_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .user_agent(concat!("NOVA/", env!("CARGO_PKG_VERSION"), " (desktop command center)"))
+            .connect_timeout(Duration::from_secs(10))
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .expect("HTTP client configuration is static and valid")
     })

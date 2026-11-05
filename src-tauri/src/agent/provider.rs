@@ -84,6 +84,14 @@ fn anthropic_supports_effort(model: &str) -> bool {
         .any(|p| model.starts_with(p))
 }
 
+/// The models that can search the web on Anthropic's side.
+fn anthropic_supports_web_search(model: &str) -> bool {
+    anthropic_supports_effort(model) || model.starts_with("claude-haiku-4-5")
+}
+
+/// Searches per request; each one costs extra (see `WEB_SEARCH_MICROS`).
+const MAX_WEB_SEARCHES: u32 = 3;
+
 /// Models that accept server-side refusal fallbacks (`fallbacks: "default"`).
 fn anthropic_supports_fallbacks(model: &str) -> bool {
     ["claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"].contains(&model)
@@ -187,6 +195,7 @@ fn anthropic_body(request: &Request<'_>) -> Value {
             .tools
             .iter()
             .map(|t| json!({ "name": t.name, "description": t.description, "input_schema": t.schema, "eager_input_streaming": true }))
+            .chain(anthropic_supports_web_search(request.model).then(|| json!({ "type": "web_search_20250305", "name": "web_search", "max_uses": MAX_WEB_SEARCHES })))
             .collect();
     }
     if anthropic_supports_effort(request.model) {
@@ -225,7 +234,7 @@ pub fn build_prewarm(request: &Request<'_>) -> Option<reqwest::RequestBuilder> {
     if let Some(messages) = body["messages"].as_array_mut() {
         if let Some(blocks) = messages.last_mut().and_then(|m| m["content"].as_array_mut()) {
             // Thinking blocks can't carry a breakpoint; the newest other block can.
-            if let Some(block) = blocks.iter_mut().rev().find(|b| !matches!(b["type"].as_str(), Some("thinking" | "redacted_thinking"))) {
+            if let Some(block) = blocks.iter_mut().rev().find(|b| !matches!(b["type"].as_str(), Some("thinking" | "redacted_thinking" | "server_tool_use" | "web_search_tool_result"))) {
                 block["cache_control"] = ephemeral();
             }
         }
@@ -242,6 +251,7 @@ pub fn anthropic_usage(body: &Value) -> Usage {
         output: usage["output_tokens"].as_u64().unwrap_or(0),
         cache_read: usage["cache_read_input_tokens"].as_u64().unwrap_or(0),
         cache_write: usage["cache_creation_input_tokens"].as_u64().unwrap_or(0),
+        web_searches: 0,
     }
 }
 
@@ -415,6 +425,8 @@ pub struct Usage {
     pub cache_read: u64,
     /// Prompt tokens written to the cache (a little dearer).
     pub cache_write: u64,
+    /// Web searches the provider ran for this reply.
+    pub web_searches: u64,
 }
 
 impl Usage {
@@ -476,6 +488,7 @@ pub struct Accumulator {
     blocks: Vec<Value>,
     partial_json: BTreeMap<usize, String>,
     invalid_inputs: BTreeMap<usize, String>,
+    web_search_started: bool,
     // OpenAI: index → (id, name, arguments)
     openai_calls: BTreeMap<u64, (String, String, String)>,
     // Gemini
@@ -494,10 +507,16 @@ impl Accumulator {
             blocks: Vec::new(),
             partial_json: BTreeMap::new(),
             invalid_inputs: BTreeMap::new(),
+            web_search_started: false,
             openai_calls: BTreeMap::new(),
             gemini_parts: Vec::new(),
             gemini_calls: Vec::new(),
         }
+    }
+
+    /// True once after the provider began a web search, so the panel can say so.
+    pub fn take_web_search_started(&mut self) -> bool {
+        std::mem::take(&mut self.web_search_started)
     }
 
     /// Handles one event; returns text to show, or the provider's error.
@@ -536,8 +555,12 @@ impl Accumulator {
                     self.blocks.resize(index + 1, Value::Null);
                 }
                 self.blocks[index] = value["content_block"].clone();
-                if self.blocks[index]["type"] == "tool_use" {
+                // The input of a server tool goes back in the conversation like any other.
+                if matches!(self.blocks[index]["type"].as_str(), Some("tool_use" | "server_tool_use")) {
                     self.partial_json.insert(index, String::new());
+                }
+                if self.blocks[index]["type"] == "server_tool_use" {
+                    self.web_search_started = true;
                 }
                 None
             }
@@ -557,6 +580,10 @@ impl Accumulator {
                         block["thinking"] = Value::String(joined);
                     }
                     "signature_delta" => block["signature"] = delta["signature"].clone(),
+                    "citations_delta" => match block["citations"].as_array_mut() {
+                        Some(citations) => citations.push(delta["citation"].clone()),
+                        None => block["citations"] = json!([delta["citation"]]),
+                    },
                     "input_json_delta" => {
                         if let Some(partial) = self.partial_json.get_mut(&index) {
                             partial.push_str(delta["partial_json"].as_str().unwrap_or(""));
@@ -593,6 +620,9 @@ impl Accumulator {
                 }
                 if let Some(write) = value["usage"]["cache_creation_input_tokens"].as_u64() {
                     self.usage.cache_write = self.usage.cache_write.max(write);
+                }
+                if let Some(searches) = value["usage"]["server_tool_use"]["web_search_requests"].as_u64() {
+                    self.usage.web_searches = self.usage.web_searches.max(searches);
                 }
                 if let Some(reason) = value["delta"]["stop_reason"].as_str() {
                     self.stop = Some(match reason {
@@ -712,7 +742,15 @@ impl Accumulator {
                         },
                     })
                     .collect();
-                let blocks: Vec<Value> = self.blocks.into_iter().filter(|b| !b.is_null()).collect();
+                let mut blocks: Vec<Value> = self.blocks.into_iter().filter(|b| !b.is_null()).collect();
+                // Text blocks start with `citations: null`, which the API doesn't take back.
+                for block in &mut blocks {
+                    if block["citations"].is_null() {
+                        if let Some(fields) = block.as_object_mut() {
+                            fields.remove("citations");
+                        }
+                    }
+                }
                 (calls, Some((Provider::Anthropic, Value::Array(blocks))))
             }
             Provider::Openai => {
@@ -766,6 +804,8 @@ const ANTHROPIC_PRICES: &[(&str, f64, f64, f64)] = &[
 ];
 /// Writing a prompt to the cache (5-minute lifetime) costs this much more than reading it fresh.
 const CACHE_WRITE_FACTOR: f64 = 1.25;
+/// One web search on Anthropic's side: $10 per 1,000, on top of the tokens.
+const WEB_SEARCH_MICROS: f64 = 10_000.0;
 
 /// Estimated cost in millionths of a US dollar, when NOVA knows the model's price.
 pub fn estimate_cost_micros(provider: Provider, model: &str, usage: Usage) -> Option<i64> {
@@ -781,7 +821,7 @@ pub fn estimate_cost_micros(provider: Provider, model: &str, usage: Usage) -> Op
         (input, output, read) = (0.50, 2.50, 0.05);
     }
     // $ per million tokens = micro-dollars per token.
-    let cost = usage.input as f64 * input + usage.cache_write as f64 * input * CACHE_WRITE_FACTOR + usage.cache_read as f64 * read + usage.output as f64 * output;
+    let cost = usage.input as f64 * input + usage.cache_write as f64 * input * CACHE_WRITE_FACTOR + usage.cache_read as f64 * read + usage.output as f64 * output + usage.web_searches as f64 * WEB_SEARCH_MICROS;
     Some(cost.round() as i64)
 }
 
@@ -826,7 +866,7 @@ mod tests {
         assert_eq!(shown, ["Ich suche ", "danach."]);
         assert_eq!(turn.text, "Ich suche danach.");
         assert_eq!(turn.stop, Stop::ToolUse);
-        assert_eq!(turn.usage, Usage { input: 120, output: 42, cache_read: 30, cache_write: 0 });
+        assert_eq!(turn.usage, Usage { input: 120, output: 42, cache_read: 30, ..Usage::default() });
         assert_eq!(turn.usage.prompt(), 150);
         assert_eq!(turn.calls, vec![ToolCall { id: "toolu_1".into(), name: "search_files".into(), input: Ok(json!({ "text": "lego" })) }]);
         let native = &turn.native.as_ref().unwrap().1;
@@ -1006,6 +1046,48 @@ mod tests {
     }
 
     #[test]
+    fn keeps_web_searches_for_the_next_request() {
+        let mut acc = Accumulator::new(Provider::Anthropic);
+        for data in [
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srv_1","name":"web_search","input":{}}}"#,
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"query\":\"KFC\"}"}}"#,
+            r#"{"type":"content_block_stop","index":0}"#,
+            r#"{"type":"content_block_start","index":1,"content_block":{"type":"web_search_tool_result","tool_use_id":"srv_1","content":[{"type":"web_search_result","url":"https://kfc.de","title":"KFC","encrypted_content":"abc"}]}}"#,
+            r#"{"type":"content_block_stop","index":1}"#,
+            r#"{"type":"content_block_start","index":2,"content_block":{"type":"text","text":"","citations":null}}"#,
+            r#"{"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Plain"}}"#,
+            r#"{"type":"content_block_stop","index":2}"#,
+            r#"{"type":"content_block_start","index":3,"content_block":{"type":"text","text":"","citations":null}}"#,
+            r#"{"type":"content_block_delta","index":3,"delta":{"type":"citations_delta","citation":{"type":"web_search_result_location","url":"https://kfc.de"}}}"#,
+            r#"{"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" cited"}}"#,
+            r#"{"type":"content_block_stop","index":3}"#,
+            r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":9,"server_tool_use":{"web_search_requests":1}}}"#,
+        ] {
+            acc.push(&SseEvent { event: None, data: data.into() }).unwrap();
+        }
+        assert!(acc.take_web_search_started());
+        assert!(!acc.take_web_search_started());
+        let turn = acc.finish();
+        assert_eq!(turn.text, "Plain cited");
+        assert!(turn.calls.is_empty(), "the provider ran the search, not NOVA");
+        assert_eq!(turn.stop, Stop::EndTurn);
+        assert_eq!(turn.usage.web_searches, 1);
+        let (_, native) = turn.native.unwrap();
+        assert_eq!(native[0]["input"]["query"], "KFC");
+        assert_eq!(native[1]["content"][0]["encrypted_content"], "abc");
+        assert!(native[2].get("citations").is_none());
+        assert_eq!(native[3]["citations"][0]["url"], "https://kfc.de");
+    }
+
+    #[test]
+    fn offers_web_search_only_on_anthropic_models_that_have_it() {
+        let tools = [ToolSpec { name: "t", description: "d", schema: json!({ "type": "object" }) }];
+        let body = |model: &str| anthropic_body(&Request { provider: Provider::Anthropic, key: "k", model, system: "s", messages: &[], tools: &tools, effort: Effort::Medium });
+        assert_eq!(body("claude-haiku-5-5")["tools"][1]["type"], "web_search_20250305");
+        assert!(body("claude-3-haiku")["tools"].as_array().unwrap().len() == 1);
+    }
+
+    #[test]
     fn estimates_costs_only_for_known_prices() {
         let usage = Usage { input: 1_000_000, output: 100_000, ..Usage::default() };
         assert_eq!(estimate_cost_micros(Provider::Anthropic, "claude-opus-5-5", usage), Some(6_000_000));
@@ -1013,7 +1095,8 @@ mod tests {
         assert_eq!(estimate_cost_micros(Provider::Anthropic, "claude-haiku-4-5-20251001", usage), Some(1_500_000));
         assert_eq!(estimate_cost_micros(Provider::Anthropic, "claude-haiku-5-5", Usage { input: 200_000, ..Usage::default() }), Some(100_000));
         // Cached prompt tokens: reads at a tenth, writes at 1.25x.
-        let cached = Usage { input: 100, output: 50, cache_read: 10_000, cache_write: 2_000 };
+        assert_eq!(estimate_cost_micros(Provider::Anthropic, "claude-haiku-5-5", Usage { web_searches: 2, ..Usage::default() }), Some(20_000));
+        let cached = Usage { input: 100, output: 50, cache_read: 10_000, cache_write: 2_000, ..Usage::default() };
         assert_eq!(estimate_cost_micros(Provider::Anthropic, "claude-haiku-5-5", cached), Some((100.0 * 0.1 + 2_000.0 * 0.125 + 10_000.0 * 0.01 + 50.0 * 0.5_f64).round() as i64));
         assert_eq!(estimate_cost_micros(Provider::Anthropic, "claude-unknown", usage), None);
         assert_eq!(estimate_cost_micros(Provider::Openai, "gpt-x", usage), None);
