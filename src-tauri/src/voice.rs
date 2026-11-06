@@ -37,8 +37,9 @@ pub enum VoiceEvent {
     Processing,
     Result { text: String },
     /// No words came back. `heard`: sound or speech was heard. `switching`:
-    /// Windows keeps hearing speech without words, so NOVA gets its offline recognizer.
-    NoSpeech { heard: bool, switching: bool },
+    /// Windows hears speech without words, so NOVA moves to its offline recognizer.
+    /// `microphone`: the device that was listening.
+    NoSpeech { heard: bool, switching: bool, microphone: Option<String> },
     /// `settings`: the Windows settings page that fixes it, if any.
     Error { message: String, settings: Option<&'static str> },
 }
@@ -102,6 +103,8 @@ pub(crate) struct TurnReport {
     final_wait_ms: Option<u128>,
     /// Windows couldn't listen, so the offline recognizer did.
     fell_back: bool,
+    /// The loudest the microphone got, 0–1: tells a quiet voice from a dead end.
+    peak: f32,
     ended: String,
     outcome: String,
 }
@@ -125,6 +128,7 @@ impl TurnReport {
             "decodeMs": self.decode_ms,
             "finalWaitMs": self.final_wait_ms,
             "fellBack": self.fell_back,
+            "peak": self.peak,
             "ended": self.ended,
             "outcome": self.outcome,
         })
@@ -133,7 +137,8 @@ impl TurnReport {
     fn render(&self, at: &str) -> String {
         let ms = |v: Option<u128>| v.map_or("never".to_string(), |v| format!("{v} ms"));
         format!(
-            "NOVA voice turn ({at})\nlanguage: {}\nprepared ahead: {}\nready after: {}\nsound heard after: {}\nspeech detected after: {}\nlive hypotheses: {}\nphrases: {}\nunsure phrases: {}\nwords last changed after: {}\nturn ended after: {} (pause {})\nsession ended: {}\noutcome: {}\n",
+            "NOVA voice turn ({at})\nmicrophone peak: {:.3}\nlanguage: {}\nprepared ahead: {}\nready after: {}\nsound heard after: {}\nspeech detected after: {}\nlive hypotheses: {}\nphrases: {}\nunsure phrases: {}\nwords last changed after: {}\nturn ended after: {} (pause {})\nsession ended: {}\noutcome: {}\n",
+            self.peak,
             self.language,
             self.prepared,
             ms(self.ready_ms),
@@ -480,6 +485,7 @@ mod win {
             if let Some(meter) = &meter {
                 // SAFETY: plain COM call returning a float.
                 let level = unsafe { meter.GetPeakValue() }.unwrap_or(0.0);
+                report.peak = report.peak.max(level);
                 send(VoiceEvent::Level { value: level.clamp(0.0, 1.0) });
             }
             let text = transcript(&phrases, &current);
@@ -539,7 +545,8 @@ mod win {
         if text.is_empty() {
             let heard = report.sound_ms.is_some() || heard_speech;
             report.outcome = format!("no words (sound heard: {heard})");
-            send(VoiceEvent::NoSpeech { heard, switching: no_words(heard_speech) });
+            // Silence says nothing about Windows' recognizer either way.
+            send(VoiceEvent::NoSpeech { heard, switching: heard_speech && no_words(true), microphone: crate::wake::mic::microphone_name() });
         } else {
             no_words(false);
             report.outcome = format!("{} words", text.split_whitespace().count());
@@ -677,6 +684,7 @@ fn listen_offline<R: Runtime>(app: &AppHandle<R>, state: &VoiceState, send: &dyn
     let turn = outcome.map_err(VoiceError::from)?;
     report.ready_ms = ready;
     report.speech_ms = turn.speech_ms;
+    report.peak = turn.peak;
     report.phrases = turn.phrases;
     report.stop_ms = turn.stop_ms;
     report.last_change_ms = turn.last_change_ms;
@@ -688,7 +696,7 @@ fn listen_offline<R: Runtime>(app: &AppHandle<R>, state: &VoiceState, send: &dyn
         report.outcome = "cancelled".into();
     } else if turn.text.is_empty() {
         report.outcome = format!("no words (speech heard: {})", turn.heard_speech);
-        send(VoiceEvent::NoSpeech { heard: turn.heard_speech, switching: false });
+        send(VoiceEvent::NoSpeech { heard: turn.heard_speech, switching: false, microphone: crate::wake::mic::microphone_name() });
     } else {
         report.outcome = format!("{} words", turn.text.split_whitespace().count());
         send(VoiceEvent::Result { text: turn.text });
@@ -782,6 +790,9 @@ mod tests {
     fn events_serialize_for_the_panel() {
         let json = serde_json::to_value(VoiceEvent::Hypothesis { text: "hallo".into() }).unwrap();
         assert_eq!(json, serde_json::json!({ "type": "hypothesis", "text": "hallo" }));
-        assert_eq!(serde_json::to_value(VoiceEvent::NoSpeech { heard: true, switching: false }).unwrap(), serde_json::json!({ "type": "noSpeech", "heard": true, "switching": false }));
+        assert_eq!(
+            serde_json::to_value(VoiceEvent::NoSpeech { heard: true, switching: false, microphone: Some("USB".into()) }).unwrap(),
+            serde_json::json!({ "type": "noSpeech", "heard": true, "switching": false, "microphone": "USB" })
+        );
     }
 }

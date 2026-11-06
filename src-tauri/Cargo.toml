@@ -1,6 +1,6 @@
 [package]
 name = "nova"
-version = "1.7.0"
+version = "1.7.1"
 description = "NOVA — Your Personal Command Center"
 authors = ["Luca Warmers"]
 edition = "2021"
@@ -48,6 +48,7 @@ windows = { version = "0.62", features = [
     "Media_SpeechRecognition",
     "Media_Control",
     "Storage_Streams",
+    "Win32_Devices_FunctionDiscovery",
     "Win32_Foundation",
     "Win32_Graphics_Direct3D",
     "Win32_Graphics_Direct3D12",
@@ -75,6 +76,7 @@ windows = { version = "0.62", features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
     "Win32_UI_Shell_Common",
+    "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_WindowsAndMessaging",
 ] }
 

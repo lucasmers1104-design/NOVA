@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.7.1 — 2026-11-06
+
+### Changed
+- **"Hey NOVA" with NOVA's own recognizer**: where the offline recognizer takes dictation, it now listens for "Hey NOVA" too, because Windows' recognizer stays silent on such PCs. It stays on the PC and uses about 900 MB of memory while "Hey NOVA" is on. "Nova" alone counts as well.
+- **"More forgiving" claps go by the pattern**: two sudden sounds with quiet around them, however they sound, so claps on a microphone that clips or booms count. Music in a headset no longer blocks them. The price: a double knock or loud music from loudspeakers can wake NOVA; "Strict" is as exact as before.
+
+### Fixed
+- **Voice: NOVA moves to its offline recognizer after the first turn in which Windows hears speech and returns no words.** In 1.7.0 this took two such turns in a row, and a turn without sound in between started the count over, so it often never happened.
+- When no words came back, the message now names the microphone that was listening, and `voice-last-turn.txt` says how loud it got.
+
 ## 1.7.0 — 2026-11-06
 
 **Install this version once by hand.** Updates are signed with a new key from 1.7.0 on, so older versions can't install it by themselves and report that the update failed. Run `releases/NOVA_1.7.0_x64-setup.exe` over your installation; your data stays, and updates are automatic again afterwards.

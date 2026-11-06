@@ -22,6 +22,8 @@ pub enum Event {
 pub struct Turn {
     pub text: String,
     pub heard_speech: bool,
+    /// The loudest the microphone got, 0–1.
+    pub peak: f32,
     pub speech_ms: Option<u128>,
     pub phrases: u32,
     /// How long each phrase took to transcribe.
@@ -44,7 +46,7 @@ const LONGEST_PHRASE: Duration = Duration::from_secs(15);
 
 /// Streams microphone audio down to 16 kHz for the VAD (a cheap low-pass and
 /// linear steps; the phrases themselves are resampled properly).
-struct Downsampler {
+pub struct Downsampler {
     ratio: f64,
     position: f64,
     previous: f32,
@@ -53,14 +55,14 @@ struct Downsampler {
 }
 
 impl Downsampler {
-    fn new(rate: u32) -> Self {
+    pub fn new(rate: u32) -> Self {
         let ratio = rate as f64 / 16_000.0;
         // One-pole low-pass near 7 kHz.
         let alpha = (1.0 - (-2.0 * std::f64::consts::PI * 7_000.0 / rate as f64).exp()) as f32;
         Self { ratio, position: 0.0, previous: 0.0, smoothed: 0.0, alpha }
     }
 
-    fn push(&mut self, input: &[f32], out: &mut Vec<f32>) {
+    pub fn push(&mut self, input: &[f32], out: &mut Vec<f32>) {
         for &sample in input {
             self.smoothed += self.alpha * (sample - self.smoothed);
             while self.position < 1.0 {
@@ -128,6 +130,7 @@ pub fn listen(recognizer: &mut Recognizer, stop: &AtomicBool, send: &mut dyn FnM
                 send(Event::Listening);
             }
             let peak = chunk.iter().fold(0f32, |m, s| m.max(s.abs()));
+            turn.peak = turn.peak.max(peak);
             send(Event::Level(peak.min(1.0)));
             // Pre-roll and the phrase in progress, at the microphone's rate.
             if phrase_started.is_some() {

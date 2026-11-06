@@ -34,11 +34,12 @@ pub fn ready<R: Runtime>(app: &AppHandle<R>) -> bool {
     super::recognizer_dir(app).is_some() && super::runtime_dir_for(app).is_some()
 }
 
-/// Turns in a row in which Windows heard speech but returned no words at all.
+/// Turns since the last understood one in which Windows heard speech but returned no words at all.
 const DEAF_TURNS_KEY: &str = "nova.assistant.windowsDeafTurns";
 /// This many, and Windows' dictation counts as not working on this PC (seen
-/// when its online service stays silent, with nothing reported as wrong).
-const DEAF_LIMIT: u32 = 2;
+/// when its online service stays silent, with nothing reported as wrong). Speech
+/// without one word never happens where dictation works, so once is enough.
+const DEAF_LIMIT: u32 = 1;
 
 fn deaf_turns<R: Runtime>(app: &AppHandle<R>) -> u32 {
     app.state::<Database>().with(|c| storage::kv_get(c, DEAF_TURNS_KEY)).ok().flatten().and_then(|v| v.parse().ok()).unwrap_or(0)
@@ -49,9 +50,9 @@ pub fn forget_deaf_turns<R: Runtime>(app: &AppHandle<R>) {
     let _ = app.state::<Database>().with(|c| storage::kv_set(c, DEAF_TURNS_KEY, "0"));
 }
 
-/// Records how a Windows turn went. Once it counts as not working, NOVA's
-/// offline recognizer takes over and is downloaded if needed. True while
-/// that download is what the user waits for.
+/// Records how a Windows turn went (`deaf`: speech but no words; otherwise it
+/// understood words). Once it counts as not working, NOVA's offline recognizer
+/// takes over and is downloaded if needed. True from then on.
 pub fn note_windows_turn<R: Runtime>(app: &AppHandle<R>, deaf: bool) -> bool {
     let turns = if deaf { deaf_turns(app).saturating_add(1) } else { 0 };
     let _ = app.state::<Database>().with(|c| storage::kv_set(c, DEAF_TURNS_KEY, &turns.to_string()));
@@ -127,9 +128,12 @@ pub fn give_back<R: Runtime>(app: &AppHandle<R>, mut recognizer: Recognizer) {
     super::ensure_unloader(app);
 }
 
+/// "Hey NOVA" has the recognizer; dictation gets it from there, no need to load another.
+pub static WITH_SPOTTER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Loads the recognizer in the background (NOVA woke up and will listen).
 pub fn warm<R: Runtime>(app: &AppHandle<R>) {
-    if !use_local(app) || lock(&state(app).stt).is_some() {
+    if !use_local(app) || lock(&state(app).stt).is_some() || WITH_SPOTTER.load(std::sync::atomic::Ordering::SeqCst) {
         return;
     }
     let app = app.clone();

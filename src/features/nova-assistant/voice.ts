@@ -15,7 +15,7 @@ export type VoiceEvent =
   | { type: "hypothesis"; text: string }
   | { type: "processing" }
   | { type: "result"; text: string }
-  | { type: "noSpeech"; heard: boolean; switching: boolean }
+  | { type: "noSpeech"; heard: boolean; switching: boolean; microphone: string | null }
   | { type: "error"; message: string; settings: "privacy-speech" | "privacy-microphone" | "speech" | null };
 
 /** Mirrors `VoiceInstall` in src-tauri/src/tts.rs: NOVA's own voice on this PC. */
@@ -54,12 +54,14 @@ const NO_WORDS = {
   de: {
     heard: "Ich habe dich gehört, aber keine Wörter verstanden. Sprich etwas näher am Mikrofon und versuch es noch mal.",
     silent: "Ich habe nichts gehört. Ist in Windows das richtige Mikrofon als Standard eingestellt?",
-    switching: "Die Windows-Spracherkennung hört dich, liefert aber keine Wörter. Ich lade jetzt meine eigene Offline-Erkennung (etwa 670 MB) und nutze sie, sobald sie fertig ist. Den Fortschritt siehst du unter Einstellungen → Local AI & performance.",
+    switching: "Die Windows-Spracherkennung hört dich, liefert aber keine Wörter. Ab jetzt nutze ich meine eigene Offline-Erkennung; falls sie noch fehlt, lade ich sie einmalig (etwa 670 MB, Fortschritt unter Einstellungen → Local AI & performance). Sag es danach bitte noch mal.",
+    listening: (microphone: string) => ` Gehört habe ich über: ${microphone}.`,
   },
   en: {
     heard: "I heard you but couldn't make out any words. Move a little closer to the microphone and try again.",
     silent: "I didn't hear anything. Is the right microphone set as the default in Windows?",
-    switching: "Windows speech recognition hears you but returns no words. I'm downloading my own offline recognizer (about 670 MB) and will use it once it's ready. You can follow the progress in Settings → Local AI & performance.",
+    switching: "Windows speech recognition hears you but returns no words. From now on I use my own offline recognizer; if it's missing I download it once (about 670 MB, progress in Settings → Local AI & performance). Please say it again after that.",
+    listening: (microphone: string) => ` I was listening through: ${microphone}.`,
   },
 } as const;
 
@@ -92,7 +94,11 @@ export async function listen(german = false, onTranscript?: (text: string) => vo
         useVoice.setState({ transcript: event.text });
         break;
       case "noSpeech":
-        useVoice.setState({ error: NO_WORDS[german ? "de" : "en"][event.switching ? "switching" : event.heard ? "heard" : "silent"] });
+        {
+          const words = NO_WORDS[german ? "de" : "en"];
+          const where = event.microphone && !event.switching ? words.listening(event.microphone) : "";
+          useVoice.setState({ error: words[event.switching ? "switching" : event.heard ? "heard" : "silent"] + where });
+        }
         break;
       case "error":
         useVoice.setState({ error: event.message, errorSettings: event.settings });

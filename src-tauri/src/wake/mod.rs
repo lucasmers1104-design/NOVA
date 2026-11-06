@@ -3,7 +3,8 @@
 //! Off until the user turns it on. While on, the microphone stays open; its
 //! audio is analysed in memory as it arrives and is never recorded, stored or
 //! sent. "Hey NOVA" is recognized offline by Windows from a fixed phrase list
-//! (see `word`), claps by NOVA's own detector (see `clap`).
+//! (see `word`), or by NOVA's own recognizer when that one takes dictation
+//! (see `spot`); claps by NOVA's own detector (see `clap`).
 //!
 //! Listening pauses while NOVA takes dictation or speaks, while the PC is
 //! locked and, if the user wants, while a fullscreen app or game runs.
@@ -11,6 +12,8 @@
 pub mod clap;
 #[cfg(windows)]
 pub(crate) mod mic;
+#[cfg(windows)]
+mod spot;
 #[cfg(windows)]
 mod word;
 
@@ -436,12 +439,29 @@ fn mic_problem(error: &mic::MicError) -> Listener {
     }
 }
 
+/// What listens for "Hey NOVA".
+#[cfg(windows)]
+enum PhraseSource {
+    Windows(word::PhraseListener),
+    Offline(spot::Spotter),
+}
+
+#[cfg(windows)]
+impl PhraseSource {
+    fn ended(&self) -> bool {
+        match self {
+            PhraseSource::Windows(listener) => listener.ended(),
+            PhraseSource::Offline(spotter) => spotter.ended(),
+        }
+    }
+}
+
 /// Keeps the listeners in line with the preferences and pauses until both are turned off.
 #[cfg(windows)]
 fn supervise<R: Runtime>(app: &AppHandle<R>) {
     let state = state(app);
-    // The listener, its language and when it started.
-    let mut phrase: Option<(word::PhraseListener, String, Instant)> = None;
+    // The listener, its language (or that it is the offline one) and when it started.
+    let mut phrase: Option<(PhraseSource, String, Instant)> = None;
     let mut phrase_retry = Instant::now();
     let mut phrase_failure: Option<Listener> = None;
     let mut claps: Option<ClapThread> = None;
@@ -486,7 +506,9 @@ fn supervise<R: Runtime>(app: &AppHandle<R>) {
         state.suppressed.store(pause.is_some(), Ordering::SeqCst);
 
         // "Hey NOVA": the recognizer is closed while paused.
-        let language = crate::agent::prefs(app).language;
+        // Where Windows' dictation returns nothing, its phrase spotting does too: same engine.
+        let offline = want_phrase && crate::speech::stt::use_local(app);
+        let language = if offline { "offline".to_string() } else { crate::agent::prefs(app).language };
         if let Some((listener, lang, started)) = &phrase {
             if listener.ended() {
                 // A session that ends again right away (no microphone, audio
@@ -525,9 +547,14 @@ fn supervise<R: Runtime>(app: &AppHandle<R>) {
                 Listener::Paused { reason: Pause::Dictation }
             } else {
                 publish(app);
-                let mut phrases = vec![WAKE_PHRASE];
-                phrases.extend_from_slice(DECOYS);
-                match word::PhraseListener::start(&language, &phrases, on_phrase(app)) {
+                let started = if offline {
+                    spot::Spotter::start(app, on_phrase(app)).map(PhraseSource::Offline)
+                } else {
+                    let mut phrases = vec![WAKE_PHRASE];
+                    phrases.extend_from_slice(DECOYS);
+                    word::PhraseListener::start(&language, &phrases, on_phrase(app)).map(PhraseSource::Windows)
+                };
+                match started {
                     Ok(listener) => {
                         phrase = Some((listener, language, Instant::now()));
                         phrase_failure = None;
@@ -679,7 +706,8 @@ fn listen_for_claps<R: Runtime>(app: &AppHandle<R>, stop: &AtomicBool) -> Result
                 clap::Event::NotAClap { level_db, reason, .. } => heard(app, Heard::NotAClap { level_db, reason }),
                 clap::Event::NotADouble { reason, .. } => heard(app, Heard::NotADouble { reason }),
                 clap::Event::Double { first_ms, second_ms } => {
-                    let veto = clap_veto(at(first_ms), at(second_ms), last_paused, &inputs, &loudness);
+                    // Forgiving: sound in a headset doesn't reach the microphone, so playing music mustn't block claps.
+                    let veto = clap_veto(at(first_ms), at(second_ms), last_paused, &inputs, &loudness).filter(|veto| sensitivity == Sensitivity::Strict || *veto != Veto::Speakers);
                     heard(app, Heard::Double { veto });
                     if veto.is_none() {
                         wake_up(app, Source::Clap);
@@ -799,6 +827,54 @@ pub async fn wake_set_speaking<R: Runtime>(app: AppHandle<R>, speaking: bool) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Prints what the wake listeners make of the real microphone for 150 seconds
+    /// (decisions and levels only, nothing is kept), by hand:
+    /// `cargo test --lib -- --ignored hears_live --nocapture`.
+    #[cfg(windows)]
+    #[test]
+    #[ignore]
+    fn hears_live() {
+        crate::shell::with_com(false, || {
+            let started = Instant::now();
+            let stop = std::sync::Arc::new(AtomicBool::new(false));
+            // NOVA's own phrase spotting, on its own thread, from NOVA_RUNTIME and NOVA_PARAKEET.
+            let spotting = stop.clone();
+            let spotter = std::thread::spawn(move || {
+                let runtime = crate::speech::runtime::get(std::path::Path::new(&std::env::var("NOVA_RUNTIME").unwrap())).unwrap();
+                let dir = std::path::PathBuf::from(std::env::var("NOVA_PARAKEET").unwrap());
+                let device = crate::speech::runtime::Device::Cpu { threads: 4 };
+                let asr = crate::speech::stt::parakeet::Parakeet::open(runtime, &dir, &device).unwrap();
+                let vad = crate::speech::stt::vad::Vad::open(runtime, &dir.join("silero_vad.onnx")).unwrap();
+                let mut recognizer = crate::speech::stt::Recognizer { asr, vad, device };
+                println!("spotter ready after {} s", started.elapsed().as_secs());
+                crate::shell::with_com(false, || spot::listen(&mut recognizer, &spotting, &|heard| println!("{:>4}s phrase accepted={} {}", started.elapsed().as_secs(), heard.confidence == Confidence::High, heard.text.chars().count()))).unwrap();
+            });
+            let speakers = mic::Speakers::open();
+            let mut detector: Option<clap::ClapDetector> = None;
+            let (mut peak, mut last) = (0f32, 0u64);
+            mic::capture(&stop, |samples, rate| {
+                let detector = detector.get_or_insert_with(|| clap::ClapDetector::new(rate, Sensitivity::Normal));
+                peak = samples.iter().fold(peak, |m, s| m.max(s.abs()));
+                detector.push(samples);
+                let at = started.elapsed().as_secs();
+                let loud = speakers.as_ref().and_then(|s| s.loudness()).unwrap_or(0.0);
+                for event in detector.drain() {
+                    println!("{at:>4}s {event:?} (speakers {loud:.2})");
+                }
+                if at >= last + 15 {
+                    println!("{at:>4}s peak {peak:.3}, noise floor {:.4}, speakers {loud:.2}", detector.noise_floor());
+                    (peak, last) = (0.0, at);
+                }
+                if at >= 150 {
+                    stop.store(true, Ordering::Relaxed);
+                }
+            })
+            .map_err(|e| format!("{e:?}"))?;
+            spotter.join().map_err(|_| "spotter failed".to_string())
+        })
+        .unwrap();
+    }
 
     #[test]
     fn wake_phrase_needs_confidence() {

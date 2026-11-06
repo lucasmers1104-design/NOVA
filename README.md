@@ -4,7 +4,7 @@ _Everything. Connected._
 
 NOVA is a local-first Windows desktop command center with a macOS-inspired "liquid glass" interface. It combines a customizable widget dashboard, real-time system monitoring, an app launcher, media controls, tasks and notes, a multi-provider AI assistant, a file hub and live information in one app.
 
-**Status:** Version 1.7.0. All eight roadmap milestones and the eight NOVA AI assistant milestones are complete; see [docs/ROADMAP.md](docs/ROADMAP.md) and [CHANGELOG.md](CHANGELOG.md).
+**Status:** Version 1.7.1. All eight roadmap milestones and the eight NOVA AI assistant milestones are complete; see [docs/ROADMAP.md](docs/ROADMAP.md) and [CHANGELOG.md](CHANGELOG.md).
 
 ## Features
 
@@ -94,7 +94,7 @@ src-tauri/                   Rust / Tauri 2 host
 ├─ src/capture.rs, voice.rs  Screenshots (own windows excluded), spoken turns (Windows or offline recognition)
 ├─ src/speech/               NOVA's own voices and offline recognition on ONNX Runtime (CPU / DirectML), hardware detection, measurements, downloads
 ├─ src/turnlog.rs            Timings of spoken turns (voice-turns.jsonl; numbers only)
-├─ src/wake/                 “Hey NOVA” (offline phrase spotting) and the double-clap detector (WASAPI)
+├─ src/wake/                 “Hey NOVA” (offline phrase spotting by Windows or NOVA's own recognizer) and the double-clap detector (WASAPI)
 └─ capabilities/, build.rs   One explicit permission per command (106 commands)
 releases/                    Signed installers + latest.json (update channel)
 scripts/release.mjs          Build, sign and publish a release
@@ -121,6 +121,6 @@ docs/                        Roadmap, release guide, plugin & agent API design
 ## Security & privacy
 
 - 106 app commands, each declared in `build.rs` and granted individually: `capabilities/default.json` for the main window, `capabilities/assistant.json` for the dot and panel (conversation, confirmations, screenshots and voice the user starts; no direct file, system or settings-write access — files are reached only through NOVA AI's validated tools in Rust). Plugin permissions are limited to `dialog:allow-open`, `notification:default` and window dragging for the dot. Strict CSP: no remote scripts, styles or connections from the webview.
-- No analytics or telemetry. Network connections happen only for what you set up: weather (Open-Meteo, coordinates only), news feeds you add, AI providers when you send a message (including screenshots and files you share with NOVA AI), Windows online speech recognition while you talk to NOVA (unless you choose the offline recognizer), downloads of NOVA's voices, speech runtime and offline recognizer from Hugging Face and NuGet when you choose them, or by itself and with a notice when Windows' recognition hears you but returns no words twice in a row (each file pinned to a SHA-256 hash), public web pages and web searches when NOVA AI looks something up for your request (searches run at Anthropic, about 1 cent each; pages are fetched directly and never from your own network), and update checks against your release repository at startup (can be turned off). Settings → Privacy lists the active ones live.
+- No analytics or telemetry. Network connections happen only for what you set up: weather (Open-Meteo, coordinates only), news feeds you add, AI providers when you send a message (including screenshots and files you share with NOVA AI), Windows online speech recognition while you talk to NOVA (unless you choose the offline recognizer), downloads of NOVA's voices, speech runtime and offline recognizer from Hugging Face and NuGet when you choose them, or by itself and with a notice when Windows' recognition hears you but returns no words (each file pinned to a SHA-256 hash), public web pages and web searches when NOVA AI looks something up for your request (searches run at Anthropic, about 1 cent each; pages are fetched directly and never from your own network), and update checks against your release repository at startup (can be turned off). Settings → Privacy lists the active ones live.
 - Background behavior (tray on close, background assistant, start with Windows) is off until you enable it. NOVA AI uses the microphone only while you hold a conversation by voice — or, if you turn on “Hey NOVA” or the double clap, keeps it open and checks the sound on the PC without recording, storing or sending it — takes screenshots only when you share the screen or allow it, keeps conversations in memory only, and asks before creating, moving, renaming or deleting anything (deleting goes to the Recycle Bin). File actions are limited to your own folders. NOVA AI also asks before ending a program, closing a window, reading another app's window (its contents go to your AI provider) or using keys and clicks there; the list of running programs and window titles it reads without asking. Keys go only to the chosen window; terminals and the Windows key are refused, and Windows' own processes can't be ended.
 - Data: `%APPDATA%\dev.nova.commandcenter\nova.db`; keys: Windows Credential Manager (`NOVA:ai:*`).

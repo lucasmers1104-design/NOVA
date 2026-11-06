@@ -149,6 +149,19 @@ pub fn capture_with(stop: &AtomicBool, raw: bool, mut sink: impl FnMut(&[f32], u
     }
 }
 
+/// The default microphone's name in Windows, e.g. "Microphone (USB Audio Device)".
+pub fn microphone_name() -> Option<String> {
+    use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
+    use windows::Win32::System::Com::STGM_READ;
+    // SAFETY: standard COM calls on a thread with COM initialized; everything is owned here.
+    unsafe {
+        let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
+        let device = enumerator.GetDefaultAudioEndpoint(eCapture, eConsole).ok()?;
+        let name = device.OpenPropertyStore(STGM_READ).ok()?.GetValue(&PKEY_Device_FriendlyName).ok()?.to_string();
+        (!name.is_empty()).then_some(name)
+    }
+}
+
 /// How loud the speakers are right now: the output peak scaled by the
 /// master volume (0 when muted).
 pub struct Speakers {
@@ -228,6 +241,38 @@ pub fn dictation_allowed() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What the default microphone delivers, per second (levels only, nothing is
+    /// kept), by hand: `cargo test --lib -- --ignored mic_levels --nocapture`.
+    #[test]
+    #[ignore]
+    fn mic_levels() {
+        for raw in [false, true] {
+            let stop = AtomicBool::new(false);
+            let started = std::time::Instant::now();
+            let (mut peak, mut energy, mut count, mut second, mut rate_seen) = (0f32, 0f64, 0u64, 0u64, 0);
+            crate::shell::with_com(false, || {
+                capture_with(&stop, raw, |samples, rate| {
+                    rate_seen = rate;
+                    for s in samples {
+                        peak = peak.max(s.abs());
+                        energy += (*s as f64) * (*s as f64);
+                    }
+                    count += samples.len() as u64;
+                    if started.elapsed().as_secs() > second {
+                        println!("raw={raw} {rate_seen} Hz s{second}: peak {peak:.3} rms {:.4}", (energy / count.max(1) as f64).sqrt());
+                        (peak, energy, count) = (0.0, 0.0, 0);
+                        second += 1;
+                    }
+                    if second >= 6 {
+                        stop.store(true, Ordering::Relaxed);
+                    }
+                })
+                .map_err(|e| format!("{e:?}"))
+            })
+            .unwrap();
+        }
+    }
 
     #[test]
     fn mixes_channels_down() {
