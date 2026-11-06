@@ -269,10 +269,11 @@ export function NovaToolCard({ tool, onConfirm }: NovaToolCardProps) {
         <div className="mt-1.5 pl-6">
           {tool.detail && <p className="text-[11.5px] leading-relaxed text-fg-muted">{tool.detail}</p>}
           <div className="mt-2 flex gap-1.5">
-            <Button size="sm" variant={high ? "danger" : "primary"} onClick={() => onConfirm(true)} autoFocus>
+            <Button size="sm" variant={high ? "danger" : "primary"} onClick={() => onConfirm(true)}>
               {high ? "Yes, do it" : "Allow"}
             </Button>
-            <Button size="sm" variant="ghost" onClick={() => onConfirm(false)}>
+            {/* Focus on the safe answer: someone typing a follow-up mustn't approve this with Space or Enter. */}
+            <Button size="sm" variant="ghost" onClick={() => onConfirm(false)} autoFocus>
               Not now
             </Button>
           </div>

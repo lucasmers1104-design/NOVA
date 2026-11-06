@@ -365,19 +365,21 @@ function CalendarView({ onOpen }: { onOpen: (task: Task) => void }) {
   const now = useNow(60_000);
   const locale = uiLocale();
   const weekStart = firstDayOfWeek(locale);
-  const [cursor, setCursor] = useState({ year: now.getFullYear(), month: now.getMonth() });
-  const [selected, setSelected] = useState(toISODate(now));
-  const days = useMemo(() => buildMonthGrid(cursor.year, cursor.month, weekStart, now), [cursor, weekStart, now]);
+  // null: follows today, also past midnight and a month's end.
+  const [chosenMonth, setChosenMonth] = useState<{ year: number; month: number } | null>(null);
+  const [chosenDay, setSelected] = useState<string | null>(null);
+  const cursor = chosenMonth ?? { year: now.getFullYear(), month: now.getMonth() };
+  const selected = chosenDay ?? toISODate(now);
+  const days = useMemo(() => buildMonthGrid(cursor.year, cursor.month, weekStart, now), [cursor.year, cursor.month, weekStart, now]);
   const byDay = useMemo(() => {
     const map = new Map<string, Task[]>();
     for (const t of tasks) if (t.dueDate) map.set(t.dueDate, [...(map.get(t.dueDate) ?? []), t]);
     return map;
   }, [tasks]);
-  const shift = (delta: number) =>
-    setCursor(({ year, month }) => {
-      const d = new Date(year, month + delta, 1);
-      return { year: d.getFullYear(), month: d.getMonth() };
-    });
+  const shift = (delta: number) => {
+    const d = new Date(cursor.year, cursor.month + delta, 1);
+    setChosenMonth({ year: d.getFullYear(), month: d.getMonth() });
+  };
   const selectedTasks = byDay.get(selected) ?? [];
 
   return (
@@ -388,7 +390,7 @@ function CalendarView({ onOpen }: { onOpen: (task: Task) => void }) {
             {new Intl.DateTimeFormat(locale, { month: "long", year: "numeric" }).format(new Date(cursor.year, cursor.month, 1))}
           </h2>
           <div className="flex gap-1">
-            <Button size="sm" variant="ghost" onClick={() => setCursor({ year: now.getFullYear(), month: now.getMonth() })}>
+            <Button size="sm" variant="ghost" onClick={() => setChosenMonth(null)}>
               Today
             </Button>
             <IconButton size="sm" label="Previous month" onClick={() => shift(-1)}>

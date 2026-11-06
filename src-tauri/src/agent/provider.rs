@@ -170,7 +170,14 @@ pub fn build(request: &Request<'_>) -> reqwest::RequestBuilder {
                 body["tools"] = json!([{ "functionDeclarations": request
                     .tools
                     .iter()
-                    .map(|t| json!({ "name": t.name, "description": t.description, "parameters": t.schema }))
+                    .map(|t| {
+                        // Gemini rejects an object schema without properties; a tool without arguments has none.
+                        if t.schema["properties"].as_object().is_some_and(|p| p.is_empty()) {
+                            json!({ "name": t.name, "description": t.description })
+                        } else {
+                            json!({ "name": t.name, "description": t.description, "parameters": t.schema })
+                        }
+                    })
                     .collect::<Vec<_>>() }]);
             }
             client
@@ -694,7 +701,9 @@ impl Accumulator {
         for part in candidate["content"]["parts"].as_array().into_iter().flatten() {
             self.gemini_parts.push(part.clone());
             if let Some(call) = part.get("functionCall") {
-                let id = call["id"].as_str().map(str::to_string).unwrap_or_else(|| format!("gemini-call-{}", self.gemini_calls.len() + 1));
+                // Gemini often sends no id; ours must stay unique across replies, because tool cards are found by id.
+                static NEXT_CALL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+                let id = call["id"].as_str().map(str::to_string).unwrap_or_else(|| format!("gemini-call-{}", NEXT_CALL.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
                 let input = call.get("args").cloned().unwrap_or_else(|| json!({}));
                 self.gemini_calls.push(ToolCall { id, name: call["name"].as_str().unwrap_or_default().to_string(), input: Ok(input) });
             } else if part["thought"] != true {

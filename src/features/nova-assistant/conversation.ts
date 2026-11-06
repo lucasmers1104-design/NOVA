@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { answerConfirmation, cancelRequest, resetConversation, sendMessage } from "./api";
+import { answerConfirmation, cancelRequest, clearAttachments, resetConversation, sendMessage } from "./api";
 import { beginTurn, count, endTurn, mark } from "./speech/timings";
 import type { AgentEvent, AssistantState, AttachmentView, Risk, ToolCard } from "./types";
 
@@ -170,6 +170,8 @@ export const useConversation = create<ConversationState>()((set, get) => ({
       });
     } catch (error) {
       const failed: AgentEvent = { type: "failed", error: error instanceof Error ? error.message : String(error) };
+      // Refused before it began: the chips are gone, so the attachments must not ride along with the next message.
+      void clearAttachments().catch(() => {});
       get().apply(failed);
       if (currentReply === current) emitReply({ replyId: reply.id, voice, ...failed });
     }
@@ -232,7 +234,7 @@ export const useConversation = create<ConversationState>()((set, get) => ({
   reset: async () => {
     if (get().busy) await get().cancel();
     await resetConversation();
-    set({ items: [], state: "idle", detail: null, lastPrompt: null });
+    set({ items: [], attachments: [], state: "idle", detail: null, lastPrompt: null });
   },
 
   retry: async () => {

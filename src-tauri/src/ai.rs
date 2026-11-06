@@ -407,7 +407,8 @@ pub async fn ai_chat(
             &turns,
             request.system_prompt.as_deref().filter(|s| !s.trim().is_empty()),
             request.temperature.map(|t| t.clamp(0.0, 2.0)),
-            request.max_tokens.unwrap_or(4096).clamp(64, 32_000),
+            // Generous: with thinking on, 4096 tokens cut long answers off mid-sentence.
+            request.max_tokens.unwrap_or(16_000).clamp(64, 32_000),
         ),
         provider,
         &on_event,

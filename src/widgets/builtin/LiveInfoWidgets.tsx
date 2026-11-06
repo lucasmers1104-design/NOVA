@@ -23,7 +23,8 @@ export function NewsWidget() {
 /** Share of the current day, week (Monday start), month and year that has passed. */
 export function progressOf(now: Date) {
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const day = (now.getTime() - startOfDay.getTime()) / 86_400_000;
+  // A day has 23 or 25 hours when the clocks change.
+  const day = (now.getTime() - startOfDay.getTime()) / (new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime() - startOfDay.getTime());
   const weekday = (now.getDay() + 6) % 7;
   const week = (weekday + day) / 7;
   const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();

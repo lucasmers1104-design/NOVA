@@ -146,6 +146,9 @@ if (isDesktop()) {
   });
 }
 
+/** The note being edited saves a moment after typing stops; `flush` saves it now, before NOVA closes. */
+export const noteDraft: { flush: () => Promise<unknown> } = { flush: () => Promise.resolve() };
+
 export function newTask(partial: Partial<Task> & Pick<Task, "title">): Task {
   return {
     id: crypto.randomUUID(),

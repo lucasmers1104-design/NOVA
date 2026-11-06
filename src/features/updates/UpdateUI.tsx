@@ -34,8 +34,8 @@ export function useStartupUpdates(): void {
 }
 
 export function UpdateBanner() {
-  const { status, info, countdown, postponed, downloaded, total, error, install, postpone, tick } = useUpdates();
-  const visible = !postponed && info !== null && (status === "available" || status === "downloading" || status === "installing" || (status === "error" && downloaded > 0));
+  const { status, info, countdown, postponed, downloaded, total, error, installFailed, install, postpone, tick } = useUpdates();
+  const visible = !postponed && info !== null && (status === "available" || status === "downloading" || status === "installing" || (status === "error" && installFailed));
 
   useEffect(() => {
     if (countdown === null || status !== "available") return;

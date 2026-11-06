@@ -593,6 +593,9 @@ pub async fn speech_status<R: Runtime>(app: AppHandle<R>) -> CommandResult<Speec
 pub async fn speech_configure<R: Runtime>(app: AppHandle<R>, prefs: SpeechPrefs) -> CommandResult<SpeechStatus> {
     let json = serde_json::to_string(&prefs).map_err(|e| e.to_string())?;
     app.state::<Database>().with(|c| storage::kv_set(c, PREFS_KEY, &json))?;
+    if prefs.stt != lock(&state(&app).prefs).stt {
+        stt::forget_deaf_turns(&app);
+    }
     *lock(&state(&app).prefs) = prefs;
     // The next sentence loads the voice where the new settings say.
     *lock(&state(&app).tts) = None;

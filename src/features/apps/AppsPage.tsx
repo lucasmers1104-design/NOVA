@@ -65,7 +65,7 @@ export default function AppsPage() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && visible[0]) launch.mutate(visible[0]);
+              if (e.key === "Enter" && query.trim() && visible[0]) launch.mutate(visible[0]);
               else if (e.key === "Escape" && query) {
                 e.preventDefault();
                 setQuery("");

@@ -1,6 +1,7 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { type ReactNode, useEffect, useState } from "react";
 import { flushDashboardSaves } from "@/features/dashboard/store";
+import { noteDraft } from "@/features/productivity/store";
 import { isDesktop } from "@/lib/native";
 import { cn } from "@/lib/cn";
 
@@ -51,8 +52,8 @@ export function WindowControls() {
         label="Close"
         danger
         onClick={() => {
-          // Let in-flight layout saves finish before the window goes away.
-          void flushDashboardSaves().finally(() => void win.close());
+          // Let in-flight saves finish before the window goes away.
+          void Promise.allSettled([flushDashboardSaves(), noteDraft.flush()]).finally(() => void win.close());
         }}
       >
         <path d="M0.5 0.5l9 9M9.5 0.5l-9 9" />

@@ -15,7 +15,7 @@ export type VoiceEvent =
   | { type: "hypothesis"; text: string }
   | { type: "processing" }
   | { type: "result"; text: string }
-  | { type: "noSpeech"; heard: boolean }
+  | { type: "noSpeech"; heard: boolean; switching: boolean }
   | { type: "error"; message: string; settings: "privacy-speech" | "privacy-microphone" | "speech" | null };
 
 /** Mirrors `VoiceInstall` in src-tauri/src/tts.rs: NOVA's own voice on this PC. */
@@ -54,10 +54,12 @@ const NO_WORDS = {
   de: {
     heard: "Ich habe dich gehört, aber keine Wörter verstanden. Sprich etwas näher am Mikrofon und versuch es noch mal.",
     silent: "Ich habe nichts gehört. Ist in Windows das richtige Mikrofon als Standard eingestellt?",
+    switching: "Die Windows-Spracherkennung hört dich, liefert aber keine Wörter. Ich lade jetzt meine eigene Offline-Erkennung (etwa 670 MB) und nutze sie, sobald sie fertig ist. Den Fortschritt siehst du unter Einstellungen → Local AI & performance.",
   },
   en: {
     heard: "I heard you but couldn't make out any words. Move a little closer to the microphone and try again.",
     silent: "I didn't hear anything. Is the right microphone set as the default in Windows?",
+    switching: "Windows speech recognition hears you but returns no words. I'm downloading my own offline recognizer (about 670 MB) and will use it once it's ready. You can follow the progress in Settings → Local AI & performance.",
   },
 } as const;
 
@@ -90,14 +92,15 @@ export async function listen(german = false, onTranscript?: (text: string) => vo
         useVoice.setState({ transcript: event.text });
         break;
       case "noSpeech":
-        useVoice.setState({ error: NO_WORDS[german ? "de" : "en"][event.heard ? "heard" : "silent"] });
+        useVoice.setState({ error: NO_WORDS[german ? "de" : "en"][event.switching ? "switching" : event.heard ? "heard" : "silent"] });
         break;
       case "error":
         useVoice.setState({ error: event.message, errorSettings: event.settings });
         break;
       case "listening":
         mark("micReady");
-        useVoice.setState({ ready: true });
+        // Also back from "processing": Windows may have given up and the offline recognizer took over.
+        useVoice.setState({ mode: "listening", ready: true });
         break;
     }
   };
@@ -114,8 +117,9 @@ export function openVoiceSettings(page: NonNullable<VoiceState["errorSettings"]>
   void callNative("voice_open_settings", { page }).catch(() => {});
 }
 
-export function stopListening(): void {
-  void callNative("voice_stop").catch(() => {});
+/** `discard`: cancelled or closed, so nothing said so far is sent or complained about. */
+export function stopListening(discard = false): void {
+  void callNative("voice_stop", { discard }).catch(() => {});
 }
 
 // ---------------------------------------------------------------------------

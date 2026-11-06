@@ -103,7 +103,10 @@ export function useVolume() {
 export function useSetVolume() {
   const client = useQueryClient();
   return useMutation({
+    // One after another, so a fast drag can't end on an earlier value.
+    scope: { id: "media-volume" },
     mutationFn: (change: { level?: number; muted?: boolean }) => callNative<VolumeState>("media_volume_set", change),
+    onMutate: (change) => client.setQueryData<VolumeState>(mediaKeys.volume, (state) => (state ? { ...state, ...change } : state)),
     onSuccess: (state) => client.setQueryData(mediaKeys.volume, state),
     onError: (error) => notifyError("Couldn't change the volume", error),
   });

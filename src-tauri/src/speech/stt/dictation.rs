@@ -82,13 +82,21 @@ pub fn listen(recognizer: &mut Recognizer, stop: &AtomicBool, send: &mut dyn FnM
     let started = Instant::now();
     let mut turn = Turn::default();
     let capture_stop = AtomicBool::new(false);
+    let decode_error = std::sync::OnceLock::<String>::new();
+    let decode_error = &decode_error;
     let outcome: Result<(), String> = std::thread::scope(|scope| {
         // Transcribes each phrase as soon as it is complete.
         let decoder = scope.spawn(move || {
             for (index, audio, rate) in phrases {
                 let begun = Instant::now();
                 let audio = crate::speech::wav::resample(&audio, rate, 16_000);
-                let text = asr.transcribe(&audio).unwrap_or_default();
+                let text = match asr.transcribe(&audio) {
+                    Ok(text) => text,
+                    Err(error) => {
+                        decode_error.get_or_init(|| error);
+                        String::new()
+                    }
+                };
                 if to_listener.send((index, text, begun.elapsed().as_millis())).is_err() {
                     break;
                 }
@@ -174,9 +182,12 @@ pub fn listen(recognizer: &mut Recognizer, stop: &AtomicBool, send: &mut dyn FnM
             // The turn ends after a pause that fits what was said so far.
             let so_far = join(&texts);
             let pause = end_pause(&so_far).saturating_sub(Duration::from_millis(PHRASE_END_MS as u64));
+            // A pause ends the turn only once it has words and they are all in: a
+            // cough decodes to nothing, and a slow PC is still working on the last phrase.
+            let all_in = !so_far.is_empty() && texts.iter().all(Option::is_some);
             let done = stop.load(Ordering::SeqCst)
-                || (!turn.heard_speech && started.elapsed() >= NOTHING_SAID)
-                || (!segmenter.speaking() && last_end.is_some_and(|t| t.elapsed() >= pause))
+                || (so_far.is_empty() && !segmenter.speaking() && texts.iter().all(Option::is_some) && started.elapsed() >= NOTHING_SAID)
+                || (all_in && !segmenter.speaking() && last_end.is_some_and(|t| t.elapsed() >= pause))
                 || started.elapsed() >= LONGEST_TURN;
             if done && !capture_stop.load(Ordering::SeqCst) {
                 turn.stop_ms = Some(started.elapsed().as_millis());
@@ -205,6 +216,10 @@ pub fn listen(recognizer: &mut Recognizer, stop: &AtomicBool, send: &mut dyn FnM
         turn.last_change_ms = last_change.map(|t| t.duration_since(started).as_millis());
         if let Some(error) = vad_error {
             return Err(error);
+        }
+        // Only when it cost words; otherwise the turn went fine.
+        if let Some(error) = decode_error.get().filter(|_| turn.text.is_empty()) {
+            return Err(format!("NOVA's offline recognizer failed: {error}"));
         }
         capture.map_err(|e| format!("The microphone couldn't be used ({e:?})"))
     });

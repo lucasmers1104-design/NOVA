@@ -146,7 +146,8 @@ export function DashboardGrid({ widgets, editing, onConfigure }: DashboardGridPr
     const onMove = (e: PointerEvent) => {
       const span = startSpan + Math.round((e.clientX - startX) / columnStep);
       const h = instance.h + Math.round((e.clientY - startY) / rowStep);
-      useDashboard.getState().resizeWidget(instance.instanceId, { w: span * unit, h });
+      // No column change, no width change: an odd width stays as it is in the narrow grid.
+      useDashboard.getState().resizeWidget(instance.instanceId, { w: span === startSpan ? instance.w : span * unit, h });
     };
     const onEnd = () => {
       window.removeEventListener("pointermove", onMove);
@@ -161,6 +162,8 @@ export function DashboardGrid({ widgets, editing, onConfigure }: DashboardGridPr
   };
 
   const onOverlayKeyDown = (instance: WidgetInstance, definition: WidgetDefinition | undefined, event: KeyboardEvent<HTMLElement>) => {
+    // Keys on the buttons inside the overlay belong to those buttons.
+    if (event.target !== event.currentTarget) return;
     const store = useDashboard.getState();
     const index = activeWidgets().findIndex((w) => w.instanceId === instance.instanceId);
     const unit = 12 / columns;

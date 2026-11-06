@@ -84,16 +84,22 @@ pub fn mark_seen(conn: &Connection, ids: &[i64], seen: i64) -> Result<(), Storag
 
 /// Drops files under `root` that the last pass (`seen`) didn't find.
 pub fn sweep(conn: &Connection, root: &str, seen: i64) -> Result<usize, StorageError> {
-    conn.execute(
+    // Together or not at all: without its search row a file would never be found again.
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
         "DELETE FROM file_index_fts WHERE rowid IN (SELECT id FROM file_index WHERE root = ?1 AND seen <> ?2)",
         params![root, seen],
     )?;
-    Ok(conn.execute("DELETE FROM file_index WHERE root = ?1 AND seen <> ?2", params![root, seen])?)
+    let removed = tx.execute("DELETE FROM file_index WHERE root = ?1 AND seen <> ?2", params![root, seen])?;
+    tx.commit()?;
+    Ok(removed)
 }
 
 pub fn remove_root(conn: &Connection, root: &str) -> Result<(), StorageError> {
-    conn.execute("DELETE FROM file_index_fts WHERE rowid IN (SELECT id FROM file_index WHERE root = ?1)", [root])?;
-    conn.execute("DELETE FROM file_index WHERE root = ?1", [root])?;
+    let tx = conn.unchecked_transaction()?;
+    tx.execute("DELETE FROM file_index_fts WHERE rowid IN (SELECT id FROM file_index WHERE root = ?1)", [root])?;
+    tx.execute("DELETE FROM file_index WHERE root = ?1", [root])?;
+    tx.commit()?;
     Ok(())
 }
 

@@ -130,6 +130,8 @@ pub fn run() {
                 api.prevent_close();
                 assistant::request_collapse(window.app_handle());
             }
+            // Nothing would bring the dot back; it goes away through its settings.
+            (assistant::DOT_LABEL, WindowEvent::CloseRequested { api, .. }) => api.prevent_close(),
             (assistant::DOT_LABEL, WindowEvent::Moved(position)) => assistant::on_dot_moved(window.app_handle(), *position),
             _ => {}
         })

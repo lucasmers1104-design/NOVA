@@ -12,12 +12,14 @@ export function CalendarWidget() {
   const { weekStart: weekStartPreference, showWeekInfo } = useWidgetConfig<{ weekStart: string; showWeekInfo: boolean }>();
   // Minute resolution is enough for "today" to roll over at midnight.
   const today = useNow(60_000);
-  const [cursor, setCursor] = useState(() => ({ year: today.getFullYear(), month: today.getMonth() }));
+  // null: follows today, also across a month's end.
+  const [chosen, setChosen] = useState<{ year: number; month: number } | null>(null);
+  const cursor = chosen ?? { year: today.getFullYear(), month: today.getMonth() };
   const [direction, setDirection] = useState(0);
   const locale = uiLocale();
   const weekStart = weekStartPreference === "monday" ? 1 : weekStartPreference === "sunday" ? 0 : firstDayOfWeek(locale);
 
-  const days = useMemo(() => buildMonthGrid(cursor.year, cursor.month, weekStart, today), [cursor, weekStart, today]);
+  const days = useMemo(() => buildMonthGrid(cursor.year, cursor.month, weekStart, today), [cursor.year, cursor.month, weekStart, today]);
   const labels = useMemo(() => weekdayLabels(locale, weekStart), [locale, weekStart]);
   const monthLabel = new Intl.DateTimeFormat(locale, { month: "long", year: "numeric" }).format(new Date(cursor.year, cursor.month, 1));
   const isCurrentMonth = cursor.year === today.getFullYear() && cursor.month === today.getMonth();
@@ -25,15 +27,13 @@ export function CalendarWidget() {
 
   const shift = (delta: number) => {
     setDirection(delta);
-    setCursor(({ year, month }) => {
-      const d = new Date(year, month + delta, 1);
-      return { year: d.getFullYear(), month: d.getMonth() };
-    });
+    const d = new Date(cursor.year, cursor.month + delta, 1);
+    setChosen({ year: d.getFullYear(), month: d.getMonth() });
   };
 
   const goToToday = () => {
     setDirection(0);
-    setCursor({ year: today.getFullYear(), month: today.getMonth() });
+    setChosen(null);
   };
 
   return (

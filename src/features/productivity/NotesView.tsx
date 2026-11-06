@@ -5,7 +5,7 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Markdown } from "@/components/ui/Markdown";
 import { cn } from "@/lib/cn";
 import { type Note, noteTitle } from "./model";
-import { newNote, useProductivity } from "./store";
+import { newNote, noteDraft, useProductivity } from "./store";
 
 export function NotesView({ projectId }: { projectId: string | null }) {
   const notes = useProductivity((s) => s.notes);
@@ -97,15 +97,21 @@ function NoteEditor({ note }: { note: Note }) {
     window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => void saveNote(next), 600);
   };
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    const flush = async () => {
       window.clearTimeout(timer.current);
       const pending = latest.current;
-      if (pending.title !== note.title || pending.body !== note.body) void saveNote(pending);
-    },
-    // Runs once on unmount; `latest` holds the newest draft.
-    [],
-  );
+      // Against the store: a deleted note stays deleted, and what was saved isn't saved twice.
+      const saved = useProductivity.getState().notes.find((n) => n.id === pending.id);
+      if (saved && (pending.title !== saved.title || pending.body !== saved.body || pending.pinned !== saved.pinned)) await saveNote(pending);
+    };
+    noteDraft.flush = flush;
+    return () => {
+      void flush();
+      if (noteDraft.flush === flush) noteDraft.flush = () => Promise.resolve();
+    };
+    // Runs once; `latest` holds the newest draft.
+  }, []);
 
   return (
     <div className="glass flex flex-col rounded-widget">

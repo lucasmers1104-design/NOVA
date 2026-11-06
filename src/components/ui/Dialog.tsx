@@ -1,6 +1,7 @@
 import { X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/lib/cn";
 import { IconButton } from "./Button";
 
@@ -17,7 +18,8 @@ interface DialogProps {
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea, [tabindex]:not([tabindex="-1"])';
 
 export function Dialog(props: DialogProps) {
-  return <AnimatePresence>{props.open && <DialogPanel {...props} />}</AnimatePresence>;
+  // In the body: inside a glass widget, `fixed` would be relative to the widget and get clipped.
+  return createPortal(<AnimatePresence>{props.open && <DialogPanel {...props} />}</AnimatePresence>, document.body);
 }
 
 /** Modal dialog: traps focus, closes on Escape or backdrop click, restores focus on close. */

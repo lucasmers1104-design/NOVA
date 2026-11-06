@@ -87,7 +87,8 @@ export function PanelApp() {
       listen<{ origin: DotCorner; wake: WakeCall | null }>(ASSISTANT_EVENTS.expand, (event) => show(event.payload.origin, event.payload.wake)),
       listen<WakeCall>(ASSISTANT_EVENTS.wake, (event) => woken(event.payload)),
       listen<{ generation: number }>(ASSISTANT_EVENTS.collapse, (event) => {
-        stopListening();
+        // Closing isn't "send what I said so far".
+        stopListening(true);
         if (!openRef.current) {
           void panelHidden(event.payload.generation);
           return;

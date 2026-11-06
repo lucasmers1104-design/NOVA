@@ -344,6 +344,12 @@ pub(crate) fn overview(monitor: &SystemMonitor) -> CommandResult<serde_json::Val
     monitor.with_monitor(|m| serde_json::json!({ "info": collect_info(&m.sys), "now": collect_snapshot(m) }))
 }
 
+/// "C:\ 120 GB free of 930 GB" per drive, for NOVA AI's `task_manager` tool.
+pub(crate) fn volume_lines() -> Vec<String> {
+    let gib = |bytes: u64| bytes as f64 / 1_073_741_824.0;
+    collect_volumes().unwrap_or_default().iter().map(|v| format!("{} {:.0} GB free of {:.0} GB", v.mount_point, gib(v.available_bytes), gib(v.total_bytes))).collect()
+}
+
 #[tauri::command]
 pub async fn system_info(monitor: tauri::State<'_, SystemMonitor>) -> CommandResult<SystemInfo> {
     monitor.with_monitor(|m| collect_info(&m.sys))

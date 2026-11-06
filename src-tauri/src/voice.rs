@@ -17,6 +17,8 @@ type CommandResult<T> = Result<T, String>;
 pub struct VoiceState {
     active: AtomicBool,
     stop: AtomicBool,
+    /// The user cancelled or closed the panel: what was said so far counts for nothing.
+    discard: AtomicBool,
     /// A recognizer made ready while NOVA greets, so listening starts at once.
     #[cfg(windows)]
     prepared: std::sync::Mutex<Option<win::Prepared>>,
@@ -34,8 +36,9 @@ pub enum VoiceEvent {
     /// Speech ended; the final text is being worked out.
     Processing,
     Result { text: String },
-    /// No words came back. `heard`: Windows did hear sound or speech.
-    NoSpeech { heard: bool },
+    /// No words came back. `heard`: sound or speech was heard. `switching`:
+    /// Windows keeps hearing speech without words, so NOVA gets its offline recognizer.
+    NoSpeech { heard: bool, switching: bool },
     /// `settings`: the Windows settings page that fixes it, if any.
     Error { message: String, settings: Option<&'static str> },
 }
@@ -336,7 +339,7 @@ mod win {
     /// One spoken turn: listens continuously, waits out short pauses, and ends
     /// once the words have stopped changing for a moment (see `end_pause`),
     /// or when the user presses stop.
-    pub fn listen(language: &str, state: &VoiceState, send: &dyn Fn(VoiceEvent), report: &mut TurnReport) -> Result<(), VoiceError> {
+    pub fn listen(language: &str, state: &VoiceState, send: &dyn Fn(VoiceEvent), report: &mut TurnReport, no_words: &dyn Fn(bool) -> bool) -> Result<(), VoiceError> {
         let requested = Instant::now();
         let fail = |e: windows::core::Error| describe(e.code().0, language);
         let (recognizer, used) = match take_prepared(language, state) {
@@ -525,6 +528,10 @@ mod win {
         if text.is_empty() {
             text = transcript(&unsure, "");
         }
+        if state.discard.load(super::Ordering::SeqCst) {
+            report.outcome = "cancelled".into();
+            return Ok(());
+        }
         if let Some(error) = ended.and_then(|status| ended_with(status, &used)).filter(|_| text.is_empty()) {
             report.outcome = format!("error: {}", error.message);
             return Err(error);
@@ -532,8 +539,9 @@ mod win {
         if text.is_empty() {
             let heard = report.sound_ms.is_some() || heard_speech;
             report.outcome = format!("no words (sound heard: {heard})");
-            send(VoiceEvent::NoSpeech { heard });
+            send(VoiceEvent::NoSpeech { heard, switching: no_words(heard_speech) });
         } else {
+            no_words(false);
             report.outcome = format!("{} words", text.split_whitespace().count());
             send(VoiceEvent::Result { text });
         }
@@ -548,6 +556,7 @@ pub async fn voice_listen<R: Runtime>(app: AppHandle<R>, on_event: Channel<Voice
         return Err("NOVA is already listening".into());
     }
     state.stop.store(false, Ordering::SeqCst);
+    state.discard.store(false, Ordering::SeqCst);
     let language = crate::agent::prefs(&app).language;
     let app2 = app.clone();
     let channel = on_event.clone();
@@ -564,9 +573,16 @@ pub async fn voice_listen<R: Runtime>(app: AppHandle<R>, on_event: Channel<Voice
             let mut failure = None;
             let _ = crate::shell::with_com(false, || {
                 failure = if crate::speech::stt::use_local(&app2) {
-                    listen_offline(&app2, &state, &send, &mut report).err()
+                    match listen_offline(&app2, &state, &send, &mut report) {
+                        // Its model or graphics card doesn't load right now: Windows can still listen.
+                        Err(error) if error.message.starts_with(OFFLINE_WONT_START) => {
+                            report = TurnReport { fell_back: true, ..TurnReport::default() };
+                            win::listen(&language, &state, &send, &mut report, &|_| false).err()
+                        }
+                        other => other.err(),
+                    }
                 } else {
-                    match win::listen(&language, &state, &send, &mut report) {
+                    match win::listen(&language, &state, &send, &mut report, &|deaf| crate::speech::stt::note_windows_turn(&app2, deaf)) {
                         // Windows can't listen (online recognition off, offline, no recognizer): NOVA's own recognizer can.
                         Err(error) if offline_helps(&error) && crate::speech::stt::ready(&app2) => {
                             report = TurnReport { fell_back: true, ..TurnReport::default() };
@@ -629,12 +645,14 @@ fn offline_helps(error: &VoiceError) -> bool {
     error.settings == Some("privacy-speech") || error.settings == Some("speech") || error.message.contains("online speech service")
 }
 
+const OFFLINE_WONT_START: &str = "NOVA's offline recognizer couldn't start";
+
 /// One spoken turn with NOVA's offline recognizer (Silero VAD + Parakeet).
 #[cfg(windows)]
 fn listen_offline<R: Runtime>(app: &AppHandle<R>, state: &VoiceState, send: &dyn Fn(VoiceEvent), report: &mut TurnReport) -> Result<(), VoiceError> {
     use crate::speech::stt::{self, dictation};
     let requested = std::time::Instant::now();
-    let mut recognizer = stt::take(app).map_err(|e| VoiceError::from(format!("NOVA's offline recognizer couldn't start: {e}")))?;
+    let mut recognizer = stt::take(app).map_err(|e| VoiceError::from(format!("{OFFLINE_WONT_START}: {e}")))?;
     report.language = format!("offline · {}", recognizer.device.label());
     report.prepared = true;
     let mut ready = None;
@@ -652,7 +670,10 @@ fn listen_offline<R: Runtime>(app: &AppHandle<R>, state: &VoiceState, send: &dyn
         },
         &end_pause,
     );
-    stt::give_back(app, recognizer);
+    // A recognizer that failed isn't kept: the next turn loads a fresh one.
+    if outcome.is_ok() {
+        stt::give_back(app, recognizer);
+    }
     let turn = outcome.map_err(VoiceError::from)?;
     report.ready_ms = ready;
     report.speech_ms = turn.speech_ms;
@@ -663,9 +684,11 @@ fn listen_offline<R: Runtime>(app: &AppHandle<R>, state: &VoiceState, send: &dyn
     report.decode_ms = turn.decode_ms.clone();
     report.final_wait_ms = Some(turn.final_wait_ms);
     report.ended = "offline turn".into();
-    if turn.text.is_empty() {
+    if state.discard.load(Ordering::SeqCst) {
+        report.outcome = "cancelled".into();
+    } else if turn.text.is_empty() {
         report.outcome = format!("no words (speech heard: {})", turn.heard_speech);
-        send(VoiceEvent::NoSpeech { heard: turn.heard_speech });
+        send(VoiceEvent::NoSpeech { heard: turn.heard_speech, switching: false });
     } else {
         report.outcome = format!("{} words", turn.text.split_whitespace().count());
         send(VoiceEvent::Result { text: turn.text });
@@ -704,10 +727,14 @@ pub async fn voice_open_settings(page: String) -> CommandResult<()> {
     }
 }
 
-/// Ends listening early, keeping what was said.
+/// Ends listening early, keeping what was said unless `discard` (cancelled, panel closed).
 #[tauri::command]
-pub async fn voice_stop<R: Runtime>(app: AppHandle<R>) -> CommandResult<()> {
-    app.state::<VoiceState>().stop.store(true, Ordering::SeqCst);
+pub async fn voice_stop<R: Runtime>(app: AppHandle<R>, discard: Option<bool>) -> CommandResult<()> {
+    let state = app.state::<VoiceState>();
+    if discard.unwrap_or(false) {
+        state.discard.store(true, Ordering::SeqCst);
+    }
+    state.stop.store(true, Ordering::SeqCst);
     Ok(())
 }
 
@@ -755,6 +782,6 @@ mod tests {
     fn events_serialize_for_the_panel() {
         let json = serde_json::to_value(VoiceEvent::Hypothesis { text: "hallo".into() }).unwrap();
         assert_eq!(json, serde_json::json!({ "type": "hypothesis", "text": "hallo" }));
-        assert_eq!(serde_json::to_value(VoiceEvent::NoSpeech { heard: true }).unwrap(), serde_json::json!({ "type": "noSpeech", "heard": true }));
+        assert_eq!(serde_json::to_value(VoiceEvent::NoSpeech { heard: true, switching: false }).unwrap(), serde_json::json!({ "type": "noSpeech", "heard": true, "switching": false }));
     }
 }

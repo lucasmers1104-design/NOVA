@@ -170,7 +170,8 @@ pub fn parse(text: &str) -> Intent {
 fn find_after(text: &str, verb: &str) -> Option<String> {
     let lower = text.to_lowercase();
     let at = if lower.starts_with(verb) { 0 } else { lower.find(&format!(" {verb}")).map(|i| i + 1)? };
-    let rest = &text[at + verb.len()..];
+    // Lower case can change a text's length ("İ"): the position then only fits the lower-case text.
+    let rest = if lower.len() == text.len() { text.get(at + verb.len()..)? } else { &lower[at + verb.len()..] };
     let fillers = ["bitte", "please", "mal", "kurz", "for me", "mir"];
     let rest: Vec<&str> = rest.split_whitespace().filter(|w| !fillers.contains(&w.to_lowercase().as_str())).collect();
     let rest = rest.join(" ");
@@ -195,6 +196,12 @@ pub fn greeting(lang: Lang) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn letters_that_change_length_in_lower_case_dont_crash_it() {
+        assert_eq!(find_after("İ find ü", "find "), Some("ü".into()));
+        assert_eq!(find_after("ẞ öffne Spotify", "öffne "), Some("spotify".into()));
+    }
 
     #[test]
     fn recognizes_searches_in_both_languages() {

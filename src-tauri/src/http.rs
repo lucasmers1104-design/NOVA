@@ -17,17 +17,17 @@ pub fn client() -> &'static reqwest::Client {
     })
 }
 
-/// For web pages NOVA AI reads: follows no redirects by itself, so each hop can be checked first.
-pub fn no_redirect_client() -> &'static reqwest::Client {
-    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-    CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            .user_agent(concat!("NOVA/", env!("CARGO_PKG_VERSION"), " (desktop command center)"))
-            .connect_timeout(Duration::from_secs(10))
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .expect("HTTP client configuration is static and valid")
-    })
+/// For one web page hop NOVA AI reads: follows no redirects by itself, so each
+/// hop can be checked first, and connects only to the addresses that were checked
+/// (a name can't answer differently the second time it is asked).
+pub fn checked_client(host: &str, addresses: &[std::net::SocketAddr]) -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .user_agent(concat!("NOVA/", env!("CARGO_PKG_VERSION"), " (desktop command center)"))
+        .connect_timeout(Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::none())
+        .resolve_to_addrs(host, addresses)
+        .build()
+        .map_err(describe)
 }
 
 /// Reads a response body up to `limit` bytes.

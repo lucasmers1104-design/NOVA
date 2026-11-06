@@ -1,8 +1,9 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import { defaultSettings, useSettings } from "@/stores/settings";
 import { useUi } from "@/stores/ui";
+import { renderWithQuery } from "@/test/render";
 import { CommandPalette } from "./CommandPalette";
 
 function openPalette() {
@@ -16,7 +17,7 @@ describe("CommandPalette", () => {
   });
 
   it("is closed until opened", () => {
-    render(<CommandPalette />);
+    renderWithQuery(<CommandPalette />);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     openPalette();
     expect(screen.getByRole("dialog", { name: "Command palette" })).toBeInTheDocument();
@@ -24,7 +25,7 @@ describe("CommandPalette", () => {
   });
 
   it("filters and runs the top result with Enter", async () => {
-    render(<CommandPalette />);
+    renderWithQuery(<CommandPalette />);
     openPalette();
 
     await userEvent.type(screen.getByRole("combobox"), "settings");
@@ -36,7 +37,7 @@ describe("CommandPalette", () => {
   });
 
   it("moves the selection with arrow keys", async () => {
-    render(<CommandPalette />);
+    renderWithQuery(<CommandPalette />);
     openPalette();
 
     await userEvent.type(screen.getByRole("combobox"), "accent");
@@ -51,7 +52,7 @@ describe("CommandPalette", () => {
   });
 
   it("jumps to the last and first result with Ctrl+End / Ctrl+Home", async () => {
-    render(<CommandPalette />);
+    renderWithQuery(<CommandPalette />);
     openPalette();
 
     const options = screen.getAllByRole("option");
@@ -63,7 +64,7 @@ describe("CommandPalette", () => {
   });
 
   it("shows an empty state and closes with Escape", async () => {
-    render(<CommandPalette />);
+    renderWithQuery(<CommandPalette />);
     openPalette();
 
     await userEvent.type(screen.getByRole("combobox"), "zzzz");
@@ -74,7 +75,7 @@ describe("CommandPalette", () => {
   });
 
   it("toggles the sidebar through a registered command", async () => {
-    render(<CommandPalette />);
+    renderWithQuery(<CommandPalette />);
     openPalette();
 
     await userEvent.type(screen.getByRole("combobox"), "collapse");

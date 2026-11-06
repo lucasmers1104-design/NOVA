@@ -249,6 +249,8 @@ struct Inner {
     dragged_to: Option<PhysicalPosition<i32>>,
     /// The panel is shown, or will be as soon as its page has loaded.
     panel_open: bool,
+    /// Its exit animation is playing: it still counts as open, but is on its way out.
+    collapsing: bool,
     panel_loaded: bool,
     panel_creating: bool,
     /// The panel corner nearest the dot; the panel grows out of it.
@@ -555,8 +557,12 @@ fn dot_target<R: Runtime>(app: &AppHandle<R>, prefs: &AssistantPrefs) -> Option<
     let all = screens(app);
     let look = &prefs.look;
     let dragged = prefs.position.and_then(|p| {
-        let half = px(look.window_side(), 1.0) / 2;
-        screen_containing(&all, (p.x + half, p.y + half)).map(|screen| (screen, clamp_dot(screen, look, (p.x, p.y))))
+        // The center in physical pixels: at 200 % a dot at the screen's edge would otherwise count as off it.
+        let on_screen = all.iter().copied().find(|s| {
+            let half = dot_side(*s, look) / 2;
+            s.work.contains((p.x + half, p.y + half))
+        })?;
+        Some((on_screen, clamp_dot(on_screen, look, (p.x, p.y))))
     });
     let docked = || {
         let taskbar = find_taskbar()?;
@@ -728,6 +734,7 @@ pub fn expand<R: Runtime>(app: &AppHandle<R>) {
     let (loaded, creating) = {
         let mut inner = state.lock();
         inner.panel_open = true;
+        inner.collapsing = false;
         (inner.panel_loaded, inner.panel_creating)
     };
     let _ = app.emit_to(DOT_LABEL, EVENT_PANEL, PanelEvent { open: true });
@@ -765,8 +772,12 @@ pub fn expand<R: Runtime>(app: &AppHandle<R>) {
 /// `assistant_panel_hidden`. Hides it anyway if it never does.
 pub fn request_collapse<R: Runtime>(app: &AppHandle<R>) {
     let state = state(app);
-    if !state.lock().panel_open {
-        return;
+    {
+        let mut inner = state.lock();
+        if !inner.panel_open {
+            return;
+        }
+        inner.collapsing = true;
     }
     let generation = state.collapse_generation.fetch_add(1, Ordering::SeqCst) + 1;
     let _ = app.emit_to(PANEL_LABEL, EVENT_COLLAPSE, CollapseEvent { generation });
@@ -783,7 +794,13 @@ fn hide_panel<R: Runtime>(app: &AppHandle<R>, generation: u64) {
     if state.collapse_generation.load(Ordering::SeqCst) != generation {
         return;
     }
-    state.lock().panel_open = false;
+    {
+        let mut inner = state.lock();
+        inner.panel_open = false;
+        inner.collapsing = false;
+        // A wake-up cancelled before the page loaded mustn't fire at the next opening.
+        inner.pending_wake = None;
+    }
     if let Some(panel) = app.get_webview_window(PANEL_LABEL) {
         let _ = panel.hide();
         crate::desktop::set_page_visible(&panel, false);
@@ -807,7 +824,7 @@ pub fn wake<R: Runtime>(app: &AppHandle<R>, source: crate::wake::Source, listen:
     tauri::async_runtime::spawn(async move { crate::agent::prewarm(&handle).await });
     let (open, loaded) = {
         let inner = state(app).lock();
-        (inner.panel_open, inner.panel_loaded)
+        (inner.panel_open && !inner.collapsing, inner.panel_loaded)
     };
     if open && loaded {
         if let Some(panel) = app.get_webview_window(PANEL_LABEL) {
@@ -822,7 +839,11 @@ pub fn wake<R: Runtime>(app: &AppHandle<R>, source: crate::wake::Source, listen:
 
 /// Dot click, tray menu, command palette.
 pub fn toggle<R: Runtime>(app: &AppHandle<R>) {
-    if state(app).lock().panel_open {
+    let open = {
+        let inner = state(app).lock();
+        inner.panel_open && !inner.collapsing
+    };
+    if open {
         request_collapse(app);
     } else {
         expand(app);
@@ -831,7 +852,10 @@ pub fn toggle<R: Runtime>(app: &AppHandle<R>) {
 
 /// Global shortcut: opens the panel, focuses it if it lost focus, closes it otherwise.
 pub fn on_shortcut<R: Runtime>(app: &AppHandle<R>) {
-    let open = state(app).lock().panel_open;
+    let open = {
+        let inner = state(app).lock();
+        inner.panel_open && !inner.collapsing
+    };
     match app.get_webview_window(PANEL_LABEL) {
         Some(panel) if open && !panel.is_focused().unwrap_or(false) => {
             let _ = panel.set_focus();
@@ -1031,6 +1055,16 @@ pub fn on_dot_moved<R: Runtime>(app: &AppHandle<R>, pos: PhysicalPosition<i32>) 
     {
         let mut inner = state.lock();
         if inner.placed_at.is_some_and(|placed| (placed.x - pos.x).abs() <= 2 && (placed.y - pos.y).abs() <= 2) {
+            inner.dragged_to = None;
+            return;
+        }
+        // No button down and no drag going on: Windows moved it (a monitor went
+        // away, the resolution changed). That isn't the user's new spot for it.
+        if !mouse_button_down() && !state.settling.load(Ordering::SeqCst) {
+            drop(inner);
+            if let Some(dot) = app.get_webview_window(DOT_LABEL) {
+                place_dot(app, &dot);
+            }
             return;
         }
         inner.dragged_to = Some(pos);
@@ -1072,6 +1106,10 @@ fn settle_drag<R: Runtime>(app: &AppHandle<R>) {
     save_prefs(app, &prefs);
     if let Some(dot) = app.get_webview_window(DOT_LABEL) {
         place_dot(app, &dot);
+    }
+    // Out of the taskbar: only this watcher still hides the dot in fullscreen apps.
+    if prefs.hide_in_fullscreen && prefs.enabled && !docked(&prefs) {
+        watch_fullscreen(app);
     }
     if state(app).lock().panel_open {
         if let Some(panel) = app.get_webview_window(PANEL_LABEL) {
@@ -1314,7 +1352,14 @@ pub async fn assistant_dot_ready<R: Runtime>(app: AppHandle<R>, window: WebviewW
     if window.label() != DOT_LABEL {
         return Err("only the dot window can do this".into());
     }
-    window.show().map_err(|e| e.to_string())?;
+    // A fullscreen app in front (NOVA started with Windows or after an update): the watcher shows it later.
+    let hidden = {
+        let inner = state(&app).lock();
+        (docked(&inner.prefs) || inner.prefs.hide_in_fullscreen) && !inner.panel_open
+    } && fullscreen_in_front();
+    if !hidden {
+        window.show().map_err(|e| e.to_string())?;
+    }
     Ok(dot_view(&app))
 }
 
@@ -1339,6 +1384,8 @@ pub async fn assistant_panel_ready<R: Runtime>(app: AppHandle<R>, window: Webvie
         (inner.panel_open, inner.panel_origin, wake)
     };
     if open {
+        // Closed and reopened during the first load: the page may have been marked hidden.
+        crate::desktop::set_page_visible(&window, true);
         let _ = window.show();
         let _ = window.set_focus();
     }

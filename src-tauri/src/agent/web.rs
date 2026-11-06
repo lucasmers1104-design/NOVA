@@ -1,6 +1,6 @@
 //! Reading web pages for NOVA AI: public addresses only, text only, size-limited.
 
-use std::net::{IpAddr, ToSocketAddrs};
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::time::Duration;
 
 use url::{Host, Url};
@@ -55,10 +55,12 @@ pub fn check_url(raw: &str) -> Result<Url, String> {
     Ok(url)
 }
 
-fn resolves_publicly(url: &Url) -> bool {
-    let (Some(host), Some(port)) = (url.host_str(), url.port_or_known_default()) else { return false };
+/// The addresses behind a URL, if every one of them is public.
+fn public_addresses(url: &Url) -> Option<Vec<SocketAddr>> {
+    let (host, port) = (url.host_str()?, url.port_or_known_default()?);
     let host = host.trim_start_matches('[').trim_end_matches(']');
-    (host, port).to_socket_addrs().is_ok_and(|mut addresses| addresses.all(|a| is_public(a.ip())))
+    let addresses: Vec<SocketAddr> = (host, port).to_socket_addrs().ok()?.collect();
+    (!addresses.is_empty() && addresses.iter().all(|a| is_public(a.ip()))).then_some(addresses)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -73,10 +75,9 @@ pub fn read(url: &Url) -> Result<Page, String> {
     tauri::async_runtime::block_on(async {
         let mut current = url.clone();
         for _ in 0..=MAX_REDIRECTS {
-            if !resolves_publicly(&current) {
-                return Err("NOVA AI only reads public web pages, not addresses in your own network".to_string());
-            }
-            let mut response = crate::http::no_redirect_client().get(current.clone()).timeout(Duration::from_secs(20)).send().await.map_err(crate::http::describe)?;
+            let addresses = public_addresses(&current).ok_or("NOVA AI only reads public web pages, not addresses in your own network")?;
+            let client = crate::http::checked_client(current.host_str().unwrap_or_default(), &addresses)?;
+            let mut response = client.get(current.clone()).timeout(Duration::from_secs(20)).send().await.map_err(crate::http::describe)?;
             if response.status().is_redirection() {
                 let location = response.headers().get(reqwest::header::LOCATION).and_then(|l| l.to_str().ok()).ok_or("The page redirected nowhere")?;
                 let next = current.join(location).map_err(|_| "The page redirected to an invalid address".to_string())?;

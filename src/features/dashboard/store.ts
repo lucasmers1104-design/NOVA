@@ -204,7 +204,8 @@ export const useDashboard = create<DashboardState>()((set, get) => {
 
     undoRemove: () => {
       const removed = get().lastRemoved;
-      if (!removed || removed.layoutId !== get().activeId) return;
+      const active = get().layouts.find((l) => l.id === get().activeId);
+      if (!removed || !active || removed.layoutId !== active.id || active.widgets.length >= MAX_WIDGETS_PER_LAYOUT) return;
       set({ lastRemoved: null });
       mutateActive((widgets) => {
         const next = [...widgets];
@@ -225,7 +226,8 @@ export const useDashboard = create<DashboardState>()((set, get) => {
         widgets.map((widget) => {
           if (widget.instanceId !== instanceId) return widget;
           const definition = getWidget(widget.widgetId);
-          const next = definition ? clampSize(definition, size) : size;
+          // An unavailable widget still has to fit what a layout may hold.
+          const next = clampSize(definition ?? { minSize: { w: 1, h: 1 }, maxSize: { w: 12, h: 8 } }, size);
           return next.w === widget.w && next.h === widget.h ? widget : { ...widget, ...next };
         }),
       );

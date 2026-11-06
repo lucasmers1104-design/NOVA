@@ -2,6 +2,7 @@ import { Search } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { type KeyboardEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Kbd } from "@/components/ui/Badge";
+import { useApps } from "@/features/apps/api";
 import { cn } from "@/lib/cn";
 import { useUi } from "@/stores/ui";
 import { buildCommands, type Command } from "./commands";
@@ -16,7 +17,9 @@ export function CommandPalette() {
 function PaletteDialog({ onClose }: { onClose: () => void }) {
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
-  const commands = useMemo(() => buildCommands(), []);
+  // Subscribes, so apps are loaded (and searchable) even if nothing else asked for them yet.
+  const { data: apps } = useApps();
+  const commands = useMemo(() => buildCommands(), [apps]); // eslint-disable-line react-hooks/exhaustive-deps
   const results = useMemo(
     () => filterCommands(query.trim() ? commands : commands.filter((c) => !c.searchOnly), query).slice(0, 60),
     [commands, query],

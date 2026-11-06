@@ -210,7 +210,7 @@ fn numbered(line: &str) -> Option<(String, String)> {
 
 /// Inline markers removed: **bold**, *italic*, `code`, [text](url) → text (url).
 fn strip_inline(text: &str) -> String {
-    let mut out = text.replace("**", "").replace("__", "").replace('`', "");
+    let mut out = strip_pairs(&strip_pairs(text, "**"), "__").replace('`', "");
     // Links: [label](url) → label (url)
     while let (Some(open), Some(mid)) = (out.find('['), out.find("](")) {
         let Some(close) = out[mid..].find(')').map(|i| mid + i) else { break };
@@ -221,7 +221,30 @@ fn strip_inline(text: &str) -> String {
         let url = out[mid + 2..close].to_string();
         out.replace_range(open..=close, &format!("{label} ({url})"));
     }
-    out.split('*').collect::<Vec<_>>().join("")
+    strip_pairs(&out, "*")
+}
+
+/// Removes `marker` where it emphasizes something: "**a b**" → "a b", but "3 * 4 * 5" and a lone "*" stay.
+fn strip_pairs(text: &str, marker: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(open) = rest.find(marker) {
+        let after = &rest[open + marker.len()..];
+        let closing = after.char_indices().find(|(i, c)| *c != ' ' && after[*i + c.len_utf8()..].starts_with(marker)).map(|(i, c)| i + c.len_utf8());
+        match closing.filter(|_| !after.starts_with([' ', '\t'])) {
+            Some(close) => {
+                out.push_str(&rest[..open]);
+                out.push_str(&after[..close]);
+                rest = &after[close + marker.len()..];
+            }
+            None => {
+                out.push_str(&rest[..open + marker.len()]);
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 fn to_plain_text(markdown: &str) -> String {
@@ -493,11 +516,27 @@ fn wrap(text: &str, size: f32, bold: bool, width: f32) -> Vec<Vec<u8>> {
     lines
 }
 
+/// A code line: keeps its spaces (tabs become four) and breaks by characters.
+fn wrap_code(text: &str, size: f32, width: f32) -> Vec<Vec<u8>> {
+    let mut lines = vec![Vec::new()];
+    let mut line_width = 0.0;
+    for byte in text.replace('\t', "    ").chars().map(cp1252) {
+        let w = glyph_width(byte, false) as f32 * size / 1000.0;
+        if line_width + w > width {
+            lines.push(Vec::new());
+            line_width = 0.0;
+        }
+        lines.last_mut().expect("starts with one line").push(byte);
+        line_width += w;
+    }
+    lines
+}
+
 fn layout(title: &str, markdown: &str) -> Vec<Line> {
     let width = PAGE_W - 2.0 * MARGIN;
     let mut lines = Vec::new();
-    let mut push = |text: &str, size: f32, bold: bool, indent: f32, gap: f32, prefix: Option<&str>| {
-        for (i, wrapped) in wrap(text, size, bold, width - indent).into_iter().enumerate() {
+    let mut push_wrapped = |wrapped: Vec<Vec<u8>>, size: f32, bold: bool, indent: f32, gap: f32, prefix: Option<&str>| {
+        for (i, wrapped) in wrapped.into_iter().enumerate() {
             let mut bytes = Vec::new();
             if i == 0 {
                 if let Some(p) = prefix {
@@ -509,6 +548,7 @@ fn layout(title: &str, markdown: &str) -> Vec<Line> {
         }
     };
     for block in parse_blocks(&with_title_heading(title, markdown)) {
+        let mut push = |text: &str, size: f32, bold: bool, indent: f32, gap: f32, prefix: Option<&str>| push_wrapped(wrap(text, size, bold, width - indent), size, bold, indent, gap, prefix);
         match block {
             Block::Heading(level, text) => {
                 let size = match level {
@@ -525,7 +565,7 @@ fn layout(title: &str, markdown: &str) -> Vec<Line> {
             Block::Quote(text) => push(&strip_inline(&text), 11.0, false, 18.0, 6.0, None),
             Block::Code(code) => {
                 for (i, l) in code.lines().enumerate() {
-                    push(if l.is_empty() { " " } else { l }, 9.5, false, 12.0, if i == 0 { 6.0 } else { 0.0 }, None);
+                    push_wrapped(wrap_code(if l.is_empty() { " " } else { l }, 9.5, width - 12.0), 9.5, false, 12.0, if i == 0 { 6.0 } else { 0.0 }, None);
                 }
             }
             Block::Rule => push(" ", 6.0, false, 0.0, 6.0, None),
@@ -618,6 +658,16 @@ mod tests {
     use super::*;
 
     const SAMPLE: &str = "## Überblick\n\nDer **3D-Drucker** kostet 249 € – „gut“.\n\n- Erster Punkt\n- Zweiter Punkt\n\n1. Eins\n2. Zwei\n\n```\nlet x = 1;\n```\n\n> Zitat";
+
+    #[test]
+    fn removes_only_real_emphasis_and_keeps_code_indentation() {
+        assert_eq!(strip_inline("Der **3D-Drucker** ist *gut*"), "Der 3D-Drucker ist gut");
+        assert_eq!(strip_inline("3 * 4 * 5"), "3 * 4 * 5");
+        assert_eq!(strip_inline("ein * allein"), "ein * allein");
+        assert_eq!(strip_inline("**offen"), "**offen");
+        assert_eq!(wrap_code("\tif x:", 9.5, 400.0), vec![b"    if x:".to_vec()]);
+        assert!(wrap_code(&"x".repeat(50), 9.5, 50.0).len() > 1);
+    }
 
     #[test]
     fn makes_safe_file_names() {

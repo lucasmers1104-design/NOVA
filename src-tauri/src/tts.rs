@@ -79,14 +79,16 @@ pub struct TtsState {
     install: Mutex<VoiceInstall>,
     engine: Arc<Mutex<Option<Engine>>>,
     next_file: std::sync::atomic::AtomicU64,
-    /// Speech for this turn and earlier ones was stopped: don't make it.
-    cancelled_turn: std::sync::atomic::AtomicU64,
+    /// Per window (each counts its own turns): speech for this turn and earlier
+    /// ones was stopped, don't make it.
+    cancelled_turns: Mutex<std::collections::HashMap<String, u64>>,
 }
 
 impl TtsState {
-    /// Whether speech for `turn` was stopped in the meantime.
-    pub(crate) fn cancelled(&self, turn: Option<u64>) -> bool {
-        turn.is_some_and(|t| t <= self.cancelled_turn.load(Ordering::SeqCst))
+    /// Whether speech for `turn` of `window` was stopped in the meantime.
+    pub(crate) fn cancelled(&self, window: &str, turn: Option<u64>) -> bool {
+        let cancelled = self.cancelled_turns.lock().unwrap_or_else(|p| p.into_inner());
+        turn.is_some_and(|t| cancelled.get(window).is_some_and(|last| t <= *last))
     }
 }
 
@@ -463,18 +465,19 @@ pub async fn tts_install<R: Runtime>(app: AppHandle<R>) -> CommandResult<VoiceIn
 /// Thorsten): returns it as WAV audio. `turn` lets `tts_cancel` drop speech
 /// that is no longer wanted.
 #[tauri::command]
-pub async fn tts_speak<R: Runtime>(app: AppHandle<R>, text: String, rate: f32, voice: Option<String>, turn: Option<u64>) -> CommandResult<tauri::ipc::Response> {
+pub async fn tts_speak<R: Runtime>(app: AppHandle<R>, window: tauri::WebviewWindow<R>, text: String, rate: f32, voice: Option<String>, turn: Option<u64>) -> CommandResult<tauri::ipc::Response> {
     let text = text.trim().to_string();
     if text.is_empty() || text.chars().count() > LONGEST_TEXT {
         return Err("Nothing to say, or too much at once".into());
     }
-    if app.state::<TtsState>().cancelled(turn) {
+    let label = window.label().to_string();
+    if app.state::<TtsState>().cancelled(&label, turn) {
         return Err("Cancelled".into());
     }
     let handle = app.clone();
     let wav = tauri::async_runtime::spawn_blocking(move || {
         // Stopped while waiting for the engine: skip it.
-        if handle.state::<TtsState>().cancelled(turn) {
+        if handle.state::<TtsState>().cancelled(&label, turn) {
             return Err("Cancelled".to_string());
         }
         crate::speech::speak(&handle, voice.as_deref(), &text, rate)
@@ -486,8 +489,11 @@ pub async fn tts_speak<R: Runtime>(app: AppHandle<R>, text: String, rate: f32, v
 
 /// Stops speech for `turn` and earlier: waiting sentences are dropped.
 #[tauri::command]
-pub async fn tts_cancel<R: Runtime>(app: AppHandle<R>, turn: u64) -> CommandResult<()> {
-    app.state::<TtsState>().cancelled_turn.fetch_max(turn, Ordering::SeqCst);
+pub async fn tts_cancel<R: Runtime>(app: AppHandle<R>, window: tauri::WebviewWindow<R>, turn: u64) -> CommandResult<()> {
+    let state = app.state::<TtsState>();
+    let mut cancelled = state.cancelled_turns.lock().unwrap_or_else(|p| p.into_inner());
+    let last = cancelled.entry(window.label().to_string()).or_insert(0);
+    *last = (*last).max(turn);
     Ok(())
 }
 

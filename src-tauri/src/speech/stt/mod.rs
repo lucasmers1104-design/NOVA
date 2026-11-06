@@ -9,7 +9,9 @@ pub mod vad;
 
 use std::time::Instant;
 
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
+
+use crate::storage::{self, Database};
 
 use super::runtime::Device;
 use super::{bench, lock, state, SttPref};
@@ -32,10 +34,47 @@ pub fn ready<R: Runtime>(app: &AppHandle<R>) -> bool {
     super::recognizer_dir(app).is_some() && super::runtime_dir_for(app).is_some()
 }
 
+/// Turns in a row in which Windows heard speech but returned no words at all.
+const DEAF_TURNS_KEY: &str = "nova.assistant.windowsDeafTurns";
+/// This many, and Windows' dictation counts as not working on this PC (seen
+/// when its online service stays silent, with nothing reported as wrong).
+const DEAF_LIMIT: u32 = 2;
+
+fn deaf_turns<R: Runtime>(app: &AppHandle<R>) -> u32 {
+    app.state::<Database>().with(|c| storage::kv_get(c, DEAF_TURNS_KEY)).ok().flatten().and_then(|v| v.parse().ok()).unwrap_or(0)
+}
+
+/// Starts over with Windows' recognizer (the user chose in Settings).
+pub fn forget_deaf_turns<R: Runtime>(app: &AppHandle<R>) {
+    let _ = app.state::<Database>().with(|c| storage::kv_set(c, DEAF_TURNS_KEY, "0"));
+}
+
+/// Records how a Windows turn went. Once it counts as not working, NOVA's
+/// offline recognizer takes over and is downloaded if needed. True while
+/// that download is what the user waits for.
+pub fn note_windows_turn<R: Runtime>(app: &AppHandle<R>, deaf: bool) -> bool {
+    let turns = if deaf { deaf_turns(app).saturating_add(1) } else { 0 };
+    let _ = app.state::<Database>().with(|c| storage::kv_set(c, DEAF_TURNS_KEY, &turns.to_string()));
+    if turns < DEAF_LIMIT {
+        return false;
+    }
+    let missing = ["runtime", "parakeet"].into_iter().filter(|id| super::catalog::item(id).is_some_and(|item| !super::installed(app, item)));
+    for id in missing {
+        let (app, id) = (app.clone(), id.to_string());
+        tauri::async_runtime::spawn(async move {
+            let _ = super::speech_install(app, id).await;
+        });
+    }
+    true
+}
+
 /// Whether this turn uses the offline recognizer.
 pub fn use_local<R: Runtime>(app: &AppHandle<R>) -> bool {
     if !ready(app) {
         return false;
+    }
+    if deaf_turns(app) >= DEAF_LIMIT {
+        return true;
     }
     match super::prefs(app).stt {
         SttPref::Windows => false,
@@ -66,6 +105,8 @@ fn open<R: Runtime>(app: &AppHandle<R>) -> Result<Recognizer, String> {
 /// The recognizer for a turn (loaded if needed); give it back afterwards.
 pub fn take<R: Runtime>(app: &AppHandle<R>) -> Result<Recognizer, String> {
     let wanted = super::plan(app, "parakeet").0;
+    // Waits for a load in the background instead of loading a second copy (about a gigabyte).
+    let _loading = lock(&LOADING);
     let mut slot = lock(&state(app).stt);
     if let Some(loaded) = slot.as_mut().filter(|l| l.device == wanted) {
         if let Some(recognizer) = loaded.recognizer.take() {
@@ -75,6 +116,9 @@ pub fn take<R: Runtime>(app: &AppHandle<R>) -> Result<Recognizer, String> {
     drop(slot);
     open(app)
 }
+
+/// Held while the recognizer loads.
+static LOADING: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 pub fn give_back<R: Runtime>(app: &AppHandle<R>, mut recognizer: Recognizer) {
     recognizer.vad.reset();
@@ -90,8 +134,11 @@ pub fn warm<R: Runtime>(app: &AppHandle<R>) {
     }
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        if let Ok(recognizer) = open(&app) {
-            give_back(&app, recognizer);
+        let _loading = lock(&LOADING);
+        if lock(&state(&app).stt).is_none() {
+            if let Ok(recognizer) = open(&app) {
+                give_back(&app, recognizer);
+            }
         }
     });
 }

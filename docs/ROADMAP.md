@@ -122,6 +122,13 @@ Legend: ✅ done · ⬜ planned
 - ✅ Hardware detection, measurements in a separate process, CPU or DirectML (NVIDIA, AMD, Intel) by measurement, three performance modes
 - ⚠️ Speaking into NOVA while it talks (barge-in) is not supported: it needs echo cancellation Windows doesn't reliably provide
 
+## 1.7 — The whole PC ✅
+- ✅ `task_manager`, `installed_programs`, `end_process`: what runs and what it costs, what takes disk space, ending programs (high-impact confirmation; Windows' own processes refused)
+- ✅ `list_windows`, `window_action`, `read_window` (UI Automation), `use_element`, `send_input`: working other apps, each change confirmed; keys only reach the chosen window
+- ✅ Automatic switch to the offline recognizer when Windows' dictation hears speech but returns no words
+- ⚠️ Windows' dictation returning nothing was seen on one PC with online recognition on and the language installed; why Windows stays silent there isn't known. NOVA works around it rather than fixing it
+- ⚠️ Per-program GPU use and sizes of programs that don't report one aren't available
+
 ## Next ideas
 - Calendar sync adapters (Outlook, Google) behind explicit opt-in
 - AI agent mode with permission-gated tools (see [PLUGIN_API.md](PLUGIN_API.md#agents))

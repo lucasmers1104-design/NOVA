@@ -1,6 +1,7 @@
 import { Channel } from "@tauri-apps/api/core";
 import { create } from "zustand";
 import { flushDashboardSaves } from "@/features/dashboard/store";
+import { noteDraft } from "@/features/productivity/store";
 import { callNative, isDesktop } from "@/lib/native";
 import { useSettings } from "@/stores/settings";
 
@@ -33,6 +34,8 @@ interface UpdateState {
   status: UpdateStatus;
   info: UpdateInfo | null;
   error: string | null;
+  /** The error came from installing, not from a check: the banner says so. */
+  installFailed: boolean;
   downloaded: number;
   total: number | null;
   /** Seconds left before the automatic install; null when no countdown runs. */
@@ -49,6 +52,7 @@ export const useUpdates = create<UpdateState>()((set, get) => ({
   status: "idle",
   info: null,
   error: null,
+  installFailed: false,
   downloaded: 0,
   total: null,
   countdown: null,
@@ -62,7 +66,7 @@ export const useUpdates = create<UpdateState>()((set, get) => ({
       return;
     }
     if (get().status === "checking" || get().status === "downloading" || get().status === "installing") return;
-    set({ status: "checking", error: null });
+    set({ status: "checking", error: null, installFailed: false });
     try {
       const info = await callNative<UpdateInfo | null>("update_check", { source });
       if (!info) {
@@ -81,7 +85,7 @@ export const useUpdates = create<UpdateState>()((set, get) => ({
     set({ status: "downloading", countdown: null, downloaded: 0, total: null });
     try {
       // Nothing may be lost when the installer closes the app.
-      await flushDashboardSaves();
+      await Promise.allSettled([flushDashboardSaves(), noteDraft.flush()]);
       const channel = new Channel<InstallEvent>();
       channel.onmessage = (event) => {
         if (event.type === "progress") set({ downloaded: event.downloaded, total: event.total });
@@ -91,7 +95,7 @@ export const useUpdates = create<UpdateState>()((set, get) => ({
       // Windows: the process exits inside update_install and the installer restarts NOVA.
       set({ status: "installing" });
     } catch (error) {
-      set({ status: "error", error: error instanceof Error ? error.message : String(error) });
+      set({ status: "error", installFailed: true, error: error instanceof Error ? error.message : String(error) });
     }
   },
 

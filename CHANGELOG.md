@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.7.0 — 2026-11-06
+
+**Install this version once by hand.** Updates are signed with a new key from 1.7.0 on, so older versions can't install it by themselves and report that the update failed. Run `releases/NOVA_1.7.0_x64-setup.exe` over your installation; your data stays, and updates are automatic again afterwards.
+
+### Added
+- **NOVA AI knows what your PC is doing**: ask "was bringt mein PC gerade zum Laggen?" and it reads the same things as the Task Manager: total CPU, memory, GPU and drive space, the programs using the most CPU, memory and disk, and windows that aren't responding. It also lists installed programs by the space they take.
+- **NOVA AI ends programs**: after your explicit OK it closes a program so it can save, or force-quits it if it hangs. Windows' own processes, the security software and NOVA itself are off limits.
+- **NOVA AI works your other apps**: it sees the open windows, reads a window's tabs, buttons and fields, presses buttons, fills fields, and sends key combinations and text, so "schließe alle Tabs in Opera GX" works. Reading a window, keys, clicks and closing all wait for your OK. Keys go only to the chosen window and stop if another one comes to the front. Terminals and the Windows key are refused, because typing there would run commands.
+
+### Fixed
+- **Voice: "Ich habe dich gehört, aber keine Wörter verstanden."** On some PCs Windows' online recognition hears speech but never returns a word, and reports nothing as wrong. After two such turns in a row NOVA now switches to its own offline recognizer by itself and downloads it if needed (about 670 MB), telling you so.
+- Closing the panel while talking sent your half-finished sentence to NOVA AI as a request. Closing and Cancel now throw it away.
+- Offline recognition ended the turn after a cough or room noise, before you had said anything, and could end it before a slow PC had finished the last phrase. It could also load twice at a wake-up and stay stuck on "Einen Moment" after taking over from Windows.
+- A wake-up while a reply was running cut the reply off and then didn't listen; a greeting whose audio never ended kept the microphone closed.
+- Stopping speech in one window could silence the voice preview in Settings, or switch NOVA's own voice to a Windows voice until restart.
+- A rejected or declined request stayed in the conversation, so every later message failed the same way. Cut-off and empty replies now say so instead of looking finished.
+- Security: `open_file` could be tricked into starting a program by a trailing dot in its name; network paths were contacted before they were checked; a web page's name could point to your own network the second time it was resolved. The focus on a confirmation card now sits on "Not now", so typing can't approve an action.
+- Gemini: tools without arguments could fail every request, and repeated call ids corrupted tool cards.
+- Screenshots could silently ride along with the next message after a refused one.
+- Deleted notes came back and pin changes got lost; a note still being typed is now saved before NOVA closes or updates.
+- Task dialogs opened from a widget were cut off, with Save out of reach. Opening a task puts the cursor in its title.
+- Resizing an unavailable widget, or Undo at 48 widgets, made every later save of that layout fail. Touching a resize handle in a narrow window changed the widget's width.
+- Enter on a widget's Remove button opened its settings; Enter on the Apps page started the first app with an empty search; the command palette often couldn't find apps.
+- Calendars stayed on the old month and day after midnight; the Today bar went past 100 % on the day the clocks change; a fast volume drag could end on the wrong value.
+- Reminders set by NOVA AI without a time promised a notification that never came; it now asks for the time.
+- PDF and text documents keep code indentation and characters like `3 * 4`. The NOVA AI tab no longer cuts long answers at 4096 tokens.
+- News: titles escaped twice or containing markup, German umlauts as named entities and Latin-1 feeds show correctly.
+- The dot: Windows moving it (a monitor unplugged, a game changing the resolution) no longer counts as you dragging it; it stays on its screen at high display scaling, hides in fullscreen apps after being dragged and when NOVA starts behind one, and Alt+F4 can't remove it.
+- The panel: a wake-up or shortcut during its closing animation is no longer lost, and closing it during its first load can't leave it blank or make it listen later.
+- A failed update install now shows a banner with Retry, even before the first byte arrived. The file index can't lose search entries if NOVA ends in the middle of a sweep.
+
 ## 1.6.0 — 2026-11-05
 
 ### Added

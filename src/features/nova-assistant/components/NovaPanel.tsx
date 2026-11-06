@@ -167,8 +167,13 @@ export function NovaPanel(props: NovaPanelProps) {
       if (wake.call.chime) await playChime();
       mark("chimeEnd");
       if (cancelled) return;
-      // Said before the microphone opens, so NOVA doesn't hear itself.
-      await sayRef.current(voiceLine("greet", language), "greet");
+      // A reply is still running: the greeting would cut it off and nobody could answer.
+      if (useConversation.getState().busy) return;
+      // Said before the microphone opens, so NOVA doesn't hear itself. A greeting
+      // whose audio never ends must not keep the microphone closed.
+      const greeted = sayRef.current(voiceLine("greet", language), "greet");
+      const late = new Promise<"late">((resolve) => setTimeout(() => resolve("late"), 15_000));
+      if ((await Promise.race([greeted, late])) === "late") stopSpeaking();
       if (
         !cancelled &&
         wake.call.listen &&
@@ -396,7 +401,7 @@ export function NovaPanel(props: NovaPanelProps) {
           onCancel={() => {
             discard.current = true;
             setLine(null);
-            stopListening();
+            stopListening(true);
           }}
         />
       ) : (

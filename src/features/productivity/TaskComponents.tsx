@@ -1,5 +1,5 @@
 import { Bell, Check, Flag, Plus, Trash } from "lucide-react";
-import { type FormEvent, useEffect, useId, useState } from "react";
+import { type FormEvent, useId, useState } from "react";
 import { Button, IconButton } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Dialog } from "@/components/ui/Dialog";
@@ -112,10 +112,15 @@ export function TaskDialog({ task, onClose }: { task: Task | null; onClose: () =
   const deleteTask = useProductivity((s) => s.deleteTask);
   const projects = useProductivity((s) => s.projects);
   const [draft, setDraft] = useState<Task | null>(task);
+  const [shown, setShown] = useState<Task | null>(task);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const formId = useId();
 
-  useEffect(() => setDraft(task), [task]);
+  // While rendering, not in an effect: the form must exist when the dialog places focus.
+  if (shown !== task) {
+    setShown(task);
+    setDraft(task);
+  }
 
   const update = (patch: Partial<Task>) => setDraft((d) => (d ? { ...d, ...patch } : d));
   const submit = (event: FormEvent) => {

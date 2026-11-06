@@ -154,7 +154,7 @@ export function AgentSettings() {
           <>
             This month: {usage?.requests ?? 0} requests · {((usage?.inputTokens ?? 0) / 1000).toFixed(1)}k in · {((usage?.outputTokens ?? 0) / 1000).toFixed(1)}k out
             {spent > 0 && ` · ≈ $${spent.toFixed(2)}`}
-            {(usage?.unpricedRequests ?? 0) > 0 && ` · ${usage?.unpricedRequests} without a price estimate`}. Costs are estimates for Claude models; your provider's bill is authoritative.
+            {(usage?.unpricedRequests ?? 0) > 0 && ` · ${usage?.unpricedRequests} without a price estimate (these don't count toward the limit)`}. Costs are estimates for Claude models, so the limit only covers those; your provider's bill is authoritative.
           </>
         }
       >

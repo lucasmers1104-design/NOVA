@@ -145,11 +145,66 @@ fn decode_entity(name: &str) -> Option<char> {
         "quot" => Some('"'),
         "apos" => Some('\''),
         "nbsp" => Some('\u{a0}'),
+        "auml" => Some('ä'),
+        "ouml" => Some('ö'),
+        "uuml" => Some('ü'),
+        "Auml" => Some('Ä'),
+        "Ouml" => Some('Ö'),
+        "Uuml" => Some('Ü'),
+        "szlig" => Some('ß'),
+        "eacute" => Some('é'),
+        "egrave" => Some('è'),
+        "agrave" => Some('à'),
+        "ccedil" => Some('ç'),
+        "ntilde" => Some('ñ'),
+        "hellip" => Some('…'),
+        "ndash" => Some('–'),
+        "mdash" => Some('—'),
+        "lsquo" => Some('‘'),
+        "rsquo" => Some('’'),
+        "ldquo" => Some('“'),
+        "rdquo" => Some('”'),
+        "euro" => Some('€'),
+        "copy" => Some('©'),
+        "reg" => Some('®'),
+        "trade" => Some('™'),
         _ => {
             let code = name.strip_prefix("#x").or_else(|| name.strip_prefix("#X")).map(|h| u32::from_str_radix(h, 16));
             let code = code.or_else(|| name.strip_prefix('#').map(|d| d.parse::<u32>()));
             code.and_then(Result::ok).and_then(char::from_u32)
         }
+    }
+}
+
+/// One pass of entity decoding. Feeds often escape titles twice or put HTML in
+/// CDATA; unknown names stay as they are instead of vanishing.
+fn decode_entities(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find('&') {
+        out.push_str(&rest[..at]);
+        rest = &rest[at..];
+        let decoded = rest.find(';').filter(|end| *end <= 12).and_then(|end| decode_entity(&rest[1..end]).map(|c| (c, end)));
+        match decoded {
+            Some((c, end)) => {
+                out.push(c);
+                rest = &rest[end + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// A feed's bytes as text: UTF-8, or else Latin-1 as older feeds declare it.
+fn feed_text(bytes: &[u8]) -> String {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => text.to_string(),
+        Err(_) => bytes.iter().map(|&b| b as char).collect(),
     }
 }
 
@@ -179,8 +234,11 @@ pub fn parse_feed(xml: &str) -> CommandResult<Feed> {
                         }
                     }
                 }
+                // Markup inside a title (Atom's type="xhtml") is part of the title.
+                if !path.iter().any(|p| p == "title") {
+                    text.clear();
+                }
                 path.push(name);
-                text.clear();
             }
             Event::Empty(e) => {
                 let name = e.local_name().as_ref().to_ascii_lowercase();
@@ -195,13 +253,22 @@ pub fn parse_feed(xml: &str) -> CommandResult<Feed> {
             Event::Text(t) => text.push_str(&t.xml10_content()),
             Event::CData(t) => text.push_str(&t.xml10_content()),
             Event::GeneralRef(r) => {
-                if let Some(c) = decode_entity(&r.into_inner()) {
-                    text.push(c);
+                let name = r.into_inner();
+                match decode_entity(&name) {
+                    Some(c) => text.push(c),
+                    None => {
+                        text.push('&');
+                        text.push_str(&name);
+                        text.push(';');
+                    }
                 }
             }
             Event::End(_) => {
                 let name = path.pop().unwrap_or_default();
-                let value = text.trim().to_string();
+                if path.iter().any(|p| p == "title") {
+                    continue;
+                }
+                let value = decode_entities(text.trim());
                 match (current.as_mut(), name.as_str()) {
                     (Some(item), "title") if item.title.is_empty() => item.title = value,
                     (Some(item), "link") if item.link.is_none() && !value.is_empty() => item.link = Some(value),
@@ -237,7 +304,7 @@ fn attribute(e: &quick_xml::events::BytesStart<'_>, key: &str) -> Option<String>
     e.attributes()
         .flatten()
         .find(|a| a.key.local_name().as_ref() == key)
-        .map(|a| a.value.replace("&amp;", "&"))
+        .map(|a| decode_entities(&a.value))
 }
 
 pub fn validate_feed_url(raw: &str) -> CommandResult<url::Url> {
@@ -297,7 +364,7 @@ pub async fn news_fetch(url: String) -> CommandResult<Feed> {
         return Err(format!("The feed returned HTTP {}", status.as_u16()));
     }
     let body = http::read_limited(response, MAX_FEED_BYTES).await?;
-    parse_feed(&String::from_utf8_lossy(&body))
+    parse_feed(&feed_text(&body))
 }
 
 /// Opens an http(s) link in the default browser.
@@ -326,6 +393,23 @@ mod tests {
         assert_eq!(feed.items[0].link.as_deref(), Some("https://example.com/a"));
         assert_eq!(feed.items[1].title, "Café news");
         assert_eq!(feed.items[1].link, None, "non-web links are dropped");
+    }
+
+    #[test]
+    fn decodes_titles_escaped_twice_and_marked_up() {
+        let xml = r#"<rss><channel><title>News</title>
+            <item><title><![CDATA[It&#8217;s &uuml;ber &unknown; 5 & 6]]></title><link>https://example.com/a?x=1&amp;y=2</link></item>
+            <item><title>M&uuml;nchen</title></item>
+            </channel></rss>"#;
+        let feed = parse_feed(xml).unwrap();
+        assert_eq!(feed.items[0].title, "It’s über &unknown; 5 & 6");
+        assert_eq!(feed.items[0].link.as_deref(), Some("https://example.com/a?x=1&y=2"));
+        assert_eq!(feed.items[1].title, "München");
+        let atom = r#"<feed><entry><title type="xhtml"><div>Hallo <b>Welt</b></div></title><link href="https://e.xyz/?a=1&#38;b=2"/></entry></feed>"#;
+        let feed = parse_feed(atom).unwrap();
+        assert_eq!(feed.items[0].title, "Hallo Welt");
+        assert_eq!(feed.items[0].link.as_deref(), Some("https://e.xyz/?a=1&b=2"));
+        assert_eq!(feed_text(&[0x4D, 0xFC, 0x6E]), "Mün", "Latin-1 feeds keep their umlauts");
     }
 
     #[test]

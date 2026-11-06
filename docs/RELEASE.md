@@ -6,6 +6,7 @@ NOVA updates itself from a public GitHub repository. Every release is a signed N
 
 1. **Signing key.** It lives outside the repository at `%USERPROFILE%\.nova\updater\nova-updater.key`; the public key is in `src-tauri/tauri.conf.json`.
    - **Back the private key up** (password manager or USB stick). Without it you can't sign updates, and existing installations can't update anymore.
+   - The original key was lost with the first development PC, so 1.7.0 introduced the current one; versions before 1.7.0 have to install 1.7.0 by hand once.
    - Never commit it. To create a new pair: `npx tauri signer generate -w "%USERPROFILE%\.nova\updater\nova-updater.key"`. Installed apps keep trusting only the old public key until they are reinstalled.
 2. **Public GitHub repository.** Create one, then connect and push:
 
