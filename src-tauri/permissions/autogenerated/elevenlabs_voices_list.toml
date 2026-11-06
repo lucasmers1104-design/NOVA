@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-elevenlabs-voices-list"
+description = "Enables the elevenlabs_voices_list command without any pre-configured scope."
+commands.allow = ["elevenlabs_voices_list"]
+
+[[permission]]
+identifier = "deny-elevenlabs-voices-list"
+description = "Denies the elevenlabs_voices_list command without any pre-configured scope."
+commands.deny = ["elevenlabs_voices_list"]

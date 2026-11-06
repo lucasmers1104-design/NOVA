@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-backdrop-image-pick"
+description = "Enables the backdrop_image_pick command without any pre-configured scope."
+commands.allow = ["backdrop_image_pick"]
+
+[[permission]]
+identifier = "deny-backdrop-image-pick"
+description = "Denies the backdrop_image_pick command without any pre-configured scope."
+commands.deny = ["backdrop_image_pick"]

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.9.1 — 2026-11-06
+
+### Fixed
+- **Online voices stayed grey after entering a key.** NOVA saved the key but wasn't allowed to check for it, so it showed no sign and the voices couldn't be picked. Now it confirms the key and the voices are ready at once.
+- The same mistake also blocked your own picture as a background, ElevenLabs keys and its voice list, and cancelling a virus scan. All of them work now.
+- A test now fails whenever a new function of NOVA isn't allowed to run, so this can't happen unnoticed again.
+
 ## 1.9.0 — 2026-11-06
 
 ### Added

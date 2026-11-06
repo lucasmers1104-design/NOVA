@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-online-voice-keys"
+description = "Enables the online_voice_keys command without any pre-configured scope."
+commands.allow = ["online_voice_keys"]
+
+[[permission]]
+identifier = "deny-online-voice-keys"
+description = "Denies the online_voice_keys command without any pre-configured scope."
+commands.deny = ["online_voice_keys"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-backdrop-image-load"
+description = "Enables the backdrop_image_load command without any pre-configured scope."
+commands.allow = ["backdrop_image_load"]
+
+[[permission]]
+identifier = "deny-backdrop-image-load"
+description = "Denies the backdrop_image_load command without any pre-configured scope."
+commands.deny = ["backdrop_image_load"]

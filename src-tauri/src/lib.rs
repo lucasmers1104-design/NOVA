@@ -260,3 +260,34 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running NOVA");
 }
+
+#[cfg(test)]
+mod tests {
+    /// The command names between two markers in a source file, without paths.
+    fn names_between<'a>(source: &'a str, start: &str, end: &str) -> Vec<&'a str> {
+        let list = source.split_once(start).expect("start marker").1.split_once(end).expect("end marker").0;
+        list.split(',').map(|item| item.trim().trim_matches('"')).map(|item| item.rsplit("::").next().unwrap_or(item)).filter(|item| !item.is_empty()).collect()
+    }
+
+    /// Tauri refuses a command that isn't declared and allowed for a window, but
+    /// only in the real app: tests and the browser preview never get that far.
+    #[test]
+    fn every_command_is_declared_and_allowed_for_a_window() {
+        let lib = include_str!("lib.rs");
+        let build = include_str!("../build.rs");
+        let main = include_str!("../capabilities/default.json");
+        let assistant = include_str!("../capabilities/assistant.json");
+        // Split here so this test doesn't find its own markers first.
+        let handlers = names_between(lib, concat!("generate_handler", "!["), "])");
+        let declared = names_between(build, "commands(&[", "])");
+        assert!(handlers.len() > 100, "found only {}", handlers.len());
+        for command in &handlers {
+            assert!(declared.contains(command), "{command} is missing from build.rs");
+            let permission = format!("\"allow-{}\"", command.replace('_', "-"));
+            assert!(main.contains(&permission) || assistant.contains(&permission), "{command} is allowed in no capability file");
+        }
+        for command in &declared {
+            assert!(handlers.contains(command), "build.rs declares {command}, which doesn't exist");
+        }
+    }
+}

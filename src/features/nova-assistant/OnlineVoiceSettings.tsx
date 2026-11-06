@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Badge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
 import { aiKeys } from "@/features/ai/api";
-import { notifyError } from "@/features/notifications/store";
+import { notify, notifyError } from "@/features/notifications/store";
 import { SettingRow } from "@/features/settings/SettingsLayout";
 import { callNative, isDesktop } from "@/lib/native";
 import { isOnlineVoice, useVoice } from "./voice";
@@ -132,6 +132,7 @@ export function OnlineVoiceKeyRow({ service }: { service: Service }) {
     onSuccess: () => {
       setKey("");
       refresh();
+      notify(`${info.name} key saved`, { kind: "success", body: "You can use its voices now." });
     },
     onError: (error) => notifyError("Couldn't save the key", error),
   });
