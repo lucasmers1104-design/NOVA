@@ -63,6 +63,8 @@ export function useVoiceTurns({ agent, wake, typing, onStart, onSend }: VoiceTur
   startVoiceRef.current = startVoice;
   const sayRef = useRef(say);
   sayRef.current = say;
+  const onSendRef = useRef(onSend);
+  onSendRef.current = onSend;
   useEffect(() => {
     if (!wake) return;
     let cancelled = false;
@@ -74,6 +76,12 @@ export function useVoiceTurns({ agent, wake, typing, onStart, onSend }: VoiceTur
       if (cancelled) return;
       // A reply is still running: the greeting would cut it off and nobody could answer.
       if (useConversation.getState().busy) return;
+      // "Hey NOVA, wie spät ist es?": the request is already there.
+      if (wake.call.request) {
+        onSendRef.current?.();
+        void useConversation.getState().send(wake.call.request, { voice: true, ack: voiceLine("ack", language) });
+        return;
+      }
       // Said before the microphone opens, so NOVA doesn't hear itself. A greeting
       // whose audio never ends must not keep the microphone closed.
       const greeted = sayRef.current(voiceLine("greet", language), "greet");

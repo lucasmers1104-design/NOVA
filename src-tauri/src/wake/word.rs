@@ -25,6 +25,8 @@ pub struct Heard {
     /// 0–1.
     pub raw: f64,
     pub duration_ms: i64,
+    /// What was said right after the call ("Hey NOVA, wie spät ist es?").
+    pub request: Option<String>,
 }
 
 /// A running recognition session. Stops when dropped.
@@ -76,6 +78,7 @@ impl PhraseListener {
                     confidence,
                     raw: result.RawConfidence().unwrap_or(0.0),
                     duration_ms: result.PhraseDuration().map(|d| d.Duration / 10_000).unwrap_or(0),
+                    request: None,
                 });
                 Ok(())
             }))

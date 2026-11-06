@@ -21,7 +21,8 @@ use crate::credentials;
 type CommandResult<T> = Result<T, String>;
 
 const GEMINI_URL: &str = "https://generativelanguage.googleapis.com/v1beta/interactions";
-const GEMINI_MODEL: &str = "gemini-3.8-flash-tts";
+/// The faster of Google's two: about 3.5 s for a sentence here, against 5 s.
+const GEMINI_MODEL: &str = "gemini-3.8-flash-lite-tts";
 const ELEVENLABS_URL: &str = "https://api.elevenlabs.io/v1";
 /// Fast, and costs half the credits per character of the larger models.
 const ELEVENLABS_MODEL: &str = "eleven_flash_v2_5";
@@ -225,6 +226,36 @@ pub async fn elevenlabs_voices_list() -> CommandResult<Vec<OnlineVoice>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Times both Gemini voice models with the key saved in NOVA.
+    /// `cargo test -- --ignored gemini_models --nocapture`
+    #[test]
+    #[ignore]
+    fn gemini_models() {
+        let key = Provider::Gemini.api_key().unwrap();
+        let client = reqwest::Client::new();
+        let out = std::env::var_os("NOVA_VOICE_OUT").map(PathBuf::from);
+        tauri::async_runtime::block_on(async {
+            for round in 0..2 {
+                for model in ["gemini-3.8-flash-tts", "gemini-3.8-flash-lite-tts"] {
+                    for (name, text) in [("kurz", "Alles klar, mach ich."), ("lang", "Klar, ich schaue mir das an und sage dir gleich Bescheid, was dein PC gerade so langsam macht.")] {
+                        let mut body = gemini_body("Sulafat", text, 1.0);
+                        body["model"] = json!(model);
+                        let started = Instant::now();
+                        let response = client.post(GEMINI_URL).header("x-goog-api-key", &key).json(&body).send().await.unwrap();
+                        let status = response.status();
+                        let bytes = response.bytes().await.unwrap();
+                        let ms = started.elapsed().as_millis();
+                        let audio = serde_json::from_slice::<Value>(&bytes).ok().and_then(|reply| gemini_audio(&reply).ok());
+                        eprintln!("{round} {model} {name}: {status} {ms} ms, {} KB audio", audio.as_ref().map_or(0, |a| a.len() / 1024));
+                        if let (Some(dir), Some(audio), 0) = (&out, audio, round) {
+                            let _ = std::fs::write(dir.join(format!("{model}-{name}.wav")), audio);
+                        }
+                    }
+                }
+            }
+        });
+    }
 
     #[test]
     fn voice_ids_are_plain() {

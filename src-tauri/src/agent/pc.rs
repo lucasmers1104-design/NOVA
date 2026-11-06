@@ -345,7 +345,7 @@ pub fn element_lines(elements: &[(String, String, Option<String>)]) -> String {
     lines.join("\n")
 }
 
-pub use win::{installed_programs, read_window, send_input, use_element, window_action, windows};
+pub use win::{act_on, installed_programs, read_window, send_input, show_quietly, use_element, window_action, windows};
 
 #[cfg(windows)]
 mod win {
@@ -364,7 +364,7 @@ mod win {
     use windows::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, VIRTUAL_KEY};
     use windows::Win32::UI::WindowsAndMessaging::{
         BringWindowToTop, EnumWindows, GetAncestor, GetForegroundWindow, GetWindow, GetWindowLongPtrW, GetWindowTextW, GetWindowThreadProcessId, IsHungAppWindow, IsIconic, IsWindow, IsWindowVisible, PostMessageW,
-        SetForegroundWindow, ShowWindow, GA_ROOT, GWL_EXSTYLE, GW_OWNER, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, WM_CLOSE, WS_EX_TOOLWINDOW,
+        SetForegroundWindow, ShowWindow, GA_ROOT, GWL_EXSTYLE, GW_OWNER, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, WM_CLOSE, WS_EX_TOOLWINDOW,
     };
 
     use super::{Combo, Target, WindowInfo, WindowVerb, MAX_ELEMENTS};
@@ -621,6 +621,38 @@ mod win {
         Ok(elements(target)?.into_iter().map(|(kind, name, value, _)| (kind, name, value)).collect())
     }
 
+    /// Shows a minimized window without taking the focus (`visible`), or minimizes
+    /// it again, also without. Apps often ignore clicks from outside while minimized.
+    pub fn show_quietly(target: &Target, visible: bool) -> Result<(), String> {
+        let window = check(target)?;
+        // SAFETY: a window handle checked just now; these flags never activate it.
+        let _ = unsafe { ShowWindow(window, if visible { SW_SHOWNOACTIVATE } else { SW_SHOWMINNOACTIVE }) };
+        Ok(())
+    }
+
+    /// Presses (or with `text`, fills) the element `pick` chooses from the window's
+    /// elements, without bringing the window to the front. None if it chooses none.
+    #[allow(clippy::type_complexity)]
+    pub fn act_on(target: &Target, pick: &dyn Fn(&[(String, String, Option<String>)]) -> Option<usize>, text: Option<&str>) -> Result<Option<String>, String> {
+        let found = elements(target)?;
+        let listed: Vec<(String, String, Option<String>)> = found.iter().map(|(kind, name, value, _)| (kind.clone(), name.clone(), value.clone())).collect();
+        let Some((_, name, _, element)) = pick(&listed).and_then(|index| found.get(index)) else { return Ok(None) };
+        // SAFETY: COM calls on interfaces owned here.
+        unsafe {
+            if let Some(text) = text {
+                let pattern = element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId).map_err(|_| format!("“{name}” can't take text"))?;
+                pattern.SetValue(&BSTR::from(text)).map_err(|e| format!("Couldn't fill “{name}”: {e}"))?;
+            } else if let Ok(pattern) = element.GetCurrentPatternAs::<IUIAutomationInvokePattern>(UIA_InvokePatternId) {
+                pattern.Invoke().map_err(|e| format!("Couldn't press “{name}”: {e}"))?;
+            } else if let Ok(pattern) = element.GetCurrentPatternAs::<IUIAutomationTogglePattern>(UIA_TogglePatternId) {
+                pattern.Toggle().map_err(|e| format!("Couldn't switch “{name}”: {e}"))?;
+            } else {
+                return Err(format!("“{name}” can't be pressed from outside"));
+            }
+        }
+        Ok(Some(name.clone()))
+    }
+
     /// Presses a button, selects a tab or item, flips a checkbox, or fills a field.
     pub fn use_element(target: &Target, name: &str, kind: Option<&str>, nth: usize, text: Option<&str>) -> Result<String, String> {
         let lower = name.to_lowercase();
@@ -718,6 +750,8 @@ mod win {
     pub fn send_input(_: &Target, _: &[Combo], _: u32, _: Option<&str>) -> Result<u32, String> { Err(NO.into()) }
     pub fn read_window(_: &Target) -> Result<Vec<(String, String, Option<String>)>, String> { Err(NO.into()) }
     pub fn use_element(_: &Target, _: &str, _: Option<&str>, _: usize, _: Option<&str>) -> Result<String, String> { Err(NO.into()) }
+    pub fn act_on(_: &Target, _: &dyn Fn(&[(String, String, Option<String>)]) -> Option<usize>, _: Option<&str>) -> Result<Option<String>, String> { Err(NO.into()) }
+    pub fn show_quietly(_: &Target, _: bool) -> Result<(), String> { Err(NO.into()) }
     pub fn installed_programs() -> Vec<(String, u64, Option<String>)> { Vec::new() }
 }
 

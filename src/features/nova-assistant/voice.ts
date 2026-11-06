@@ -225,6 +225,10 @@ let activeReply: { cancel: () => void } | null = null;
 
 type SpeechPrefs = Pick<AgentPrefs, "voice" | "speechRate" | "speechVolume">;
 
+/** Faster than this, a line came from the disk and not from the online service. */
+const ONLINE_CACHE_MS = 300;
+const ONLINE_LINE_PAUSE_MS = 20_000;
+
 /** NOVA's fixed lines (greetings, "one moment") made ahead, so they play at once. */
 const madeAhead = new Map<string, ArrayBuffer>();
 const aheadKey = (voice: string, text: string, rate: number) => `${voice}|${rate}|${text}`;
@@ -264,15 +268,22 @@ async function synthesizeOnline(text: string, rate: number, voice: string, germa
  * keeps its voice warm. `busy`: a reply is on its way; it goes first.
  */
 export async function prepareNovaLines(language: string, rate: number, preferred = "", busy: () => boolean = () => false): Promise<void> {
-  const voice = novaVoiceId(preferred);
-  const lines = LINES[speaksGerman(language) ? "de" : "en"];
+  const online = isOnlineVoice(preferred);
+  const voice = online ? preferred : novaVoiceId(preferred);
+  const german = speaksGerman(language);
+  const lines = LINES[german ? "de" : "en"];
   for (const line of [...lines.greet, ...lines.ack, ...lines.confirm, ...lines.failed, ...lines.code]) {
-    for (const chunk of speechChunks(normalizeGerman(speakableText(line)))) {
+    const spoken = speakableText(line);
+    for (const chunk of online ? [spoken] : speechChunks(normalizeGerman(spoken))) {
       const key = aheadKey(voice, chunk, rate);
       if (madeAhead.has(key)) continue;
       while (speechActive() || busy()) await new Promise((resolve) => setTimeout(resolve, 500));
       try {
-        madeAhead.set(key, await callNative<ArrayBuffer>("tts_speak", { text: chunk, rate, voice }));
+        const started = Date.now();
+        // Kept on disk for online voices, so each line costs one request ever.
+        madeAhead.set(key, await callNative<ArrayBuffer>("tts_speak", online ? { text: chunk, rate, voice, language: german ? "de" : "en", keep: true } : { text: chunk, rate, voice }));
+        // Free online voices allow only a few requests a minute; the replies need them more.
+        if (online && Date.now() - started > ONLINE_CACHE_MS) await new Promise((resolve) => setTimeout(resolve, ONLINE_LINE_PAUSE_MS));
       } catch {
         return;
       }
@@ -468,11 +479,10 @@ export function requestFollowUp(): void {
 /**
  * Whether `text` can be said right away: a Windows voice can, NOVA's voice
  * only once the line was made ahead (otherwise it would hold up the reply).
- * Online voices are never that quick.
  */
 export function lineReady(text: string, prefs: SpeechPrefs): boolean {
-  if (isOnlineVoice(prefs.voice)) return false;
   const spoken = speakableText(text);
+  if (isOnlineVoice(prefs.voice)) return madeAhead.has(aheadKey(prefs.voice, spoken, prefs.speechRate));
   if (!usesNovaVoice(spoken, prefs.voice) || useVoice.getState().novaVoice?.state !== "ready") return true;
   const voice = novaVoiceId(prefs.voice);
   return speechChunks(normalizeGerman(spoken)).every((chunk) => madeAhead.has(aheadKey(voice, chunk, prefs.speechRate)));

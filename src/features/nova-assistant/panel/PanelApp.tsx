@@ -10,7 +10,7 @@ import { onReply, useConversation } from "../conversation";
 import { ReplyDirector } from "../speech/director";
 import { watchScan } from "../scan";
 import { ASSISTANT_EVENTS, type AgentStatus, type AssistantState, type DotCorner, type FinderStatus, type WakeCall } from "../types";
-import { installNovaVoice, listen as listenOnce, prepareNovaLines, speak, speaksGerman, speechActive, stopListening, stopSpeaking, useVoice, voiceLine, watchNovaVoice } from "../voice";
+import { installNovaVoice, isOnlineVoice, listen as listenOnce, prepareNovaLines, speak, speaksGerman, speechActive, stopListening, stopSpeaking, useVoice, voiceLine, watchNovaVoice } from "../voice";
 import { HeadlessVoice } from "./HeadlessVoice";
 
 // Dev builds: a handle for end-to-end checks over the DevTools protocol (scripts/cdp.mjs).
@@ -74,7 +74,8 @@ export function PanelApp() {
   const rate = agent?.prefs.speechRate;
   const voicePref = agent?.prefs.voice;
   useEffect(() => {
-    if (usesNovaVoice && novaVoice?.state === "ready" && language !== undefined && rate !== undefined) void prepareNovaLines(language, rate, voicePref, () => useConversation.getState().busy);
+    const canPrepare = (usesNovaVoice && novaVoice?.state === "ready") || isOnlineVoice(voicePref ?? "");
+    if (canPrepare && language !== undefined && rate !== undefined) void prepareNovaLines(language, rate, voicePref, () => useConversation.getState().busy);
   }, [usesNovaVoice, novaVoice?.state, language, rate, voicePref]);
 
   useEffect(() => {

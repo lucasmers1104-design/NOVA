@@ -128,6 +128,14 @@ pub fn open_system_link(_link: &'static str) -> Result<(), String> {
     Err("This requires Windows".into())
 }
 
+/// A `spotify:` link NOVA built itself, with its query encoded by `encode_query`.
+pub fn open_system_link_owned(link: &str) -> Result<(), String> {
+    if !link.starts_with("spotify:") {
+        return Err("Only Spotify links can be opened this way".into());
+    }
+    run_program(link, "")
+}
+
 /// Starts a program the way Explorer would, so one that needs administrator
 /// rights gets Windows' prompt. Doesn't wait for it.
 #[cfg(windows)]

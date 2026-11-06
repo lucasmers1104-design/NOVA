@@ -1,6 +1,15 @@
 # Changelog
 
-## 1.9.1 — 2026-11-06
+## 1.9.2 — 2026-11-06
+
+### Added
+- **NOVA plays music on Spotify for you**: "Spiel Thriller von Michael Jackson" searches and starts it right away, also albums, playlists and artists. "Spiel meine Lieblingssongs" plays from your own library. It can also press shuffle and repeat and save the current song, and it tells you what really plays. No login, and it works with free accounts. Spotify comes to the front for a moment, and your window comes back afterwards. In a fullscreen game only pause, next, previous and volume work, because anything more would pull you out of the game.
+- **"Hey NOVA, wie spät ist es?" just works**: what you say right after the call goes straight to NOVA, without the greeting in between.
+
+### Changed
+- **NOVA understands "Hey NOVA" better**: in a measurement with 624 voice samples it recognized 83 % of the calls instead of 71 % on "More forgiving", and woke by mistake 2 times instead of 12. Words that only sound similar, like "Casanova", no longer wake it. "Hallo Nova" and "Okay Nova" count too.
+- **Faster online voice**: Gemini voices use Google's faster model, and fixed lines like the greeting and "Einen Moment" are made ahead, so you hear something at once while the reply is being made.
+
 
 ### Fixed
 - **Online voices stayed grey after entering a key.** NOVA saved the key but wasn't allowed to check for it, so it showed no sign and the voices couldn't be picked. Now it confirms the key and the voices are ready at once.

@@ -51,7 +51,7 @@ const SERVICES = {
   gemini: {
     name: "Google Gemini",
     url: "https://aistudio.google.com/apikey",
-    help: "Free of charge within Google's limits (see your limits in Google AI Studio). No credit card needed. What NOVA says goes to Google, and this key also lets NOVA AI answer with Gemini.",
+    help: "Free of charge, but only for a few requests a minute (see your limits in Google AI Studio), so in long conversations NOVA's own voice sometimes steps in. No credit card needed. What NOVA says goes to Google, and this key also lets NOVA AI answer with Gemini.",
     save: (key: string) => callNative<void>("ai_key_set", { provider: "gemini", key }),
     hint: "AIza…",
   },

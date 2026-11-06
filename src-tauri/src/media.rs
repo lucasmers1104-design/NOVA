@@ -40,6 +40,11 @@ impl MediaState {
         self.status == "playing"
     }
 
+    /// "Song by Artist".
+    pub(crate) fn track(&self) -> String {
+        if self.artist.is_empty() { self.title.clone() } else { format!("{} by {}", self.title, self.artist) }
+    }
+
     /// "Song by Artist (Spotify, playing)", for NOVA AI.
     pub(crate) fn describe(&self) -> String {
         let source = if self.source_app_id.to_lowercase().contains("spotify") { "Spotify" } else { self.source_app_id.as_str() };

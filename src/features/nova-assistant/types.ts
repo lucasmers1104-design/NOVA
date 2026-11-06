@@ -61,6 +61,8 @@ export interface WakeCall {
   chime: boolean;
   /** A game fills the screen: answer by voice, without the panel. */
   headless?: boolean;
+  /** What was said right after the call: goes straight to NOVA AI, without a greeting. */
+  request?: string | null;
 }
 
 export interface PanelView {

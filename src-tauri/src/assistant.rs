@@ -692,7 +692,7 @@ struct ExpandEvent {
 }
 
 /// The panel opened by itself: what woke NOVA and what the panel should do.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WakeCall {
     source: crate::wake::Source,
@@ -702,6 +702,8 @@ pub struct WakeCall {
     chime: bool,
     /// A game fills the screen: answer by voice, without the panel.
     headless: bool,
+    /// What was said right after the call: goes straight to NOVA AI, without a greeting.
+    request: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -855,9 +857,9 @@ pub async fn assistant_headless_done<R: Runtime>(app: AppHandle<R>, window: Webv
 }
 
 /// "Hey NOVA" or a double clap: opens the panel, or asks an open one to listen.
-pub fn wake<R: Runtime>(app: &AppHandle<R>, source: crate::wake::Source, listen: bool, chime: bool) {
+pub fn wake<R: Runtime>(app: &AppHandle<R>, source: crate::wake::Source, listen: bool, chime: bool, request: Option<String>) {
     let headless = in_game(app);
-    let call = WakeCall { source, listen, chime, headless };
+    let call = WakeCall { source, listen, chime, headless, request };
     // While NOVA greets: get recognition, the voice and the AI provider's cache ready.
     if listen {
         if crate::speech::stt::use_local(app) {
@@ -1444,7 +1446,7 @@ pub async fn assistant_panel_ready<R: Runtime>(app: AppHandle<R>, window: Webvie
     let (open, origin, wake) = {
         let mut inner = state(&app).lock();
         inner.panel_loaded = true;
-        let waiting = inner.pending_wake.is_some_and(|call| call.headless);
+        let waiting = inner.pending_wake.as_ref().is_some_and(|call| call.headless);
         let wake = if inner.panel_open || waiting { inner.pending_wake.take() } else { None };
         (inner.panel_open, inner.panel_origin, wake)
     };

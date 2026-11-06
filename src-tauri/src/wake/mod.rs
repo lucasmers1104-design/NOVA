@@ -37,6 +37,8 @@ const EVENT_HEARD: &str = "wake://heard";
 const WAKE_PHRASE: &str = "hey nova";
 /// Common and similar-sounding phrases in the same list, so that speech which
 /// only resembles the wake phrase matches one of these instead of it.
+/// How else people say it; Windows only hears what is on its list.
+const WAKE_VARIANTS: &[&str] = &["hi nova", "hei nova", "hallo nova", "hey nowa"];
 const DECOYS: &[&str] = &[
     "hey", "nova", "hallo", "okay", "ja", "nein", "danke", "genau", "na ja", "hey noah", "hey nora", "hey du", "hey leute", "hey google", "okay google", "hey siri",
     "alexa", "hey cortana",
@@ -291,7 +293,7 @@ pub fn init<R: Runtime>(app: &AppHandle<R>, prefs: WakePrefs) {
         let app = app.clone();
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_secs(seconds));
-            wake_up(&app, Source::Clap);
+            wake_up(&app, Source::Clap, None);
         });
     }
 }
@@ -366,7 +368,8 @@ fn dictation_count(count: u32, started: bool) -> u32 {
 }
 
 /// Opens NOVA AI after a wake word or a double clap (unless a test runs).
-fn wake_up<R: Runtime>(app: &AppHandle<R>, source: Source) {
+/// `request`: what was said right after the call, which then goes straight to NOVA AI.
+fn wake_up<R: Runtime>(app: &AppHandle<R>, source: Source, request: Option<String>) {
     let prefs = {
         let mut inner = state(app).lock();
         if testing(&inner) || inner.dictating > 0 || inner.last_wake.is_some_and(|at| at.elapsed() < WAKE_DEBOUNCE) {
@@ -380,18 +383,19 @@ fn wake_up<R: Runtime>(app: &AppHandle<R>, source: Source) {
     if cfg!(debug_assertions) && std::env::var_os("NOVA_WAKE_LOG").is_some() {
         eprintln!("[wake] woke by {source:?} (listen: {listen})");
     }
-    crate::assistant::wake(app, source, listen, prefs.chime);
+    crate::assistant::wake(app, source, listen, prefs.chime, request);
 }
 
 /// Whether a phrase Windows heard should wake NOVA.
 fn accepts(text: &str, confidence: Confidence, raw: f64, duration_ms: i64, sensitivity: Sensitivity) -> bool {
     let sure = match sensitivity {
-        Sensitivity::Strict => confidence == Confidence::High,
-        Sensitivity::Normal => confidence == Confidence::High || (confidence == Confidence::Medium && raw >= 0.5),
+        Sensitivity::Strict => confidence == Confidence::High || (confidence == Confidence::Medium && raw >= 0.7),
+        Sensitivity::Normal => confidence == Confidence::High || (confidence == Confidence::Medium && raw >= 0.4),
     };
     // "Hey NOVA" takes about half a second to a second; 0 means Windows didn't say.
     let plausible = duration_ms == 0 || (250..=2500).contains(&duration_ms);
-    text.trim().eq_ignore_ascii_case(WAKE_PHRASE) && sure && plausible
+    let text = text.trim();
+    (text.eq_ignore_ascii_case(WAKE_PHRASE) || WAKE_VARIANTS.iter().any(|variant| text.eq_ignore_ascii_case(variant))) && sure && plausible
 }
 
 // ---------------------------------------------------------------------------
@@ -553,6 +557,7 @@ fn supervise<R: Runtime>(app: &AppHandle<R>) {
                     spot::Spotter::start(app, on_phrase(app)).map(PhraseSource::Offline)
                 } else {
                     let mut phrases = vec![WAKE_PHRASE];
+                    phrases.extend_from_slice(WAKE_VARIANTS);
                     phrases.extend_from_slice(DECOYS);
                     word::PhraseListener::start(&language, &phrases, on_phrase(app)).map(PhraseSource::Windows)
                 };
@@ -643,7 +648,7 @@ fn on_phrase<R: Runtime>(app: &AppHandle<R>) -> impl Fn(word::Heard) + Send + Sy
         let accepted = accepts(&phrase.text, phrase.confidence, phrase.raw, phrase.duration_ms, sensitivity) && !state.suppressed.load(Ordering::SeqCst);
         heard(&app, Heard::Phrase { text: phrase.text, confidence: phrase.confidence, accepted });
         if accepted {
-            wake_up(&app, Source::Phrase);
+            wake_up(&app, Source::Phrase, phrase.request);
         }
     }
 }
@@ -712,7 +717,7 @@ fn listen_for_claps<R: Runtime>(app: &AppHandle<R>, stop: &AtomicBool) -> Result
                     let veto = clap_veto(at(first_ms), at(second_ms), last_paused, &inputs, &loudness).filter(|veto| sensitivity == Sensitivity::Strict || *veto != Veto::Speakers);
                     heard(app, Heard::Double { veto });
                     if veto.is_none() {
-                        wake_up(app, Source::Clap);
+                        wake_up(app, Source::Clap, None);
                     }
                 }
             }
@@ -882,7 +887,10 @@ mod tests {
     fn wake_phrase_needs_confidence() {
         assert!(accepts("hey nova", Confidence::High, 0.9, 700, Sensitivity::Strict));
         assert!(accepts("Hey Nova ", Confidence::High, 0.9, 0, Sensitivity::Strict));
-        assert!(!accepts("hey nova", Confidence::Medium, 0.8, 700, Sensitivity::Strict));
+        assert!(accepts("hi nova", Confidence::High, 0.9, 700, Sensitivity::Strict));
+        assert!(accepts("hey nova", Confidence::Medium, 0.8, 700, Sensitivity::Strict));
+        // What NOVA's own recognizer reports as near: only "More forgiving" takes it.
+        assert!(!accepts("hey nova", Confidence::Medium, 0.6, 700, Sensitivity::Strict));
         assert!(accepts("hey nova", Confidence::Medium, 0.6, 700, Sensitivity::Normal));
         assert!(!accepts("hey nova", Confidence::Medium, 0.3, 700, Sensitivity::Normal));
         assert!(!accepts("hey nova", Confidence::Low, 0.9, 700, Sensitivity::Normal));
