@@ -14,13 +14,14 @@ export function useAssistantBridge(): void {
   const transparency = useSettings((s) => s.transparency);
   const motion = useSettings((s) => s.motion);
   const displayName = useSettings((s) => s.displayName);
+  const backdropGradient = useSettings((s) => s.backdropGradient);
   const openSettings = useUi((s) => s.openSettings);
   const navigate = useUi((s) => s.navigate);
 
   useEffect(() => {
     if (!isDesktop()) return;
-    emit(ASSISTANT_EVENTS.appearance, { accent, transparency, motion, displayName }).catch(() => {});
-  }, [accent, transparency, motion, displayName]);
+    emit(ASSISTANT_EVENTS.appearance, { accent, transparency, motion, displayName, backdropGradient }).catch(() => {});
+  }, [accent, transparency, motion, displayName, backdropGradient]);
 
   useEffect(() => {
     if (!isDesktop()) return;

@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { getTauriVersion, getVersion } from "@tauri-apps/api/app";
-import { Activity, AudioLines, Check, CloudDownload, Cpu, Ear, FolderSearch, Globe, Info, Keyboard, KeyRound, LayoutDashboard, Layers, type LucideIcon, Palette, PanelLeft, Plug, Power, RotateCcw, ShieldCheck, Sparkles, TriangleAlert } from "lucide-react";
+import { Activity, AudioLines, Check, CloudDownload, Cpu, Ear, FolderSearch, Globe, Info, Keyboard, KeyRound, LayoutDashboard, Layers, type LucideIcon, Palette, PanelLeft, Plug, Power, RotateCcw, ShieldCheck, Sparkles, TriangleAlert, UserRound } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { SHORTCUTS } from "@/app/shortcuts";
 import { NovaMark } from "@/components/brand/NovaMark";
@@ -20,11 +20,13 @@ import { useStorageHealth } from "@/lib/persistence";
 import { type MotionPreference, REFRESH_INTERVALS_MS, type TitleBarClock, useSettings } from "@/stores/settings";
 import { useUi } from "@/stores/ui";
 import { AccentSettings } from "./AccentSettings";
+import { BackdropSettings } from "./BackdropSettings";
 import { AiProviderSettings, IntegrationsSettings, ProfilesSettings, StartupSettings, UpdatesSettings, useExternalConnections } from "./ExtraSettings";
 import { NavigationSettings } from "./NavigationSettings";
 import { SettingRow, SettingsSection } from "./SettingsLayout";
 
 const SECTIONS: readonly { id: string; label: string; icon: LucideIcon }[] = [
+  { id: "you", label: "Your name", icon: UserRound },
   { id: "appearance", label: "Appearance", icon: Palette },
   { id: "profiles", label: "Profiles", icon: Layers },
   { id: "navigation", label: "Navigation", icon: PanelLeft },
@@ -103,6 +105,7 @@ export default function SettingsPage() {
 
         <div className="max-w-3xl space-y-5">
           <StorageWarning />
+          <NameSection />
           <AppearanceSection />
           <ProfilesSettings />
           <NavigationSettings />
@@ -148,6 +151,32 @@ function useActiveSection(): string {
   return active;
 }
 
+function NameSection() {
+  const displayName = useSettings((s) => s.displayName);
+  const setDisplayName = useSettings((s) => s.setDisplayName);
+  const { data: info } = useSystemInfo();
+  const nameId = useId();
+
+  return (
+    <SettingsSection id="you" title="Your name" description="What NOVA calls you, on Home and when it talks to you." icon={UserRound}>
+      <SettingRow
+        label="Your name"
+        htmlFor={nameId}
+        description={info?.userName ? `Without one, Home shows your Windows account name (${info.userName}) and NOVA AI doesn't use a name at all.` : "Without one, NOVA AI doesn't use a name at all."}
+      >
+        <input
+          id={nameId}
+          value={displayName}
+          onChange={(event) => setDisplayName(event.target.value)}
+          placeholder="Your name"
+          maxLength={40}
+          className="h-9 w-56 rounded-control border border-line bg-black/25 px-3 text-[13px] text-fg outline-none select-text placeholder:text-fg-subtle focus:border-line-strong"
+        />
+      </SettingRow>
+    </SettingsSection>
+  );
+}
+
 function AppearanceSection() {
   const transparency = useSettings((s) => s.transparency);
   const setTransparency = useSettings((s) => s.setTransparency);
@@ -155,15 +184,17 @@ function AppearanceSection() {
   const setMotion = useSettings((s) => s.setMotion);
   const wallpaperBackdrop = useSettings((s) => s.wallpaperBackdrop);
   const setWallpaperBackdrop = useSettings((s) => s.setWallpaperBackdrop);
+  const hasGradient = useSettings((s) => s.backdropGradient !== null);
 
   return (
-    <SettingsSection id="appearance" title="Appearance" description="Accent color, surfaces and motion." icon={Palette}>
+    <SettingsSection id="appearance" title="Appearance" description="Accent color, background, glass and motion." icon={Palette}>
       <AccentSettings />
+      <BackdropSettings />
       <SettingRow label="Transparency effects" description="Frosted-glass surfaces. Turn off for smoother performance on integrated graphics.">
         <Switch label="Transparency effects" checked={transparency} onChange={setTransparency} />
       </SettingRow>
-      <SettingRow label="Wallpaper backdrop" description="Shows your desktop wallpaper softly behind NOVA's glass, like macOS. Needs transparency effects.">
-        <Switch label="Wallpaper backdrop" checked={wallpaperBackdrop} disabled={!transparency} onChange={setWallpaperBackdrop} />
+      <SettingRow label="Wallpaper backdrop" description={hasGradient ? "Off while a color gradient is picked above." : "Shows your desktop wallpaper softly behind NOVA's glass, like macOS. Needs transparency effects."}>
+        <Switch label="Wallpaper backdrop" checked={wallpaperBackdrop && !hasGradient} disabled={!transparency || hasGradient} onChange={setWallpaperBackdrop} />
       </SettingRow>
       <SettingRow label="Motion" description="“System” follows the Windows animation setting.">
         <SegmentedControl label="Motion" value={motion} options={MOTION_OPTIONS} onChange={setMotion} />
@@ -173,31 +204,13 @@ function AppearanceSection() {
 }
 
 function DashboardSection() {
-  const displayName = useSettings((s) => s.displayName);
-  const setDisplayName = useSettings((s) => s.setDisplayName);
   const use24HourClock = useSettings((s) => s.use24HourClock);
   const setUse24HourClock = useSettings((s) => s.setUse24HourClock);
   const titleBarClock = useSettings((s) => s.titleBarClock);
   const setTitleBarClock = useSettings((s) => s.setTitleBarClock);
-  const { data: info } = useSystemInfo();
-  const nameId = useId();
 
   return (
-    <SettingsSection id="dashboard" title="Dashboard" description="How Home greets you and tells time." icon={LayoutDashboard}>
-      <SettingRow
-        label="Display name"
-        htmlFor={nameId}
-        description={info?.userName ? `Leave empty to use your Windows account name (${info.userName}).` : "Used in greetings on Home."}
-      >
-        <input
-          id={nameId}
-          value={displayName}
-          onChange={(event) => setDisplayName(event.target.value)}
-          placeholder={info?.userName ?? "Your name"}
-          maxLength={40}
-          className="h-9 w-56 rounded-control border border-line bg-black/25 px-3 text-[13px] text-fg outline-none select-text placeholder:text-fg-subtle focus:border-line-strong"
-        />
-      </SettingRow>
+    <SettingsSection id="dashboard" title="Dashboard" description="How Home tells time." icon={LayoutDashboard}>
       <SettingRow label="24-hour clock" description="Show times as 18:30 instead of 6:30 PM.">
         <Switch label="24-hour clock" checked={use24HourClock} onChange={setUse24HourClock} />
       </SettingRow>
@@ -262,8 +275,9 @@ const PRIVACY_FACTS = [
   "System metrics, apps, files and media are read locally and never leave your device.",
   "AI keys live in Windows Credential Manager. Only your messages — and screenshots or files when you share them — go to the provider you chose.",
   "Wallpaper colors are sampled on this PC.",
-  "The NOVA AI dot never captures your screen in the background. Changes to files always wait for your OK.",
-  "Voice input uses Windows speech recognition, only while the microphone button is active.",
+  "The NOVA AI dot never captures your screen in the background. Changes to files wait for your OK, unless you turn on auto mode.",
+  "Voice input uses Windows speech recognition or NOVA's offline recognizer, only while the microphone is open. After a spoken reply it opens again by itself, unless you turn that off.",
+  "NOVA's own voices run on this PC. If you pick an online voice, what NOVA says goes to that service (Google or ElevenLabs).",
   "“Hey NOVA” and the double clap keep the microphone open only while you turn them on. The sound is checked on this PC and never recorded, saved or sent.",
 ];
 

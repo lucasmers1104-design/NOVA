@@ -1,6 +1,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
 import { DEFAULT_ACCENT, isAccentSetting } from "@/design/accent";
+import { DEFAULT_GLASS_OPACITY, sanitizeGradient } from "@/design/backdrop";
 import { applyTheme, type ThemeSettings } from "@/design/themeDom";
 import { callNative, isDesktop } from "@/lib/native";
 import { ASSISTANT_EVENTS } from "./types";
@@ -10,7 +11,7 @@ export interface Appearance extends ThemeSettings {
   displayName: string;
 }
 
-export const DEFAULT_APPEARANCE: Appearance = { accent: DEFAULT_ACCENT, transparency: true, motion: "system", displayName: "" };
+export const DEFAULT_APPEARANCE: Appearance = { accent: DEFAULT_ACCENT, transparency: true, motion: "system", displayName: "", backdropGradient: null, glassOpacity: DEFAULT_GLASS_OPACITY };
 
 /** Validates appearance data field by field; anything malformed keeps its default. */
 export function sanitizeAppearance(input: unknown): Appearance {
@@ -21,6 +22,9 @@ export function sanitizeAppearance(input: unknown): Appearance {
     transparency: typeof raw.transparency === "boolean" ? raw.transparency : DEFAULT_APPEARANCE.transparency,
     motion: raw.motion === "system" || raw.motion === "reduced" || raw.motion === "full" ? raw.motion : DEFAULT_APPEARANCE.motion,
     displayName: typeof raw.displayName === "string" ? raw.displayName.slice(0, 40) : "",
+    backdropGradient: sanitizeGradient(raw.backdropGradient ?? null) ?? null,
+    // The assistant windows have no glass panes of their own to tune.
+    glassOpacity: DEFAULT_GLASS_OPACITY,
   };
 }
 

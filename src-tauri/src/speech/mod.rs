@@ -346,6 +346,10 @@ pub fn speak<R: Runtime>(app: &AppHandle<R>, voice: Option<&str>, text: &str, ra
 /// Gets the current voice ready (NOVA woke up).
 pub fn warm_voice<R: Runtime>(app: &AppHandle<R>) {
     let preference = crate::agent::prefs(app).voice;
+    // An online voice has nothing to load; NOVA's own only steps in if it fails.
+    if crate::online_voice::is_online(&preference) {
+        return;
+    }
     let preference = if preference.starts_with("nova:") { preference } else { "nova:thorsten".into() };
     let Some(item) = catalog::voice(&preference) else { return };
     if prefs(app).mode == Mode::Low && lock(&state(app).tts).is_none() {

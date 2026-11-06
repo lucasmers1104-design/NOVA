@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { CUSTOMIZABLE_ROUTES, type RouteId, WORKSPACE_ORDERABLE_ROUTES } from "@/app/navigation";
 import { type AccentSetting, DEFAULT_ACCENT, isAccentSetting } from "@/design/accent";
+import { type BackdropGradient, DEFAULT_BACKDROP_DIM, DEFAULT_GLASS_OPACITY, MAX_BACKDROP_DIM, MAX_GLASS_OPACITY, MIN_GLASS_OPACITY, sanitizeGradient } from "@/design/backdrop";
 import { nativeStorage } from "@/lib/persistence";
 import { systemPrefers24Hour } from "@/lib/time";
 
@@ -53,6 +54,12 @@ export interface Settings {
   newsFeeds: NewsFeed[];
   /** Shows the desktop wallpaper behind the glass, like macOS. */
   wallpaperBackdrop: boolean;
+  /** A color gradient behind the glass, instead of the wallpaper. */
+  backdropGradient: BackdropGradient | null;
+  /** How much the gradient is darkened, in percent. */
+  backdropDim: number;
+  /** How solid the glass is, in percent. */
+  glassOpacity: number;
   /** GitHub "owner/repo" or HTTPS URL; empty means the built-in default. */
   updateSource: string;
   /** Check at every start and install found updates after a short countdown. */
@@ -81,6 +88,9 @@ interface SettingsActions {
   addNewsFeed: (feed: NewsFeed) => void;
   removeNewsFeed: (url: string) => void;
   setWallpaperBackdrop: (enabled: boolean) => void;
+  setBackdropGradient: (gradient: BackdropGradient | null) => void;
+  setBackdropDim: (percent: number) => void;
+  setGlassOpacity: (percent: number) => void;
   setUpdateSource: (source: string) => void;
   setAutoUpdate: (enabled: boolean) => void;
   setLastSeenVersion: (version: string) => void;
@@ -105,6 +115,9 @@ export function defaultSettings(): Settings {
     weatherFahrenheit: false,
     newsFeeds: [],
     wallpaperBackdrop: true,
+    backdropGradient: null,
+    backdropDim: DEFAULT_BACKDROP_DIM,
+    glassOpacity: DEFAULT_GLASS_OPACITY,
     updateSource: "",
     autoUpdate: true,
     lastSeenVersion: "",
@@ -179,6 +192,10 @@ export function sanitizeSettings(input: unknown): Partial<Settings> {
   const feeds = sanitizeFeeds(raw.newsFeeds);
   if (feeds) out.newsFeeds = feeds;
   if (typeof raw.wallpaperBackdrop === "boolean") out.wallpaperBackdrop = raw.wallpaperBackdrop;
+  const gradient = sanitizeGradient(raw.backdropGradient);
+  if (gradient !== undefined) out.backdropGradient = gradient;
+  if (typeof raw.backdropDim === "number" && Number.isFinite(raw.backdropDim)) out.backdropDim = Math.min(MAX_BACKDROP_DIM, Math.max(0, raw.backdropDim));
+  if (typeof raw.glassOpacity === "number" && Number.isFinite(raw.glassOpacity)) out.glassOpacity = Math.min(MAX_GLASS_OPACITY, Math.max(MIN_GLASS_OPACITY, raw.glassOpacity));
   if (typeof raw.updateSource === "string") out.updateSource = raw.updateSource.slice(0, 200);
   if (typeof raw.autoUpdate === "boolean") out.autoUpdate = raw.autoUpdate;
   if (typeof raw.lastSeenVersion === "string" && /^[0-9A-Za-z.+-]{0,32}$/.test(raw.lastSeenVersion)) out.lastSeenVersion = raw.lastSeenVersion;
@@ -220,6 +237,9 @@ export const useSettings = create<Settings & SettingsActions>()(
         set((s) => (s.newsFeeds.some((f) => f.url === feed.url) ? s : { newsFeeds: [...s.newsFeeds, feed].slice(0, MAX_NEWS_FEEDS) })),
       removeNewsFeed: (url) => set((s) => ({ newsFeeds: s.newsFeeds.filter((f) => f.url !== url) })),
       setWallpaperBackdrop: (wallpaperBackdrop) => set({ wallpaperBackdrop }),
+      setBackdropGradient: (backdropGradient) => set({ backdropGradient }),
+      setBackdropDim: (backdropDim) => set({ backdropDim }),
+      setGlassOpacity: (glassOpacity) => set({ glassOpacity }),
       setUpdateSource: (source) => set({ updateSource: source.slice(0, 200) }),
       setAutoUpdate: (autoUpdate) => set({ autoUpdate }),
       setLastSeenVersion: (lastSeenVersion) => set({ lastSeenVersion }),
@@ -250,6 +270,9 @@ export const useSettings = create<Settings & SettingsActions>()(
         weatherFahrenheit: s.weatherFahrenheit,
         newsFeeds: s.newsFeeds,
         wallpaperBackdrop: s.wallpaperBackdrop,
+        backdropGradient: s.backdropGradient,
+        backdropDim: s.backdropDim,
+        glassOpacity: s.glassOpacity,
         updateSource: s.updateSource,
         autoUpdate: s.autoUpdate,
         lastSeenVersion: s.lastSeenVersion,

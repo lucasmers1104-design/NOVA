@@ -49,6 +49,8 @@ interface Item {
 
 /** Audio made ahead of what plays is limited to this much (seconds). */
 const LOOKAHEAD_SECONDS = 8;
+/** The longest piece made by joining waiting ones. */
+const LONGEST_JOINED = 800;
 
 export class StreamingSpeaker implements ReplySpeaker {
   private items: Item[] = [];
@@ -71,6 +73,8 @@ export class StreamingSpeaker implements ReplySpeaker {
     private readonly backend: SynthBackend,
     volume: number,
     private readonly hooks: SpeakerHooks = {},
+    /** Online voices count requests: everything waiting goes into one. */
+    private readonly joinWaiting = false,
   ) {
     this.done = new Promise((resolve) => (this.resolveDone = resolve));
     const context = backend.context();
@@ -156,6 +160,12 @@ export class StreamingSpeaker implements ReplySpeaker {
           return;
         }
         item.state = "making";
+        if (this.joinWaiting) {
+          const after = this.items.indexOf(item) + 1;
+          while (this.items[after]?.state === "waiting" && this.items[after]!.tag === item.tag && item.text.length + this.items[after]!.text.length < LONGEST_JOINED) {
+            item.text += ` ${this.items.splice(after, 1)[0]!.text}`;
+          }
+        }
         try {
           const wav = await this.backend.synth(item.text);
           if (this.cancelled) return;

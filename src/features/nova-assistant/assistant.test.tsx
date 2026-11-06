@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Markdown } from "@/components/ui/Markdown";
 import * as native from "@/lib/native";
 import { renderWithQuery } from "@/test/render";
@@ -15,7 +15,7 @@ import { reduceReply, replyText, useConversation } from "./conversation";
 import { displayedState } from "./panel/PanelApp";
 import { captureShortcut, shortcutLabels } from "./shortcut";
 import { type AgentEvent, type AgentStatus, type AssistantStatus, DEFAULT_DOT_LOOK, type FinderStatus } from "./types";
-import { NOVA_VOICE, speakableText, speaksGerman, speechChunks, usesNovaVoice, voiceLine } from "./voice";
+import { isOnlineVoice, listen, NOVA_VOICE, speakableText, speaksGerman, speechChunks, usesNovaVoice, useVoice, type VoiceEvent, voiceLine } from "./voice";
 import { voiceDescription } from "./AgentSettings";
 import { NovaVoiceLine } from "./components/NovaVoiceLine";
 import { describeHeard, listenerLabel, type WakeStatus } from "./wake";
@@ -56,6 +56,8 @@ describe("assistant shortcuts", () => {
       transparency: false,
       motion: "reduced",
       displayName: "Luca",
+      backdropGradient: null,
+      glassOpacity: 50,
     });
     expect(sanitizeAppearance({ accent: "red", motion: "fast" })).toMatchObject({ accent: { kind: "preset", id: "purple" }, motion: "system" });
     expect(sanitizeAppearance(null).transparency).toBe(true);
@@ -150,7 +152,7 @@ describe("NovaDot", () => {
 });
 
 const AGENT: AgentStatus = {
-  prefs: { provider: null, models: {}, effort: "medium", monthlyLimitUsd: null, speakReplies: false, voice: "", speechRate: 1, speechVolume: 1, language: "auto" },
+  prefs: { provider: null, models: {}, effort: "medium", monthlyLimitUsd: null, speakReplies: false, voice: "", speechRate: 1, speechVolume: 1, language: "auto", keepListening: true, autoMode: false },
   activeProvider: "Anthropic",
   activeModel: "claude-opus-5-5",
   keys: { anthropic: true, openai: false, gemini: false },
@@ -191,6 +193,82 @@ const HITS = [
 describe("NovaPanel", () => {
   beforeEach(() => {
     useConversation.setState({ items: [], state: "idle", detail: null, busy: false, attachments: [], lastPrompt: null });
+  });
+
+  describe("stopping and listening again", () => {
+    // A voice turn opens a Tauri channel.
+    beforeEach(() => {
+      Object.assign(window, { __TAURI_INTERNALS__: { transformCallback: () => 1 } });
+    });
+    afterEach(() => {
+      Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+      vi.useRealTimers();
+      useVoice.setState({ mode: "idle" });
+    });
+
+    it("goes quiet from the stop button and from the X, and the X closes only once it is quiet", async () => {
+      const user = userEvent.setup();
+      const props = renderPanel();
+      act(() => useVoice.setState({ mode: "speaking" }));
+      const [header, bar] = screen.getAllByRole("button", { name: "Stop speaking" });
+      expect(screen.getByText("NOVA is speaking")).toBeInTheDocument();
+      await user.click(bar!);
+      expect(useVoice.getState().mode).toBe("idle");
+      expect(screen.queryByText("NOVA is speaking")).toBeNull();
+      expect(props.onCollapse).not.toHaveBeenCalled();
+
+      act(() => useVoice.setState({ mode: "speaking" }));
+      await user.click(header!);
+      expect(useVoice.getState().mode).toBe("idle");
+      expect(props.onCollapse).not.toHaveBeenCalled();
+
+      await user.click(screen.getByRole("button", { name: "Close" }));
+      expect(props.onCollapse).toHaveBeenCalledOnce();
+    });
+
+    // What the microphone hears: nothing at all.
+    const silentTurns = () =>
+      vi.spyOn(native, "callNative").mockImplementation(async (command, args) => {
+        if (command === "voice_listen") (args as { onEvent: { onmessage: (event: VoiceEvent) => void } }).onEvent.onmessage({ type: "noSpeech", heard: false, switching: false, microphone: null });
+        return {} as never;
+      });
+
+    it("opens the microphone after a spoken reply", async () => {
+      const listening = silentTurns();
+      vi.useFakeTimers();
+      renderPanel();
+      act(() => useVoice.setState((s) => ({ followUps: s.followUps + 1 })));
+      expect(listening).not.toHaveBeenCalledWith("voice_listen", expect.anything());
+      await act(() => vi.advanceTimersByTimeAsync(400));
+      expect(listening).toHaveBeenCalledWith("voice_listen", expect.anything());
+      listening.mockRestore();
+    });
+
+    it("complains about silence only when asked to listen", async () => {
+      const listening = silentTurns();
+      await listen(false, undefined, true);
+      expect(useVoice.getState().error).toBeNull();
+      await listen(false);
+      expect(useVoice.getState().error).toMatch(/didn't hear anything/);
+      useVoice.setState({ error: null });
+      listening.mockRestore();
+    });
+
+    it("leaves the microphone closed while something is typed", async () => {
+      const listening = vi.spyOn(native, "callNative").mockImplementation(async () => ({}) as never);
+      renderPanel();
+      fireEvent.change(screen.getByRole("textbox", { name: "Message NOVA" }), { target: { value: "Moment" } });
+      vi.useFakeTimers();
+      act(() => useVoice.setState((s) => ({ followUps: s.followUps + 1 })));
+      await act(() => vi.advanceTimersByTimeAsync(400));
+      expect(listening).not.toHaveBeenCalledWith("voice_listen", expect.anything());
+      listening.mockRestore();
+    });
+  });
+
+  it("shows when auto mode is on", () => {
+    renderPanel({ agent: { ...AGENT, prefs: { ...AGENT.prefs, autoMode: true } } });
+    expect(screen.getByText("Auto")).toBeInTheDocument();
   });
 
   it("greets quietly and keeps everything else in one menu", async () => {
@@ -445,6 +523,8 @@ describe("conversation helpers", () => {
     expect(usesNovaVoice("Hallo", "nova:eva")).toBe(true);
     expect(voiceDescription("", { state: "downloading", percent: 42 })).toMatch(/42 %/);
     expect(voiceDescription("Microsoft Katja", { state: "ready" })).toMatch(/Windows voice/);
+    expect(voiceDescription("online:gemini:Kore", { state: "missing" })).toMatch(/online voice/);
+    expect(isOnlineVoice("online:elevenlabs:abc") && !isOnlineVoice(NOVA_VOICE) && !isOnlineVoice("")).toBe(true);
   });
 
   it("cuts replies into sentences NOVA's voice says one after another", () => {

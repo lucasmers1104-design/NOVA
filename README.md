@@ -21,7 +21,7 @@ NOVA is a local-first Windows desktop command center with a macOS-inspired "liqu
 | **Live Information** | Weather (Open-Meteo, no account needed), RSS/Atom news from feeds you add, world clocks, progress and agenda cards. |
 | **Widget Studio** | Browse 15 widgets, preview them live with settings, and add them to any layout. |
 | **Profiles** | Gaming, Productivity, Creative, Minimal and custom profiles switch layout, accent and appearance together. |
-| **Everywhere** | Command palette (Ctrl+K) over pages, apps, tasks, widgets and profiles; notification center; adaptive accent (presets, custom, or matching your wallpaper); tray icon; opt-in start with Windows and close to tray. |
+| **Everywhere** | Command palette (Ctrl+K) over pages, apps, tasks, widgets and profiles; notification center; adaptive accent (presets, custom, or matching your wallpaper); backgrounds (your wallpaper, gradient presets or your own gradient) behind adjustable glass; tray icon; opt-in start with Windows and close to tray. |
 
 ## Download & updates
 

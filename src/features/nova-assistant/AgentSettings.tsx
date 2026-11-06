@@ -23,7 +23,8 @@ import {
 } from "./api";
 import { ASSISTANT_EVENTS, type AgentPrefs, type AgentStatus, type FinderStatus, type ProviderId } from "./types";
 import { useSpeech } from "./speech/api";
-import { installNovaVoice, NOVA_VOICE, type NovaVoiceStatus, speak, useVoice, voices, watchNovaVoice } from "./voice";
+import { GEMINI_VOICES, OnlineVoiceKeyRow, useOnlineVoices } from "./OnlineVoiceSettings";
+import { installNovaVoice, isOnlineVoice, NOVA_VOICE, type NovaVoiceStatus, speak, useVoice, voices, watchNovaVoice } from "./voice";
 
 const AGENT_KEY = ["assistant", "agent"] as const;
 const FINDER_KEY = ["assistant", "finder"] as const;
@@ -72,6 +73,9 @@ export function AgentSettings() {
   const [limitDraft, setLimitDraft] = useState<string | null>(null);
   const [voiceList, setVoiceList] = useState<SpeechSynthesisVoice[]>(() => voices());
   const novaVoice = useVoice((s) => s.novaVoice);
+  const onlineProblem = useVoice((s) => s.onlineVoiceProblem);
+  const online = useOnlineVoices();
+  const [confirmingAuto, setConfirmingAuto] = useState(false);
   const speech = useSpeech();
   // NOVA's own voices that are downloaded (Thorsten is always offered: it downloads itself).
   const novaVoices = (speech.status?.items ?? []).filter((i) => i.kind === "voice" && i.id !== "thorsten" && i.install.state === "ready");
@@ -181,7 +185,32 @@ export function AgentSettings() {
       <SettingRow label="Spoken replies" description="NOVA reads its answers aloud. Replies to spoken questions are always read aloud.">
         <Switch label="Spoken replies" checked={prefs?.speakReplies ?? false} disabled={!prefs} onChange={(speakReplies) => update({ speakReplies })} />
       </SettingRow>
-      <SettingRow label="Voice" description={voiceDescription(prefs?.voice ?? "", novaVoice)}>
+      <SettingRow label="Keep listening" description="After NOVA has answered a spoken request, the microphone opens again so you can just keep talking. It closes by itself if you say nothing.">
+        <Switch label="Keep listening" checked={prefs?.keepListening ?? true} disabled={!prefs} onChange={(keepListening) => update({ keepListening })} />
+      </SettingRow>
+      <SettingRow
+        label="Auto mode"
+        description={
+          prefs?.autoMode
+            ? "On, at your own risk: NOVA acts without asking first. Everything it does is listed in the action history."
+            : "NOVA acts without asking you first, including deleting files and ending programs. At your own risk."
+        }
+      >
+        <Switch label="Auto mode" checked={prefs?.autoMode ?? false} disabled={!prefs} onChange={(on) => (on ? setConfirmingAuto(true) : update({ autoMode: false }))} />
+      </SettingRow>
+      <ConfirmDialog
+        open={confirmingAuto}
+        title="Turn on auto mode?"
+        description="NOVA will then do everything without asking: delete files, end programs, close windows, press keys and click in other apps, read your screen. A misheard sentence or a trick on a website it reads can cause real damage, and nothing stops it first. You use this at your own risk."
+        confirmLabel="Turn on at my own risk"
+        danger
+        onClose={() => setConfirmingAuto(false)}
+        onConfirm={() => {
+          setConfirmingAuto(false);
+          update({ autoMode: true });
+        }}
+      />
+      <SettingRow label="Voice" description={onlineProblem && isOnlineVoice(prefs?.voice ?? "") ? `The online voice didn't work, so another one took over: ${onlineProblem}` : voiceDescription(prefs?.voice ?? "", novaVoice)}>
         <div className="flex items-center gap-1.5">
           <select aria-label="Voice" className={selectClass} disabled={!prefs} value={prefs?.voice ?? ""} onChange={(e) => update({ voice: e.target.value })}>
             <option value="">Automatic (Thorsten for German, else Windows)</option>
@@ -191,6 +220,22 @@ export function AgentSettings() {
                 {v.label} — NOVA voice{v.experimental ? " (experimental)" : ""}
               </option>
             ))}
+            <optgroup label="Online: Google Gemini (free, most natural)">
+              {GEMINI_VOICES.map((v) => (
+                <option key={v.id} value={`online:gemini:${v.id}`}>
+                  {v.name}
+                </option>
+              ))}
+            </optgroup>
+            <optgroup label="Online: ElevenLabs (free credits)">
+              {online.elevenlabs.map((v) => (
+                <option key={v.id} value={`online:elevenlabs:${v.id}`}>
+                  {v.name}
+                </option>
+              ))}
+            </optgroup>
+            {/* A voice from an account list that can't be read right now stays selectable. */}
+            {prefs?.voice.startsWith("online:elevenlabs:") && !online.elevenlabs.some((v) => prefs.voice.endsWith(`:${v.id}`)) && <option value={prefs.voice}>ElevenLabs voice</option>}
             {voiceList.map((v) => (
               <option key={v.name} value={v.name}>
                 {v.name} ({v.lang})
@@ -219,6 +264,7 @@ export function AgentSettings() {
           </Button>
         </div>
       </SettingRow>
+      {prefs && isOnlineVoice(prefs.voice) && <OnlineVoiceKeyRow voice={prefs.voice} />}
       <SettingRow label="Speed and volume">
         <div className="flex items-center gap-3 text-[12px] text-fg-muted">
           <label className="flex items-center gap-2">
@@ -264,6 +310,7 @@ export function AgentSettings() {
 
 /** What the voice row says about the chosen voice and NOVA's own voice. */
 export function voiceDescription(voice: string, nova: NovaVoiceStatus | null): string {
+  if (isOnlineVoice(voice)) return "An online voice: very natural, needs the internet and a key. If it fails or the free limit is reached, NOVA's own voice takes over.";
   if (voice.startsWith("nova:") && voice !== NOVA_VOICE && nova?.state === "ready") return "One of NOVA's own voices, running on this PC (see Local AI & performance).";
   if (voice !== "" && !voice.startsWith("nova:")) return "A Windows voice installed on this PC.";
   switch (nova?.state) {

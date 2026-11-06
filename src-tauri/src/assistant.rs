@@ -1439,6 +1439,7 @@ pub struct Appearance {
     transparency: Option<bool>,
     motion: Option<String>,
     display_name: Option<String>,
+    backdrop_gradient: Option<Value>,
 }
 
 /// The appearance subset of the persisted settings document ({ state, version }).
@@ -1449,6 +1450,7 @@ fn appearance_from(document: &Value) -> Appearance {
         transparency: settings.get("transparency").and_then(Value::as_bool),
         motion: settings.get("motion").and_then(Value::as_str).map(|m| m.chars().take(16).collect()),
         display_name: settings.get("displayName").and_then(Value::as_str).map(|n| n.chars().take(40).collect()),
+        backdrop_gradient: settings.get("backdropGradient").filter(|v| v.is_object()).cloned(),
     }
 }
 

@@ -19,8 +19,10 @@ export function useThemeSync(): void {
   const accent = useSettings((s) => s.accent);
   const transparency = useSettings((s) => s.transparency);
   const motion = useSettings((s) => s.motion);
+  const backdropGradient = useSettings((s) => s.backdropGradient);
+  const glassOpacity = useSettings((s) => s.glassOpacity);
 
   useEffect(() => {
-    applyTheme({ accent, transparency, motion });
-  }, [accent, transparency, motion]);
+    applyTheme({ accent, transparency, motion, backdropGradient, glassOpacity });
+  }, [accent, transparency, motion, backdropGradient, glassOpacity]);
 }

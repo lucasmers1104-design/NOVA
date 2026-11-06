@@ -13,7 +13,8 @@ import {
   X,
 } from "lucide-react";
 import { motion } from "motion/react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Badge } from "@/components/ui/Badge";
 import { IconButton } from "@/components/ui/Button";
 import { Menu } from "@/components/ui/Menu";
 import { cn } from "@/lib/cn";
@@ -34,10 +35,12 @@ import type {
   WakeCall,
 } from "../types";
 import {
+  isOnlineVoice,
   listen,
   openVoiceSettings,
   speak,
   speaksGerman,
+  speechActive,
   stopListening,
   stopSpeaking,
   useVoice,
@@ -120,6 +123,11 @@ export function NovaPanel(props: NovaPanelProps) {
   const line = voice.line;
   const setLine = (text: string | null) => useVoice.setState({ line: text });
   const discard = useRef(false);
+  const typing = useRef(false);
+  const onTyping = useCallback((now: boolean) => {
+    typing.current = now;
+  }, []);
+  const stopLabel = german ? "Aufhören zu sprechen" : "Stop speaking";
 
   const report = (error: unknown) =>
     setActionError(error instanceof Error ? error.message : String(error));
@@ -133,17 +141,19 @@ export function NovaPanel(props: NovaPanelProps) {
       german,
     );
   };
-  const startVoice = async () => {
+  /** `followUp`: the microphone opens by itself after a reply. */
+  const startVoice = async (followUp = false) => {
     if (listening) {
       stopListening();
       return;
     }
     setActionError(null);
+    if (followUp) setLine(null);
     discard.current = false;
     beginTurn("voice");
     // Warm the AI provider while the user speaks (skipped when the panel just did).
     void prewarmAssistant();
-    const text = await listen(german);
+    const text = await listen(german, undefined, followUp);
     if (text && !discard.current) {
       setView("chat");
       // The reply is read aloud as it arrives; "one moment" plays only if it takes a while.
@@ -186,6 +196,18 @@ export function NovaPanel(props: NovaPanelProps) {
       cancelled = true;
     };
   }, [wake?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A spoken reply has been said: the microphone opens again, unless something else is going on.
+  const followUpsSeen = useRef(voice.followUps);
+  useEffect(() => {
+    if (voice.followUps === followUpsSeen.current) return;
+    followUpsSeen.current = voice.followUps;
+    // A moment later, so the end of the reply doesn't reach the microphone.
+    const timer = setTimeout(() => {
+      if (!typing.current && !useConversation.getState().busy && useVoice.getState().mode === "idle") void startVoiceRef.current(true);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [voice.followUps]);
 
   // The line goes once the reply is there.
   useEffect(() => {
@@ -276,6 +298,11 @@ export function NovaPanel(props: NovaPanelProps) {
         >
           {statusLabel(state, detail)}
         </p>
+        {agent?.prefs.autoMode && (
+          <span title="Auto mode is on: NOVA acts without asking first">
+            <Badge tone="warning">Auto</Badge>
+          </span>
+        )}
         {view === "chat" && items.length > 0 && (
           <IconButton
             label="New conversation"
@@ -334,7 +361,15 @@ export function NovaPanel(props: NovaPanelProps) {
             },
           ]}
         />
-        <IconButton label="Close" size="sm" onClick={onCollapse}>
+        {/* Like Esc: first NOVA goes quiet, the next click closes. */}
+        <IconButton
+          label={voice.mode === "speaking" ? stopLabel : "Close"}
+          size="sm"
+          onClick={() => {
+            if (speechActive()) stopSpeaking();
+            else onCollapse();
+          }}
+        >
           <X size={16} aria-hidden />
         </IconButton>
       </header>
@@ -380,6 +415,18 @@ export function NovaPanel(props: NovaPanelProps) {
         </p>
       )}
 
+      {voice.onlineVoiceProblem && isOnlineVoice(agent?.prefs.voice ?? "") && (
+        <p
+          role="status"
+          className="mx-5 mb-1.5 text-[12px] leading-snug text-warning"
+        >
+          {german
+            ? "Die Online-Stimme geht gerade nicht, ich nehme so lange eine andere: "
+            : "The online voice isn't working right now, so another one takes over: "}
+          {voice.onlineVoiceProblem}
+        </p>
+      )}
+
       {line && (
         <p
           className="mx-5 mb-2 flex items-start gap-2 text-[12.5px] leading-snug text-fg-muted"
@@ -388,6 +435,24 @@ export function NovaPanel(props: NovaPanelProps) {
           <Sparkle className="mt-[1px] size-3.5 shrink-0 text-accent-text" />
           <span className="min-w-0 flex-1">{line}</span>
         </p>
+      )}
+
+      {voice.mode === "speaking" && (
+        <div className="mx-3 mb-1.5 flex items-center gap-2.5 rounded-full bg-white/[0.055] py-1 pr-1 pl-3.5 ring-1 ring-accent/30">
+          <NovaVoiceVisualizer level={voice.level} active />
+          <span className="min-w-0 flex-1 truncate text-[12.5px] text-fg-muted">
+            {german ? "NOVA spricht" : "NOVA is speaking"}
+          </span>
+          <button
+            type="button"
+            aria-label={stopLabel}
+            title={stopLabel}
+            onClick={stopSpeaking}
+            className="flex size-7 shrink-0 items-center justify-center rounded-full bg-white/[0.08] text-fg transition-colors hover:bg-white/[0.16]"
+          >
+            <X size={14} aria-hidden />
+          </button>
+        </div>
       )}
 
       {listening ? (
@@ -411,6 +476,7 @@ export function NovaPanel(props: NovaPanelProps) {
           attachments={attachments}
           draft={listening ? voice.transcript : undefined}
           lastMessage={items.findLast((i) => i.kind === "user")?.text}
+          onTyping={onTyping}
           onSend={(text) => {
             stopSpeaking();
             setActionError(null);

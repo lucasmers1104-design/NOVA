@@ -101,7 +101,7 @@
  */
 @utility glass-overlay {
   background-color: var(--color-canvas-raised);
-  background-image: var(--glass-sheen);
+  background-image: var(--glass-sheen), var(--nova-overlay-image, none);
   border: 1px solid;
   border-color: var(--glass-rim);
   box-shadow:

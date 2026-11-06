@@ -20,13 +20,15 @@ interface NovaInputProps {
   draft?: string;
   /** The user's previous message; Up in an empty box brings it back to edit. */
   lastMessage?: string;
+  /** The box became empty (false) or has text in it (true). */
+  onTyping?: (typing: boolean) => void;
 }
 
 const iconButton = "flex size-8 shrink-0 items-center justify-center rounded-full text-fg-muted transition-colors hover:bg-white/[0.08] hover:text-fg disabled:opacity-40";
 const menuItem = "flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-1.5 text-left text-[12.5px] text-fg hover:bg-white/[0.07]";
 
 /** One quiet message box: add (file or screenshot), text, voice, send/stop. */
-export function NovaInput({ busy, listening = false, attachments, onSend, onStop, onAttachFile, onLoadTargets, onCapture, onClearAttachments, mic, draft, lastMessage }: NovaInputProps) {
+export function NovaInput({ busy, listening = false, attachments, onSend, onStop, onAttachFile, onLoadTargets, onCapture, onClearAttachments, mic, draft, lastMessage, onTyping }: NovaInputProps) {
   const [text, setText] = useState("");
   const [adding, setAdding] = useState(false);
   const [targets, setTargets] = useState<CaptureTargets | null>(null);
@@ -42,7 +44,8 @@ export function NovaInput({ busy, listening = false, attachments, onSend, onStop
     if (!el) return;
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 132)}px`;
-  }, [text]);
+    onTyping?.(text.length > 0);
+  }, [text, onTyping]);
 
   useEffect(() => {
     area.current?.focus();

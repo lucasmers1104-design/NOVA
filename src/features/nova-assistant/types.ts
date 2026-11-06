@@ -147,6 +147,10 @@ export interface AgentPrefs {
   speechRate: number;
   speechVolume: number;
   language: string;
+  /** The microphone opens again after a reply to a spoken request. */
+  keepListening: boolean;
+  /** Tools run without asking first, at the user's own risk. */
+  autoMode: boolean;
 }
 
 export interface UsageTotals {

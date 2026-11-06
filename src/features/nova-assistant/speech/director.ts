@@ -5,6 +5,7 @@ import {
   lineReady,
   nextSpeechTurn,
   replySpoken,
+  requestFollowUp,
   setActiveReply,
   speakableText,
   speaksGerman,
@@ -69,7 +70,7 @@ export class ReplyDirector {
         break;
       case "done":
         this.say(reply, reply.segmenter.finish());
-        this.finish(reply);
+        this.finish(reply, reply.voice && reply.prefs.keepListening);
         break;
       case "failed":
         if (reply.voice) this.line(reply, "failed");
@@ -173,7 +174,8 @@ export class ReplyDirector {
     this.enqueue(reply, voiceLine(kind, reply.prefs.language), "line");
   }
 
-  private finish(reply: Reply) {
+  /** `listenAgain`: once it has been said in full (a stopped reply doesn't get here). */
+  private finish(reply: Reply, listenAgain = false) {
     if (reply.ackTimer) clearTimeout(reply.ackTimer);
     reply.ackTimer = null;
     const end = () => {
@@ -183,6 +185,7 @@ export class ReplyDirector {
       replySpoken();
       mark("replyEnd");
       endTurn();
+      if (listenAgain) requestFollowUp();
     };
     if (reply.speaker) void reply.speaker.finish().then(end);
     else end();

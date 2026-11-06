@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.8.0 — 2026-11-06
+
+### Added
+- **Your own background**: 12 gradient presets, or your own gradient with 2–4 colors, three styles (linear, mesh, swirl), direction and darkening. It stays glass, and "Glass strength" sets how much shines through. Settings → Appearance. The NOVA AI panel glows in the same colors.
+- **Online voices**: Google Gemini (free within Google's limits, German included, uses a Gemini key) and ElevenLabs (10,000 free credits a month, its own key). Pick one under Settings → Assistant model & voice. What NOVA says then goes to that service. If it fails or the free limit is reached, NOVA's own voice takes over and the panel says why. Fixed lines like the greeting are kept on disk, so they cost one request ever.
+- **Keep talking**: after NOVA has answered a spoken request, the microphone opens again by itself. It closes quietly if you say nothing, and stays closed if you stopped NOVA or are typing. It can be turned off under Settings → Assistant model & voice.
+- **Auto mode, at your own risk**: NOVA acts without asking first, including deleting files and ending programs. Off by default, with a warning before it goes on and an "Auto" badge in the panel while it is. What NOVA refuses outright stays refused (Windows' own processes, terminals, network paths), and the action history marks what ran without asking.
+
+### Changed
+- **Your name has its own section at the top of Settings** instead of being tucked away under Dashboard, and a changed name counts from the next message on, even in a running conversation.
+- **NOVA AI no longer calls you by your Windows account name**, which often isn't your name. Without a name set, it uses none.
+
+### Fixed
+- **You can interrupt NOVA**: a bar with an X appears while it speaks, and the X at the top of the panel now stops the speech first and closes on the next click, like Esc. It used to close the panel and keep talking.
+
 ## 1.7.1 — 2026-11-06
 
 ### Changed

@@ -35,6 +35,10 @@ interface VoiceState {
   novaVoice: NovaVoiceStatus | null;
   /** What NOVA just said around a spoken turn (a greeting, "one moment"), shown in the panel. */
   line: string | null;
+  /** Grows when a reply to a spoken request has been said: time to listen again. */
+  followUps: number;
+  /** Why the online voice isn't speaking right now. */
+  onlineVoiceProblem: string | null;
   setLevel: (level: number) => void;
 }
 
@@ -47,6 +51,8 @@ export const useVoice = create<VoiceState>()((set) => ({
   errorSettings: null,
   novaVoice: null,
   line: null,
+  followUps: 0,
+  onlineVoiceProblem: null,
   setLevel: (level) => set({ level }),
 }));
 
@@ -68,8 +74,9 @@ const NO_WORDS = {
 /**
  * One spoken turn: opens the microphone until the user stops speaking (or
  * calls `stopListening`). Resolves with the recognized text, or null.
+ * `quiet`: the microphone opened by itself, so silence is no problem to report.
  */
-export async function listen(german = false, onTranscript?: (text: string) => void): Promise<string | null> {
+export async function listen(german = false, onTranscript?: (text: string) => void, quiet = false): Promise<string | null> {
   stopSpeaking();
   mark("listenCall");
   useVoice.setState({ mode: "listening", ready: false, level: 0, transcript: "", error: null, errorSettings: null });
@@ -94,7 +101,7 @@ export async function listen(german = false, onTranscript?: (text: string) => vo
         useVoice.setState({ transcript: event.text });
         break;
       case "noSpeech":
-        {
+        if (!quiet || event.heard) {
           const words = NO_WORDS[german ? "de" : "en"];
           const where = event.microphone && !event.switching ? words.listening(event.microphone) : "";
           useVoice.setState({ error: words[event.switching ? "switching" : event.heard ? "heard" : "silent"] + where });
@@ -227,10 +234,29 @@ function novaVoiceId(preferred: string): string {
   return preferred.startsWith("nova:") ? preferred : NOVA_VOICE;
 }
 
+/** "online:gemini:Kore", "online:elevenlabs:…": a voice that lives at an online service. */
+export function isOnlineVoice(voice: string): boolean {
+  return voice.startsWith("online:");
+}
+
 function synthesizeChunk(text: string, rate: number, voice: string): Promise<ArrayBuffer> {
   const ready = madeAhead.get(aheadKey(voice, text, rate));
   // Playing detaches the buffer: hand out a copy.
   return ready ? Promise.resolve(ready.slice(0)) : callNative<ArrayBuffer>("tts_speak", { text, rate, voice, turn });
+}
+
+/** One piece from an online voice; a problem is shown and passed on, so another voice takes over. */
+async function synthesizeOnline(text: string, rate: number, voice: string, german: boolean): Promise<ArrayBuffer> {
+  try {
+    const language = usesNovaVoice(text, "", german) ? "de" : "en";
+    const audio = await callNative<ArrayBuffer>("tts_speak", { text, rate, voice, turn, language, keep: FIXED_LINES.has(text) });
+    useVoice.setState({ onlineVoiceProblem: null });
+    return audio;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    if (reason !== "Cancelled") useVoice.setState({ onlineVoiceProblem: reason });
+    throw error;
+  }
 }
 
 /**
@@ -338,23 +364,28 @@ export function createReplySpeaker(sample: string, prefs: SpeechPrefs, options: 
       utterance.volume = prefs.speechVolume;
     }, more);
 
+  const online = isOnlineVoice(prefs.voice);
   const status = useVoice.getState().novaVoice;
   const wantsNova = usesNovaVoice(sample, prefs.voice, options.german);
-  if (wantsNova && status?.state === "missing") void installNovaVoice();
-  if (!wantsNova || status?.state !== "ready") {
+  if (!online && wantsNova && status?.state === "missing") void installNovaVoice();
+  if (!online && (!wantsNova || status?.state !== "ready")) {
     note("voice", "windows");
     return { speaker: windows(sample), nova: false };
   }
-  const voice = novaVoiceId(prefs.voice);
+  const voice = online ? prefs.voice : novaVoiceId(prefs.voice);
   note("voice", voice);
   audio ??= new AudioContext();
   const context = audio;
   void context.resume().catch(() => {});
+  // An online voice gives way to NOVA's own voice (which gives way to a Windows
+  // voice); its text isn't prepared for NOVA's voices, so that happens here.
+  let prepare = (text: string) => text;
   const nova = new StreamingSpeaker(
     {
       synth: (text) => {
         const started = performance.now();
-        return synthesizeChunk(text, prefs.speechRate, voice).then((wav) => {
+        const made = online ? synthesizeOnline(text, prefs.speechRate, voice, options.german ?? false) : synthesizeChunk(text, prefs.speechRate, voice);
+        return made.then((wav) => {
           addTime("synthMs", performance.now() - started);
           return wav;
         });
@@ -367,14 +398,20 @@ export function createReplySpeaker(sample: string, prefs: SpeechPrefs, options: 
       ...hooks,
       onFailed: (unsaid) => {
         count("voiceFailures");
+        if (!fallback && online) {
+          const local = createReplySpeaker(unsaid.join(" "), { ...prefs, voice: "" }, options);
+          fallback = local.speaker;
+          if (local.nova) prepare = normalizeGerman;
+        }
         fallback ??= windows(unsaid.join(" "));
-        for (const text of unsaid) fallback.enqueue(text);
+        for (const text of unsaid) fallback.enqueue(prepare(text));
       },
     },
+    online,
   );
   // One object for the caller: the fallback takes over once NOVA's voice failed.
   const speaker: ReplySpeaker = {
-    enqueue: (text, opts) => (fallback ? fallback.enqueue(text, opts) : nova.enqueue(text, opts)),
+    enqueue: (text, opts) => (fallback ? fallback.enqueue(prepare(text), opts) : nova.enqueue(text, opts)),
     finish: async () => {
       await nova.finish();
       if (fallback) await fallback.finish();
@@ -387,7 +424,7 @@ export function createReplySpeaker(sample: string, prefs: SpeechPrefs, options: 
       return nova.busy || (fallback?.busy ?? false);
     },
   };
-  return { speaker, nova: true };
+  return { speaker, nova: !online };
 }
 
 /**
@@ -402,7 +439,9 @@ export async function speak(text: string, prefs: SpeechPrefs, label = "reply", g
   mark(`${label}SpeakCall`);
   const { speaker, nova } = createReplySpeaker(spoken, prefs, { label, german });
   active = speaker;
-  for (const chunk of speechChunks(nova ? normalizeGerman(spoken) : spoken)) speaker.enqueue(chunk);
+  // An online voice gets a fixed line whole: that's what is kept on disk, and one request.
+  const pieces = isOnlineVoice(prefs.voice) && FIXED_LINES.has(spoken) ? [spoken] : speechChunks(nova ? normalizeGerman(spoken) : spoken);
+  for (const chunk of pieces) speaker.enqueue(chunk);
   await speaker.finish();
   if (mine !== turn) return;
   active = null;
@@ -421,11 +460,18 @@ export function replySpoken(): void {
   lease.release();
 }
 
+/** A reply to a spoken request has been said: the panel opens the microphone again. */
+export function requestFollowUp(): void {
+  useVoice.setState((s) => ({ followUps: s.followUps + 1 }));
+}
+
 /**
  * Whether `text` can be said right away: a Windows voice can, NOVA's voice
  * only once the line was made ahead (otherwise it would hold up the reply).
+ * Online voices are never that quick.
  */
 export function lineReady(text: string, prefs: SpeechPrefs): boolean {
+  if (isOnlineVoice(prefs.voice)) return false;
   const spoken = speakableText(text);
   if (!usesNovaVoice(spoken, prefs.voice) || useVoice.getState().novaVoice?.state !== "ready") return true;
   const voice = novaVoiceId(prefs.voice);
@@ -512,6 +558,8 @@ const LINES = {
     code: ["You'll find the code in the chat."],
   },
 } as const;
+
+const FIXED_LINES: ReadonlySet<string> = new Set(Object.values(LINES).flatMap((lines) => Object.values(lines).flat()));
 
 /** German when NOVA listens in German (or "auto" on a German system). */
 export function speaksGerman(language: string, systemLanguage = typeof navigator === "undefined" ? "en" : navigator.language): boolean {

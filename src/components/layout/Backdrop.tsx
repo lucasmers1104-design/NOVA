@@ -1,15 +1,28 @@
+import { gradientCss } from "@/design/backdrop";
 import { useWallpaperBackdrop } from "@/design/wallpaper";
 import { isDesktop } from "@/lib/native";
 import { useSettings } from "@/stores/settings";
 
 /**
- * What the glass refracts: the user's wallpaper (softly blurred and dimmed for
- * legibility), or static ambient light when that is off. Deliberately not
- * animated — a moving backdrop would make every blurred pane re-render each frame.
+ * What the glass refracts: the user's color gradient, their wallpaper (softly
+ * blurred and dimmed for legibility), or static ambient light when both are
+ * off. Deliberately not animated — a moving backdrop would make every blurred
+ * pane re-render each frame.
  */
 export function Backdrop() {
+  const gradient = useSettings((s) => s.backdropGradient);
+  const dim = useSettings((s) => s.backdropDim);
   const enabled = useSettings((s) => s.wallpaperBackdrop && s.transparency);
-  const wallpaper = useWallpaperBackdrop(enabled && isDesktop());
+  const wallpaper = useWallpaperBackdrop(enabled && !gradient && isDesktop());
+
+  if (gradient) {
+    return (
+      <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div className="absolute inset-0" style={{ background: gradientCss(gradient) }} />
+        <div className="absolute inset-0" style={{ background: `rgb(9 11 18 / ${dim / 100})` }} />
+      </div>
+    );
+  }
 
   return (
     <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">

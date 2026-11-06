@@ -3,6 +3,7 @@ import type { ReplyEvent } from "../conversation";
 import type { AgentPrefs } from "../types";
 import { ACK_DELAY_MS, ReplyDirector, type SpeakerFactory } from "./director";
 import { type ReplySpeaker, StreamingSpeaker, type SynthBackend } from "./streamingSpeaker";
+import { useVoice } from "../voice";
 
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => {}), emit: vi.fn(), emitTo: vi.fn() }));
 
@@ -16,6 +17,8 @@ const PREFS: AgentPrefs = {
   speechRate: 1,
   speechVolume: 1,
   language: "de-DE",
+  keepListening: true,
+  autoMode: false,
 };
 
 interface Spoken {
@@ -134,6 +137,35 @@ describe("ReplyDirector", () => {
     director.handle({ replyId: "r2", voice: true, type: "start", ack: null }, PREFS);
     expect(state.cancelled).toBe(1);
   });
+
+  describe("listening again after a reply", () => {
+    const followUpsAfter = async (prefs: AgentPrefs, list: ReplyEvent[]) => {
+      const before = useVoice.getState().followUps;
+      events(new ReplyDirector(fakeFactory().factory), prefs, list);
+      // The speaker finishes asynchronously.
+      await vi.advanceTimersByTimeAsync(0);
+      return useVoice.getState().followUps - before;
+    };
+    const spoken = [reply({ type: "start", ack: null }), reply({ type: "text", text: "Klar." })];
+
+    it("asks once a spoken reply has been said", async () => {
+      expect(await followUpsAfter(PREFS, [...spoken, reply({ type: "done" })])).toBe(1);
+    });
+
+    it("doesn't when the setting is off", async () => {
+      expect(await followUpsAfter({ ...PREFS, keepListening: false }, [...spoken, reply({ type: "done" })])).toBe(0);
+    });
+
+    it("doesn't for typed requests, even when they are read aloud", async () => {
+      const typed = [reply({ type: "start", ack: null }, false), reply({ type: "text", text: "Klar." }, false), reply({ type: "done" }, false)];
+      expect(await followUpsAfter({ ...PREFS, speakReplies: true }, typed)).toBe(0);
+    });
+
+    it("doesn't after a stop or a failure", async () => {
+      expect(await followUpsAfter(PREFS, [...spoken, reply({ type: "stopped" }), reply({ type: "done" })])).toBe(0);
+      expect(await followUpsAfter(PREFS, [...spoken, reply({ type: "failed", error: "boom" })])).toBe(0);
+    });
+  });
 });
 
 /** A WebAudio stand-in with a clock the test moves. */
@@ -190,6 +222,27 @@ describe("StreamingSpeaker", () => {
     expect(a!.duration).toBeCloseTo(0.7); // the ack, made ahead, went first
     expect(b!.at).toBeCloseTo(a!.at + a!.duration);
     expect(c!.at).toBeCloseTo(b!.at + b!.duration);
+  });
+
+  it("joins waiting pieces into one request for online voices", async () => {
+    const audio = fakeAudio();
+    const made: string[] = [];
+    const backend: SynthBackend = {
+      synth: async (text) => {
+        made.push(text);
+        return new ArrayBuffer(100);
+      },
+      context: () => audio.context,
+    };
+    const speaker = new StreamingSpeaker(backend, 1, {}, true);
+    // The first goes alone so NOVA starts quickly; what piles up meanwhile goes together.
+    speaker.enqueue("Eins.");
+    speaker.enqueue("Zwei.");
+    speaker.enqueue("Drei.");
+    speaker.enqueue("x".repeat(900));
+    for (let i = 0; i < 8; i++) await flush();
+    expect(made).toEqual(["Eins.", "Zwei. Drei.", "x".repeat(900)]);
+    expect(audio.started).toHaveLength(3);
   });
 
   it("hands what wasn't said to the caller when the voice fails", async () => {

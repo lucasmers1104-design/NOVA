@@ -15,6 +15,7 @@ mod shell;
 pub mod speech;
 mod storage;
 mod system;
+mod online_voice;
 mod tts;
 mod turnlog;
 mod updates;
@@ -231,6 +232,10 @@ pub fn run() {
             tts::tts_install,
             tts::tts_speak,
             tts::tts_cancel,
+            online_voice::online_voice_keys,
+            online_voice::elevenlabs_key_set,
+            online_voice::elevenlabs_key_delete,
+            online_voice::elevenlabs_voices_list,
             wake::wake_status,
             wake::wake_configure,
             wake::wake_test,

@@ -462,10 +462,12 @@ pub async fn tts_install<R: Runtime>(app: AppHandle<R>) -> CommandResult<VoiceIn
 }
 
 /// Speaks `text` with one of NOVA's voices (`voice`: "nova:…", default
-/// Thorsten): returns it as WAV audio. `turn` lets `tts_cancel` drop speech
-/// that is no longer wanted.
+/// Thorsten) or an online voice ("online:…"): returns it as an audio file.
+/// `turn` lets `tts_cancel` drop speech that is no longer wanted. For online
+/// voices, `language` is what the text is in and `keep` marks a fixed line.
 #[tauri::command]
-pub async fn tts_speak<R: Runtime>(app: AppHandle<R>, window: tauri::WebviewWindow<R>, text: String, rate: f32, voice: Option<String>, turn: Option<u64>) -> CommandResult<tauri::ipc::Response> {
+#[allow(clippy::too_many_arguments)]
+pub async fn tts_speak<R: Runtime>(app: AppHandle<R>, window: tauri::WebviewWindow<R>, text: String, rate: f32, voice: Option<String>, turn: Option<u64>, language: Option<String>, keep: Option<bool>) -> CommandResult<tauri::ipc::Response> {
     let text = text.trim().to_string();
     if text.is_empty() || text.chars().count() > LONGEST_TEXT {
         return Err("Nothing to say, or too much at once".into());
@@ -473,6 +475,10 @@ pub async fn tts_speak<R: Runtime>(app: AppHandle<R>, window: tauri::WebviewWind
     let label = window.label().to_string();
     if app.state::<TtsState>().cancelled(&label, turn) {
         return Err("Cancelled".into());
+    }
+    if let Some(online) = voice.as_deref().filter(|v| crate::online_voice::is_online(v)) {
+        let audio = crate::online_voice::speak(&app, online, &text, rate, language.as_deref(), keep.unwrap_or(false)).await?;
+        return Ok(tauri::ipc::Response::new(audio));
     }
     let handle = app.clone();
     let wav = tauri::async_runtime::spawn_blocking(move || {
