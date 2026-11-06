@@ -14,6 +14,7 @@ import { SpeechSettings } from "@/features/nova-assistant/SpeechSettings";
 import { AssistantSettings } from "@/features/nova-assistant/AssistantSettings";
 import { WakeSettings } from "@/features/nova-assistant/WakeSettings";
 import { useSystemInfo } from "@/features/system/api";
+import { showWhatsNew } from "@/features/updates/WhatsNew";
 import { cn } from "@/lib/cn";
 import { callNative, isDesktop } from "@/lib/native";
 import { useStorageHealth } from "@/lib/persistence";
@@ -184,16 +185,16 @@ function AppearanceSection() {
   const setMotion = useSettings((s) => s.setMotion);
   const wallpaperBackdrop = useSettings((s) => s.wallpaperBackdrop);
   const setWallpaperBackdrop = useSettings((s) => s.setWallpaperBackdrop);
-  const hasGradient = useSettings((s) => s.backdropGradient !== null);
+  const hasGradient = useSettings((s) => s.backdropGradient !== null || s.backdropImage !== null);
 
   return (
-    <SettingsSection id="appearance" title="Appearance" description="Accent color, background, glass and motion." icon={Palette}>
+    <SettingsSection id="appearance" title="Appearance" description="Accent color, background, glass, corners, font and motion." icon={Palette}>
       <AccentSettings />
       <BackdropSettings />
       <SettingRow label="Transparency effects" description="Frosted-glass surfaces. Turn off for smoother performance on integrated graphics.">
         <Switch label="Transparency effects" checked={transparency} onChange={setTransparency} />
       </SettingRow>
-      <SettingRow label="Wallpaper backdrop" description={hasGradient ? "Off while a color gradient is picked above." : "Shows your desktop wallpaper softly behind NOVA's glass, like macOS. Needs transparency effects."}>
+      <SettingRow label="Wallpaper backdrop" description={hasGradient ? "Off while a gradient or your own picture is chosen above." :"Shows your desktop wallpaper softly behind NOVA's glass, like macOS. Needs transparency effects."}>
         <Switch label="Wallpaper backdrop" checked={wallpaperBackdrop && !hasGradient} disabled={!transparency || hasGradient} onChange={setWallpaperBackdrop} />
       </SettingRow>
       <SettingRow label="Motion" description="“System” follows the Windows animation setting.">
@@ -278,7 +279,7 @@ const PRIVACY_FACTS = [
   "The NOVA AI dot never captures your screen in the background. Changes to files wait for your OK, unless you turn on auto mode.",
   "Voice input uses Windows speech recognition or NOVA's offline recognizer, only while the microphone is open. After a spoken reply it opens again by itself, unless you turn that off.",
   "NOVA's own voices run on this PC. If you pick an online voice, what NOVA says goes to that service (Google or ElevenLabs).",
-  "“Hey NOVA” and the double clap keep the microphone open only while you turn them on. The sound is checked on this PC and never recorded, saved or sent.",
+  "“Hey NOVA” and the double clap keep the microphone open only while you turn them on, also in games unless you turn that off. The sound is checked on this PC and never recorded, saved or sent.",
 ];
 
 interface StorageStatus {
@@ -350,7 +351,12 @@ function AboutSection() {
         </div>
       </div>
       <SettingRow label="Version" description={runtime ? `Desktop runtime · Tauri ${runtime.tauri}` : "Browser preview — native features are unavailable."}>
-        <span className="text-[13px] font-medium text-fg tabular-nums">{runtime?.version ?? __NOVA_VERSION__}</span>
+        <span className="flex items-center gap-2">
+          <Button size="sm" variant="ghost" onClick={showWhatsNew}>
+            What's new
+          </Button>
+          <span className="text-[13px] font-medium text-fg tabular-nums">{runtime?.version ?? __NOVA_VERSION__}</span>
+        </span>
       </SettingRow>
       <SettingRow
         label="Local database"

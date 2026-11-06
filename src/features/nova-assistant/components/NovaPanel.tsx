@@ -24,7 +24,6 @@ import {
   captureScreen,
   captureTargets,
   clearAttachments,
-  prewarmAssistant,
 } from "../api";
 import { replyText, useConversation } from "../conversation";
 import type {
@@ -34,20 +33,16 @@ import type {
   FinderStatus,
   WakeCall,
 } from "../types";
+import { useVoiceTurns } from "../useVoiceTurns";
 import {
   isOnlineVoice,
-  listen,
   openVoiceSettings,
-  speak,
-  speaksGerman,
   speechActive,
   stopListening,
   stopSpeaking,
   useVoice,
-  voiceLine,
 } from "../voice";
-import { beginTurn, discardTurn, mark } from "../speech/timings";
-import { playChime } from "../wake";
+import { NovaScan } from "./NovaScan";
 import { NovaConversation } from "./NovaConversation";
 import { NovaHistory } from "./NovaHistory";
 import { NovaInput } from "./NovaInput";
@@ -117,97 +112,24 @@ export function NovaPanel(props: NovaPanelProps) {
   const listening = voice.mode === "listening" || voice.mode === "processing";
   const speakReplies = agent?.prefs.speakReplies ?? false;
   const working = state !== "idle" && state !== "completed";
-  const language = agent?.prefs.language ?? "auto";
-  const german = speaksGerman(language);
   // What NOVA just said around a spoken turn (a greeting, "one moment").
   const line = voice.line;
   const setLine = (text: string | null) => useVoice.setState({ line: text });
-  const discard = useRef(false);
   const typing = useRef(false);
   const onTyping = useCallback((now: boolean) => {
     typing.current = now;
   }, []);
+  const { startVoice, discard, german } = useVoiceTurns({
+    agent,
+    wake,
+    typing,
+    onStart: () => setActionError(null),
+    onSend: () => setView("chat"),
+  });
   const stopLabel = german ? "Aufhören zu sprechen" : "Stop speaking";
 
   const report = (error: unknown) =>
     setActionError(error instanceof Error ? error.message : String(error));
-  /** Shows and speaks a short line; resolves when it has been said. */
-  const say = (text: string, label?: string) => {
-    setLine(text);
-    return speak(
-      text,
-      agent?.prefs ?? { voice: "", speechRate: 1, speechVolume: 1 },
-      label,
-      german,
-    );
-  };
-  /** `followUp`: the microphone opens by itself after a reply. */
-  const startVoice = async (followUp = false) => {
-    if (listening) {
-      stopListening();
-      return;
-    }
-    setActionError(null);
-    if (followUp) setLine(null);
-    discard.current = false;
-    beginTurn("voice");
-    // Warm the AI provider while the user speaks (skipped when the panel just did).
-    void prewarmAssistant();
-    const text = await listen(german, undefined, followUp);
-    if (text && !discard.current) {
-      setView("chat");
-      // The reply is read aloud as it arrives; "one moment" plays only if it takes a while.
-      void send(text, { voice: true, ack: voiceLine("ack", language) });
-    } else {
-      discardTurn();
-    }
-  };
-
-  // Woken by "Hey NOVA" or a double clap: a chime and a greeting, then listen (or wait for typing).
-  const startVoiceRef = useRef(startVoice);
-  startVoiceRef.current = startVoice;
-  const sayRef = useRef(say);
-  sayRef.current = say;
-  useEffect(() => {
-    if (!wake) return;
-    let cancelled = false;
-    void (async () => {
-      beginTurn("wake");
-      mark("wake");
-      if (wake.call.chime) await playChime();
-      mark("chimeEnd");
-      if (cancelled) return;
-      // A reply is still running: the greeting would cut it off and nobody could answer.
-      if (useConversation.getState().busy) return;
-      // Said before the microphone opens, so NOVA doesn't hear itself. A greeting
-      // whose audio never ends must not keep the microphone closed.
-      const greeted = sayRef.current(voiceLine("greet", language), "greet");
-      const late = new Promise<"late">((resolve) => setTimeout(() => resolve("late"), 15_000));
-      if ((await Promise.race([greeted, late])) === "late") stopSpeaking();
-      if (
-        !cancelled &&
-        wake.call.listen &&
-        !useConversation.getState().busy &&
-        useVoice.getState().mode === "idle"
-      )
-        void startVoiceRef.current();
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [wake?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // A spoken reply has been said: the microphone opens again, unless something else is going on.
-  const followUpsSeen = useRef(voice.followUps);
-  useEffect(() => {
-    if (voice.followUps === followUpsSeen.current) return;
-    followUpsSeen.current = voice.followUps;
-    // A moment later, so the end of the reply doesn't reach the microphone.
-    const timer = setTimeout(() => {
-      if (!typing.current && !useConversation.getState().busy && useVoice.getState().mode === "idle") void startVoiceRef.current(true);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [voice.followUps]);
 
   // The line goes once the reply is there.
   useEffect(() => {
@@ -414,6 +336,8 @@ export function NovaPanel(props: NovaPanelProps) {
           )}
         </p>
       )}
+
+      <NovaScan german={german} />
 
       {voice.onlineVoiceProblem && isOnlineVoice(agent?.prefs.voice ?? "") && (
         <p

@@ -101,8 +101,8 @@ export function WakeSettings() {
       <SettingRow label="Play a sound when NOVA wakes">
         <Switch label="Play a sound when NOVA wakes" checked={prefs?.chime ?? true} disabled={busy} onChange={(chime) => update({ chime })} />
       </SettingRow>
-      <SettingRow label="Pause in fullscreen apps and games" description="Films and games are full of voices and claps.">
-        <Switch label="Pause in fullscreen apps and games" checked={prefs?.pauseInFullscreen ?? true} disabled={busy} onChange={(pauseInFullscreen) => update({ pauseInFullscreen })} />
+      <SettingRow label="Also in games" description="NOVA also reacts while a game or another fullscreen app runs. It answers by voice, without its window. With a game's sound on loudspeakers it can wake by mistake, and it costs a little performance. Presentations always pause it.">
+        <Switch label="Also in games" checked={prefs?.inGames ?? true} disabled={busy} onChange={(inGames) => update({ inGames })} />
       </SettingRow>
       <WakeTest testing={status?.testing ?? false} clap={prefs?.clap ?? false} />
       <p className="flex items-start gap-2 pt-4 text-[12.5px] leading-relaxed text-fg-muted">

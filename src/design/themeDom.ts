@@ -1,6 +1,6 @@
 import type { MotionPreference } from "@/stores/settings";
 import { type AccentSetting, applyAccentTokens, deriveAccentTokens, resolveAccentColor } from "./accent";
-import { type BackdropGradient, gradientCss } from "./backdrop";
+import { type BackdropGradient, gradientCss, tintedGlass, UI_FONTS, type UiFont } from "./backdrop";
 
 export interface ThemeSettings {
   accent: AccentSetting;
@@ -9,6 +9,11 @@ export interface ThemeSettings {
   backdropGradient: BackdropGradient | null;
   /** How solid the glass is, in percent. */
   glassOpacity: number;
+  /** A color the glass takes on; null for the usual dark glass. */
+  glassTint: string | null;
+  /** How round corners are, in percent of the usual. */
+  cornerScale: number;
+  uiFont: UiFont;
 }
 
 /** Keeps floating panes (the NOVA AI panel, menus) readable: mostly dark, with the gradient glowing through. */
@@ -23,9 +28,8 @@ export function applyTheme(settings: ThemeSettings, root: HTMLElement = document
   root.dataset.glass = settings.transparency ? "on" : "off";
   root.dataset.motion = settings.motion;
   if (settings.transparency) {
-    const alpha = settings.glassOpacity / 100;
-    root.style.setProperty("--color-glass", `rgb(24 30 46 / ${alpha})`);
-    root.style.setProperty("--color-glass-strong", `rgb(26 32 50 / ${Math.min(alpha + 0.28, 0.95)})`);
+    root.style.setProperty("--color-glass", tintedGlass(settings.glassTint, settings.glassOpacity));
+    root.style.setProperty("--color-glass-strong", tintedGlass(settings.glassTint, Math.min(settings.glassOpacity + 28, 95)));
   } else {
     // Transparency off has its own opaque values in the stylesheet.
     root.style.removeProperty("--color-glass");
@@ -33,4 +37,9 @@ export function applyTheme(settings: ThemeSettings, root: HTMLElement = document
   }
   const overlay = settings.transparency && settings.backdropGradient ? `${OVERLAY_SHADE}, ${gradientCss(settings.backdropGradient)}` : "none";
   root.style.setProperty("--nova-overlay-image", overlay);
+  const corners = settings.cornerScale / 100;
+  root.style.setProperty("--radius-widget", `${24 * corners}px`);
+  root.style.setProperty("--radius-control", `${12 * corners}px`);
+  root.style.setProperty("--radius-chip", `${9 * corners}px`);
+  root.style.setProperty("--font-sans", UI_FONTS[settings.uiFont].stack);
 }

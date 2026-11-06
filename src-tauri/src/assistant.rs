@@ -700,6 +700,8 @@ pub struct WakeCall {
     listen: bool,
     /// Play the wake sound.
     chime: bool,
+    /// A game fills the screen: answer by voice, without the panel.
+    headless: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -808,9 +810,54 @@ fn hide_panel<R: Runtime>(app: &AppHandle<R>, generation: u64) {
     let _ = app.emit_to(DOT_LABEL, EVENT_PANEL, PanelEvent { open: false });
 }
 
+/// A game is in front and NOVA's window isn't open, so nobody can see or click anything of NOVA's.
+pub fn in_game<R: Runtime>(app: &AppHandle<R>) -> bool {
+    !state(app).lock().panel_open && fullscreen_in_front()
+}
+
+/// Wakes NOVA in the panel's page without showing its window or taking the
+/// game's focus. The page counts as visible meanwhile, so its timers keep their pace.
+fn wake_without_panel<R: Runtime>(app: &AppHandle<R>, call: WakeCall, loaded: bool) {
+    if loaded {
+        if let Some(panel) = app.get_webview_window(PANEL_LABEL) {
+            crate::desktop::set_page_visible(&panel, true);
+        }
+        let _ = app.emit_to(PANEL_LABEL, EVENT_WAKE, call);
+        return;
+    }
+    let creating = {
+        let mut inner = state(app).lock();
+        inner.pending_wake = Some(call);
+        std::mem::replace(&mut inner.panel_creating, true)
+    };
+    if creating || app.get_webview_window(PANEL_LABEL).is_some() {
+        state(app).lock().panel_creating = creating;
+        return;
+    }
+    // The page picks the wake-up up when it reports ready: see `assistant_panel_ready`.
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let created = create_panel(&app);
+        self::state(&app).lock().panel_creating = false;
+        if let Err(error) = created {
+            eprintln!("[NOVA] assistant panel unavailable: {error}");
+        }
+    });
+}
+
+/// The voice-only turn in a game is over.
+#[tauri::command]
+pub async fn assistant_headless_done<R: Runtime>(app: AppHandle<R>, window: WebviewWindow<R>) -> CommandResult<()> {
+    if !state(&app).lock().panel_open {
+        crate::desktop::set_page_visible(&window, false);
+    }
+    Ok(())
+}
+
 /// "Hey NOVA" or a double clap: opens the panel, or asks an open one to listen.
 pub fn wake<R: Runtime>(app: &AppHandle<R>, source: crate::wake::Source, listen: bool, chime: bool) {
-    let call = WakeCall { source, listen, chime };
+    let headless = in_game(app);
+    let call = WakeCall { source, listen, chime, headless };
     // While NOVA greets: get recognition, the voice and the AI provider's cache ready.
     if listen {
         if crate::speech::stt::use_local(app) {
@@ -826,6 +873,10 @@ pub fn wake<R: Runtime>(app: &AppHandle<R>, source: crate::wake::Source, listen:
         let inner = state(app).lock();
         (inner.panel_open && !inner.collapsing, inner.panel_loaded)
     };
+    if headless {
+        wake_without_panel(app, call, loaded);
+        return;
+    }
     if open && loaded {
         if let Some(panel) = app.get_webview_window(PANEL_LABEL) {
             let _ = panel.set_focus();
@@ -974,6 +1025,19 @@ pub(crate) fn fullscreen_in_front() -> bool {
 
 #[cfg(not(windows))]
 pub(crate) fn fullscreen_in_front() -> bool {
+    false
+}
+
+/// Whether a presentation is running: nobody wants NOVA answering a clap then.
+#[cfg(windows)]
+pub(crate) fn presenting() -> bool {
+    use windows::Win32::UI::Shell::{SHQueryUserNotificationState, QUNS_PRESENTATION_MODE};
+    // SAFETY: a read-only query of the shell's notification state.
+    matches!(unsafe { SHQueryUserNotificationState() }, Ok(s) if s == QUNS_PRESENTATION_MODE)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn presenting() -> bool {
     false
 }
 
@@ -1380,7 +1444,8 @@ pub async fn assistant_panel_ready<R: Runtime>(app: AppHandle<R>, window: Webvie
     let (open, origin, wake) = {
         let mut inner = state(&app).lock();
         inner.panel_loaded = true;
-        let wake = if inner.panel_open { inner.pending_wake.take() } else { None };
+        let waiting = inner.pending_wake.is_some_and(|call| call.headless);
+        let wake = if inner.panel_open || waiting { inner.pending_wake.take() } else { None };
         (inner.panel_open, inner.panel_origin, wake)
     };
     if open {
@@ -1388,6 +1453,8 @@ pub async fn assistant_panel_ready<R: Runtime>(app: AppHandle<R>, window: Webvie
         crate::desktop::set_page_visible(&window, true);
         let _ = window.show();
         let _ = window.set_focus();
+    } else if wake.is_some() {
+        crate::desktop::set_page_visible(&window, true);
     }
     Ok(PanelView { open, origin, wake })
 }
@@ -1440,6 +1507,7 @@ pub struct Appearance {
     motion: Option<String>,
     display_name: Option<String>,
     backdrop_gradient: Option<Value>,
+    ui_font: Option<String>,
 }
 
 /// The appearance subset of the persisted settings document ({ state, version }).
@@ -1451,6 +1519,7 @@ fn appearance_from(document: &Value) -> Appearance {
         motion: settings.get("motion").and_then(Value::as_str).map(|m| m.chars().take(16).collect()),
         display_name: settings.get("displayName").and_then(Value::as_str).map(|n| n.chars().take(40).collect()),
         backdrop_gradient: settings.get("backdropGradient").filter(|v| v.is_object()).cloned(),
+        ui_font: settings.get("uiFont").and_then(Value::as_str).map(|f| f.chars().take(16).collect()),
     }
 }
 

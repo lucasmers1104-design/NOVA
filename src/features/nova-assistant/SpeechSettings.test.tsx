@@ -62,8 +62,10 @@ describe("SpeechSettings", () => {
   let status: SpeechStatus;
   let agent: AgentStatus;
   let call: ReturnType<typeof vi.spyOn>;
+  let geminiKey: boolean;
 
   beforeEach(() => {
+    geminiKey = false;
     status = structuredClone(STATUS);
     agent = structuredClone(AGENT);
     vi.spyOn(native, "isDesktop").mockReturnValue(true);
@@ -75,6 +77,11 @@ describe("SpeechSettings", () => {
       }
       if (command === "speech_install") return status;
       if (command === "speech_benchmark") return undefined;
+      if (command === "online_voice_keys") return { gemini: geminiKey, elevenlabs: false };
+      if (command === "ai_key_set") {
+        geminiKey = true;
+        return undefined;
+      }
       if (command === "assistant_agent_status") return agent;
       if (command === "assistant_agent_configure") {
         agent = { ...agent, prefs: args?.prefs as AgentStatus["prefs"] };
@@ -94,6 +101,25 @@ describe("SpeechSettings", () => {
     // A failed GPU run shows as such, not as a number.
     expect(screen.getAllByText("didn't work")).toHaveLength(1);
     expect(screen.getByText("0.16")).toBeInTheDocument();
+  });
+
+  it("lists online voices, usable once their key is saved", async () => {
+    const user = userEvent.setup();
+    renderWithQuery(<SpeechSettings />);
+    const row = (await screen.findByText("Sulafat, warm")).closest("li")!;
+    const use = within(row).getByRole("button", { name: "Use" });
+    expect(use).toBeDisabled();
+    expect(within(row).getByRole("button", { name: "Listen to Sulafat, warm" })).toBeDisabled();
+
+    const key = screen.getByLabelText("Google Gemini API key");
+    await user.type(key, "AIza-test-key");
+    await user.click(within(key.closest("form")!).getByRole("button", { name: "Save" }));
+    expect(call).toHaveBeenCalledWith("ai_key_set", { provider: "gemini", key: "AIza-test-key" });
+    await waitFor(() => expect(use).toBeEnabled());
+
+    await user.click(use);
+    expect(call).toHaveBeenCalledWith("assistant_agent_configure", { prefs: expect.objectContaining({ voice: "online:gemini:Sulafat" }) });
+    expect(await within(row).findByText("NOVA's voice")).toBeInTheDocument();
   });
 
   it("switches the performance mode and the device", async () => {

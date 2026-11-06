@@ -1,14 +1,17 @@
 import { emit, emitTo, listen } from "@tauri-apps/api/event";
 import { AnimatePresence, MotionConfig } from "motion/react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { callNative } from "@/lib/native";
 import type { MotionPreference } from "@/stores/settings";
 import { agentStatus, collapseAssistant, configureAgent, finderAddStandardFolders, finderStatus, openNova, panelHidden, panelReady } from "../api";
 import { useAssistantAppearance } from "../appearance";
 import { NovaPanel } from "../components/NovaPanel";
 import { onReply, useConversation } from "../conversation";
 import { ReplyDirector } from "../speech/director";
+import { watchScan } from "../scan";
 import { ASSISTANT_EVENTS, type AgentStatus, type AssistantState, type DotCorner, type FinderStatus, type WakeCall } from "../types";
-import { installNovaVoice, listen as listenOnce, prepareNovaLines, speechActive, stopListening, stopSpeaking, useVoice, watchNovaVoice } from "../voice";
+import { installNovaVoice, listen as listenOnce, prepareNovaLines, speak, speaksGerman, speechActive, stopListening, stopSpeaking, useVoice, voiceLine, watchNovaVoice } from "../voice";
+import { HeadlessVoice } from "./HeadlessVoice";
 
 // Dev builds: a handle for end-to-end checks over the DevTools protocol (scripts/cdp.mjs).
 if (import.meta.env.DEV && typeof window !== "undefined") {
@@ -43,6 +46,12 @@ export function PanelApp() {
   const [agent, setAgent] = useState<AgentStatus | null>(null);
   const [finder, setFinder] = useState<FinderStatus | null>(null);
   const [wake, setWake] = useState<{ id: number; call: WakeCall } | null>(null);
+  // Woken in a game: a voice turn without the panel.
+  const [headless, setHeadless] = useState<{ id: number; call: WakeCall } | null>(null);
+  const headlessDone = useCallback(() => {
+    setHeadless(null);
+    void callNative("assistant_headless_done").catch(() => {});
+  }, []);
   const wakes = useRef(0);
   const openRef = useRef(open);
   openRef.current = open;
@@ -74,7 +83,14 @@ export function PanelApp() {
       agentStatus().then((s) => alive && setAgent(s), () => {});
       finderStatus().then((s) => alive && setFinder(s), () => {});
     };
-    const woken = (call: WakeCall | null) => setWake(call && { id: ++wakes.current, call });
+    const woken = (call: WakeCall | null) => {
+      if (call?.headless) {
+        refresh();
+        setHeadless({ id: ++wakes.current, call });
+      } else {
+        setWake(call && { id: ++wakes.current, call });
+      }
+    };
     const show = (from: DotCorner, call: WakeCall | null) => {
       pendingHide.current = null;
       woken(call);
@@ -100,7 +116,10 @@ export function PanelApp() {
       listen<FinderStatus["progress"]>(ASSISTANT_EVENTS.finder, () => finderStatus().then((s) => alive && setFinder(s), () => {})),
     ];
     panelReady().then(
-      (view) => alive && view.open && show(view.origin, view.wake),
+      (view) => {
+        if (alive && view.open) show(view.origin, view.wake);
+        else if (alive && view.wake?.headless) woken(view.wake);
+      },
       (error: unknown) => console.error("NOVA panel:", error),
     );
     return () => {
@@ -145,8 +164,27 @@ export function PanelApp() {
     };
   }, []);
 
+  // A virus scan asked for out loud also ends out loud, when nothing else is being said.
+  const spokenScan = useRef(false);
+  useEffect(() => onReply((event) => {
+    if (event.type === "toolStarted" && event.name === "virus_scan" && event.voice) spokenScan.current = true;
+  }), []);
+  useEffect(
+    () =>
+      watchScan((status) => {
+        const prefs = agentRef.current?.prefs;
+        if (!spokenScan.current || !prefs) return;
+        spokenScan.current = false;
+        if (status.state === "cancelled" || speechActive() || useVoice.getState().mode !== "idle") return;
+        const kind = status.state === "clean" ? "scanClean" : status.state === "threats" ? "scanThreats" : "scanFailed";
+        void speak(voiceLine(kind, prefs.language), prefs, "scan", speaksGerman(prefs.language));
+      }),
+    [],
+  );
+
   return (
     <MotionConfig reducedMotion={REDUCED_MOTION[appearance.motion]}>
+      {headless && !open && <HeadlessVoice agent={agent} wake={headless} onDone={headlessDone} />}
       <AnimatePresence
         onExitComplete={() => {
           const generation = pendingHide.current;

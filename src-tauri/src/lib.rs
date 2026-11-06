@@ -15,7 +15,9 @@ mod shell;
 pub mod speech;
 mod storage;
 mod system;
+mod backdrop;
 mod online_voice;
+mod scan;
 mod tts;
 mod turnlog;
 mod updates;
@@ -63,6 +65,7 @@ pub fn run() {
         .manage(finder::FinderState::default())
         .manage(voice::VoiceState::default())
         .manage(tts::TtsState::default())
+        .manage(scan::ScanState::default())
         .manage(speech::SpeechState::default())
         .manage(wake::WakeState::default())
         .manage(system::SystemMonitor::new())
@@ -236,6 +239,12 @@ pub fn run() {
             online_voice::elevenlabs_key_set,
             online_voice::elevenlabs_key_delete,
             online_voice::elevenlabs_voices_list,
+            scan::scan_status,
+            scan::scan_cancel,
+            scan::scan_open_security,
+            backdrop::backdrop_image_pick,
+            backdrop::backdrop_image_load,
+            assistant::assistant_headless_done,
             wake::wake_status,
             wake::wake_configure,
             wake::wake_test,

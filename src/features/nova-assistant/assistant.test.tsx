@@ -11,6 +11,10 @@ import { WakeSettings } from "./WakeSettings";
 import { usageLine } from "./components/NovaConversation";
 import { BREATH_MS, NovaDot, REST_MS } from "./components/NovaDot";
 import { NovaPanel } from "./components/NovaPanel";
+import { NovaScan } from "./components/NovaScan";
+import { FreedCard } from "./components/NovaToolCard";
+import { HeadlessVoice } from "./panel/HeadlessVoice";
+import { elapsedLabel, useScan } from "./scan";
 import { reduceReply, replyText, useConversation } from "./conversation";
 import { displayedState } from "./panel/PanelApp";
 import { captureShortcut, shortcutLabels } from "./shortcut";
@@ -58,6 +62,9 @@ describe("assistant shortcuts", () => {
       displayName: "Luca",
       backdropGradient: null,
       glassOpacity: 50,
+      glassTint: null,
+      cornerScale: 100,
+      uiFont: "inter",
     });
     expect(sanitizeAppearance({ accent: "red", motion: "fast" })).toMatchObject({ accent: { kind: "preset", id: "purple" }, motion: "system" });
     expect(sanitizeAppearance(null).transparency).toBe(true);
@@ -264,6 +271,50 @@ describe("NovaPanel", () => {
       expect(listening).not.toHaveBeenCalledWith("voice_listen", expect.anything());
       listening.mockRestore();
     });
+  });
+
+  describe("talking in a game", () => {
+    afterEach(() => vi.useRealTimers());
+
+    it("shows nothing, and ends once nothing has gone on for a few seconds", async () => {
+      vi.useFakeTimers();
+      const onDone = vi.fn();
+      useConversation.setState({ busy: true });
+      const { container } = render(<HeadlessVoice agent={AGENT} wake={{ id: 1, call: { source: "clap", listen: false, chime: false, headless: true } }} onDone={onDone} />);
+      expect(container).toBeEmptyDOMElement();
+      // A reply is still running.
+      await act(() => vi.advanceTimersByTimeAsync(20_000));
+      expect(onDone).not.toHaveBeenCalled();
+      useConversation.setState({ busy: false });
+      await act(() => vi.advanceTimersByTimeAsync(4_000));
+      expect(onDone).not.toHaveBeenCalled();
+      await act(() => vi.advanceTimersByTimeAsync(2_000));
+      expect(onDone).toHaveBeenCalled();
+    });
+  });
+
+  it("shows how much space was won and what went", async () => {
+    render(<FreedCard card={{ kind: "freed", bytes: 2 * 1024 ** 3, freeNow: 50 * 1024 ** 3, items: [{ label: "Recycle Bin", bytes: 2 * 1024 ** 3 }] }} />);
+    expect(screen.getByLabelText("2.0 GB free again")).toBeInTheDocument();
+    expect(screen.getByText("Recycle Bin")).toBeInTheDocument();
+    expect(screen.getByText(/50\.0 GB free now/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText("2.0 GB free again")).toHaveTextContent("2.0 GB"));
+  });
+
+  it("shows a virus scan running and what came of it", () => {
+    useScan.setState({ dismissed: false, status: { state: "running", kind: "quick", startedAt: Date.now(), finishedAt: 0, threats: [], message: null } });
+    const { rerender } = render(<NovaScan german={false} />);
+    expect(screen.getByRole("status", { name: "Quick virus scan running" })).toBeInTheDocument();
+    act(() => useScan.setState({ status: { state: "failed", kind: "quick", startedAt: 1, finishedAt: 2, threats: [], message: "Malwarebytes protects this PC." } }));
+    rerender(<NovaScan german={false} />);
+    expect(screen.getByText("Malwarebytes protects this PC.")).toBeInTheDocument();
+    act(() => useScan.setState({ status: { state: "threats", kind: "quick", startedAt: 1, finishedAt: 2, threats: ["Virus:DOS/EICAR"], message: null } }));
+    expect(screen.getByText("1 threat found")).toBeInTheDocument();
+    act(() => useScan.setState({ status: { state: "cancelled", kind: "quick", startedAt: 1, finishedAt: 2, threats: [], message: null } }));
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(elapsedLabel(65_000)).toBe("1:05");
+    expect(elapsedLabel(3_725_000)).toBe("1:02:05");
+    useScan.setState({ status: { state: "idle", kind: null, startedAt: 0, finishedAt: 0, threats: [], message: null } });
   });
 
   it("shows when auto mode is on", () => {
@@ -680,7 +731,7 @@ describe("AssistantSettings", () => {
 
 describe("WakeSettings", () => {
   const OFF: WakeStatus = {
-    prefs: { phrase: false, phraseSensitivity: "strict", clap: false, clapSensitivity: "strict", afterWake: "listen", chime: true, pauseInFullscreen: true, muted: false },
+    prefs: { phrase: false, phraseSensitivity: "strict", clap: false, clapSensitivity: "strict", afterWake: "listen", chime: true, inGames: true, muted: false },
     phrase: { state: "off" },
     clap: { state: "off" },
     dictation: false,

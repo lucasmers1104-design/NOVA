@@ -2,7 +2,8 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { CUSTOMIZABLE_ROUTES, type RouteId, WORKSPACE_ORDERABLE_ROUTES } from "@/app/navigation";
 import { type AccentSetting, DEFAULT_ACCENT, isAccentSetting } from "@/design/accent";
-import { type BackdropGradient, DEFAULT_BACKDROP_DIM, DEFAULT_GLASS_OPACITY, MAX_BACKDROP_DIM, MAX_GLASS_OPACITY, MIN_GLASS_OPACITY, sanitizeGradient } from "@/design/backdrop";
+import { type BackdropGradient, DEFAULT_BACKDROP_DIM, DEFAULT_CORNER_SCALE, DEFAULT_GLASS_OPACITY, isUiFont, MAX_BACKDROP_BLUR, MAX_BACKDROP_DIM, MAX_CORNER_SCALE, MAX_GLASS_OPACITY, MIN_GLASS_OPACITY, sanitizeGradient, type UiFont } from "@/design/backdrop";
+import { isHexColor, normalizeHex } from "@/design/color";
 import { nativeStorage } from "@/lib/persistence";
 import { systemPrefers24Hour } from "@/lib/time";
 
@@ -60,6 +61,17 @@ export interface Settings {
   backdropDim: number;
   /** How solid the glass is, in percent. */
   glassOpacity: number;
+  /** The user's own background picture (a token that changes with the picture); null means none. */
+  backdropImage: string | null;
+  /** How much the picture is blurred, in pixels. */
+  backdropBlur: number;
+  /** The background drifts slowly. */
+  backdropAnimated: boolean;
+  /** A color the glass takes on; null for the usual dark glass. */
+  glassTint: string | null;
+  /** How round corners are, in percent of the usual. */
+  cornerScale: number;
+  uiFont: UiFont;
   /** GitHub "owner/repo" or HTTPS URL; empty means the built-in default. */
   updateSource: string;
   /** Check at every start and install found updates after a short countdown. */
@@ -91,6 +103,12 @@ interface SettingsActions {
   setBackdropGradient: (gradient: BackdropGradient | null) => void;
   setBackdropDim: (percent: number) => void;
   setGlassOpacity: (percent: number) => void;
+  setBackdropImage: (token: string | null) => void;
+  setBackdropBlur: (pixels: number) => void;
+  setBackdropAnimated: (enabled: boolean) => void;
+  setGlassTint: (color: string | null) => void;
+  setCornerScale: (percent: number) => void;
+  setUiFont: (font: UiFont) => void;
   setUpdateSource: (source: string) => void;
   setAutoUpdate: (enabled: boolean) => void;
   setLastSeenVersion: (version: string) => void;
@@ -118,6 +136,12 @@ export function defaultSettings(): Settings {
     backdropGradient: null,
     backdropDim: DEFAULT_BACKDROP_DIM,
     glassOpacity: DEFAULT_GLASS_OPACITY,
+    backdropImage: null,
+    backdropBlur: 0,
+    backdropAnimated: false,
+    glassTint: null,
+    cornerScale: DEFAULT_CORNER_SCALE,
+    uiFont: "inter",
     updateSource: "",
     autoUpdate: true,
     lastSeenVersion: "",
@@ -196,6 +220,13 @@ export function sanitizeSettings(input: unknown): Partial<Settings> {
   if (gradient !== undefined) out.backdropGradient = gradient;
   if (typeof raw.backdropDim === "number" && Number.isFinite(raw.backdropDim)) out.backdropDim = Math.min(MAX_BACKDROP_DIM, Math.max(0, raw.backdropDim));
   if (typeof raw.glassOpacity === "number" && Number.isFinite(raw.glassOpacity)) out.glassOpacity = Math.min(MAX_GLASS_OPACITY, Math.max(MIN_GLASS_OPACITY, raw.glassOpacity));
+  if (raw.backdropImage === null || (typeof raw.backdropImage === "string" && /^\d{1,20}$/.test(raw.backdropImage))) out.backdropImage = raw.backdropImage;
+  if (typeof raw.backdropBlur === "number" && Number.isFinite(raw.backdropBlur)) out.backdropBlur = Math.min(MAX_BACKDROP_BLUR, Math.max(0, raw.backdropBlur));
+  if (typeof raw.backdropAnimated === "boolean") out.backdropAnimated = raw.backdropAnimated;
+  if (raw.glassTint === null) out.glassTint = null;
+  else if (typeof raw.glassTint === "string" && isHexColor(raw.glassTint)) out.glassTint = normalizeHex(raw.glassTint);
+  if (typeof raw.cornerScale === "number" && Number.isFinite(raw.cornerScale)) out.cornerScale = Math.min(MAX_CORNER_SCALE, Math.max(0, raw.cornerScale));
+  if (isUiFont(raw.uiFont)) out.uiFont = raw.uiFont;
   if (typeof raw.updateSource === "string") out.updateSource = raw.updateSource.slice(0, 200);
   if (typeof raw.autoUpdate === "boolean") out.autoUpdate = raw.autoUpdate;
   if (typeof raw.lastSeenVersion === "string" && /^[0-9A-Za-z.+-]{0,32}$/.test(raw.lastSeenVersion)) out.lastSeenVersion = raw.lastSeenVersion;
@@ -240,6 +271,12 @@ export const useSettings = create<Settings & SettingsActions>()(
       setBackdropGradient: (backdropGradient) => set({ backdropGradient }),
       setBackdropDim: (backdropDim) => set({ backdropDim }),
       setGlassOpacity: (glassOpacity) => set({ glassOpacity }),
+      setBackdropImage: (backdropImage) => set({ backdropImage }),
+      setBackdropBlur: (backdropBlur) => set({ backdropBlur }),
+      setBackdropAnimated: (backdropAnimated) => set({ backdropAnimated }),
+      setGlassTint: (glassTint) => set({ glassTint }),
+      setCornerScale: (cornerScale) => set({ cornerScale }),
+      setUiFont: (uiFont) => set({ uiFont }),
       setUpdateSource: (source) => set({ updateSource: source.slice(0, 200) }),
       setAutoUpdate: (autoUpdate) => set({ autoUpdate }),
       setLastSeenVersion: (lastSeenVersion) => set({ lastSeenVersion }),
@@ -273,6 +310,12 @@ export const useSettings = create<Settings & SettingsActions>()(
         backdropGradient: s.backdropGradient,
         backdropDim: s.backdropDim,
         glassOpacity: s.glassOpacity,
+        backdropImage: s.backdropImage,
+        backdropBlur: s.backdropBlur,
+        backdropAnimated: s.backdropAnimated,
+        glassTint: s.glassTint,
+        cornerScale: s.cornerScale,
+        uiFont: s.uiFont,
         updateSource: s.updateSource,
         autoUpdate: s.autoUpdate,
         lastSeenVersion: s.lastSeenVersion,

@@ -15,6 +15,7 @@ import {
   Folder,
   FolderOpen,
   Globe,
+  HardDrive,
   ListChecks,
   Loader2,
   type LucideIcon,
@@ -24,7 +25,7 @@ import {
   Type,
   X,
 } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
 import { openNova, openPath, openWebPage } from "../api";
@@ -219,9 +220,62 @@ function ResultCard({ card }: { card: ToolCard }) {
           </Button>
         </div>
       );
+    case "freed":
+      return <FreedCard card={card} />;
     case "app":
       return null;
   }
+}
+
+/** Counts from 0 to `target` when it appears. */
+function useCountUp(target: number, durationMs = 900): number {
+  const [value, setValue] = useState(0);
+  useEffect(() => {
+    const reduced = document.documentElement.dataset.motion === "reduced" || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (reduced) {
+      setValue(target);
+      return;
+    }
+    const started = performance.now();
+    let frame = requestAnimationFrame(function step(now) {
+      const progress = Math.min(1, (now - started) / durationMs);
+      // Quick at first, settling on the number.
+      setValue(Math.round(target * (1 - (1 - progress) ** 3)));
+      if (progress < 1) frame = requestAnimationFrame(step);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [target, durationMs]);
+  return value;
+}
+
+/** How much space NOVA won, what went, and what's free now. */
+export function FreedCard({ card }: { card: Extract<ToolCard, { kind: "freed" }> }) {
+  const shown = useCountUp(card.bytes);
+  return (
+    <div className="mt-2 ml-6 rounded-[14px] border border-success/30 bg-success/[0.07] p-3">
+      <div className="flex items-center gap-2.5">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-[11px] bg-success/15 text-success">
+          <HardDrive size={17} aria-hidden />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-[20px] leading-tight font-semibold text-fg tabular-nums" aria-label={`${formatSize(card.bytes)} free again`}>
+            {formatSize(shown)}
+          </span>
+          <span className="block text-[11px] text-fg-muted">free again · {formatSize(card.freeNow)} free now</span>
+        </span>
+      </div>
+      {card.items.length > 0 && (
+        <ul className="mt-2 space-y-0.5 border-t border-line pt-2">
+          {card.items.map((item) => (
+            <li key={item.label} className="flex justify-between gap-3 text-[11.5px] text-fg-muted">
+              <span className="min-w-0 truncate">{item.label}</span>
+              <span className="shrink-0 tabular-nums">{formatSize(item.bytes)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 interface NovaToolCardProps {

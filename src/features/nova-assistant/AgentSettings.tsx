@@ -23,7 +23,7 @@ import {
 } from "./api";
 import { ASSISTANT_EVENTS, type AgentPrefs, type AgentStatus, type FinderStatus, type ProviderId } from "./types";
 import { useSpeech } from "./speech/api";
-import { GEMINI_VOICES, OnlineVoiceKeyRow, useOnlineVoices } from "./OnlineVoiceSettings";
+import { GEMINI_VOICES, OnlineVoiceKeyRow, serviceOf, useOnlineVoices } from "./OnlineVoiceSettings";
 import { installNovaVoice, isOnlineVoice, NOVA_VOICE, type NovaVoiceStatus, speak, useVoice, voices, watchNovaVoice } from "./voice";
 
 const AGENT_KEY = ["assistant", "agent"] as const;
@@ -264,7 +264,7 @@ export function AgentSettings() {
           </Button>
         </div>
       </SettingRow>
-      {prefs && isOnlineVoice(prefs.voice) && <OnlineVoiceKeyRow voice={prefs.voice} />}
+      {prefs && isOnlineVoice(prefs.voice) && <OnlineVoiceKeyRow service={serviceOf(prefs.voice)} />}
       <SettingRow label="Speed and volume">
         <div className="flex items-center gap-3 text-[12px] text-fg-muted">
           <label className="flex items-center gap-2">

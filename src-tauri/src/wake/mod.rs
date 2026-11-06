@@ -7,7 +7,7 @@
 //! (see `spot`); claps by NOVA's own detector (see `clap`).
 //!
 //! Listening pauses while NOVA takes dictation or speaks, while the PC is
-//! locked and, if the user wants, while a fullscreen app or game runs.
+//! locked, during presentations and, if the user wants, while a game runs.
 
 pub mod clap;
 #[cfg(windows)]
@@ -85,8 +85,9 @@ pub struct WakePrefs {
     pub after_wake: AfterWake,
     /// A short sound when NOVA wakes.
     pub chime: bool,
-    /// Don't listen while a fullscreen app, game or presentation is in front.
-    pub pause_in_fullscreen: bool,
+    /// Keep listening while a game or other fullscreen app is in front: NOVA then
+    /// answers by voice, without its window. Presentations always pause it.
+    pub in_games: bool,
     /// Paused from the dot's menu: the microphone is closed until resumed.
     pub muted: bool,
 }
@@ -100,7 +101,7 @@ impl Default for WakePrefs {
             clap_sensitivity: Sensitivity::Strict,
             after_wake: AfterWake::Listen,
             chime: true,
-            pause_in_fullscreen: true,
+            in_games: true,
             muted: false,
         }
     }
@@ -485,8 +486,9 @@ fn supervise<R: Runtime>(app: &AppHandle<R>) {
         if !want_phrase && !want_clap {
             break;
         }
-        if prefs.pause_in_fullscreen && fullscreen.1.is_none_or(|checked| checked.elapsed() >= Duration::from_secs(2)) {
-            fullscreen = (crate::assistant::fullscreen_in_front(), Some(Instant::now()));
+        if fullscreen.1.is_none_or(|checked| checked.elapsed() >= Duration::from_secs(2)) {
+            let paused = crate::assistant::presenting() || (!prefs.in_games && crate::assistant::fullscreen_in_front());
+            fullscreen = (paused, Some(Instant::now()));
         }
         let locked = mic::session_locked();
         let muted = prefs.muted && !test;
@@ -498,7 +500,7 @@ fn supervise<R: Runtime>(app: &AppHandle<R>) {
             Some(Pause::Dictation)
         } else if speaking_now {
             Some(Pause::Speaking)
-        } else if prefs.pause_in_fullscreen && fullscreen.0 && !test {
+        } else if fullscreen.0 && !test {
             Some(Pause::Fullscreen)
         } else {
             None
@@ -945,7 +947,7 @@ mod tests {
     #[test]
     fn preferences_start_off_and_fill_in_defaults() {
         let prefs = WakePrefs::default();
-        assert!(!prefs.phrase && !prefs.clap && prefs.chime && prefs.pause_in_fullscreen);
+        assert!(!prefs.phrase && !prefs.clap && prefs.chime && prefs.in_games);
         let parsed: WakePrefs = serde_json::from_str(r#"{"clap":true,"clapSensitivity":"normal"}"#).unwrap();
         assert!(parsed.clap && !parsed.phrase);
         assert_eq!(parsed.clap_sensitivity, Sensitivity::Normal);

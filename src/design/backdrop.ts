@@ -21,6 +21,30 @@ export const MAX_GLASS_OPACITY = 90;
 export const DEFAULT_GLASS_OPACITY = 50;
 export const DEFAULT_BACKDROP_DIM = 45;
 export const MAX_BACKDROP_DIM = 85;
+export const MAX_BACKDROP_BLUR = 40;
+export const MAX_CORNER_SCALE = 150;
+export const DEFAULT_CORNER_SCALE = 100;
+
+export const UI_FONTS = {
+  inter: { label: "Inter", stack: '"Inter Variable", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif' },
+  segoe: { label: "Segoe UI", stack: '"Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif' },
+  bahnschrift: { label: "Bahnschrift", stack: 'Bahnschrift, "Segoe UI", system-ui, sans-serif' },
+  consolas: { label: "Consolas", stack: 'Consolas, "Cascadia Mono", monospace' },
+  comic: { label: "Comic Sans", stack: '"Comic Sans MS", "Segoe UI", system-ui, sans-serif' },
+} as const;
+
+export type UiFont = keyof typeof UI_FONTS;
+
+export function isUiFont(value: unknown): value is UiFont {
+  return typeof value === "string" && Object.hasOwn(UI_FONTS, value);
+}
+
+/** Glass in the user's color, kept dark enough that text stays readable on it. */
+export function tintedGlass(tint: string | null, opacity: number): string {
+  const base = "rgb(24 30 46)";
+  const color = tint ? `color-mix(in srgb, ${tint} 38%, ${base})` : base;
+  return `color-mix(in srgb, ${color} ${opacity}%, transparent)`;
+}
 
 export interface GradientPreset {
   id: string;

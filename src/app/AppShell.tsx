@@ -12,6 +12,7 @@ import { useAssistantBridge } from "@/features/nova-assistant/useAssistantBridge
 import { NotificationCenter, Toaster } from "@/features/notifications/NotificationUI";
 import { useReminders } from "@/features/productivity/reminders";
 import { UpdateBanner, useStartupUpdates } from "@/features/updates/UpdateUI";
+import { WhatsNewDialog } from "@/features/updates/WhatsNew";
 import { type MotionPreference, useSettings } from "@/stores/settings";
 import { useUi } from "@/stores/ui";
 import { ROUTES } from "./routes";
@@ -68,6 +69,7 @@ export function AppShell() {
         <NotificationCenter />
         <Toaster />
         <UpdateBanner />
+        <WhatsNewDialog />
       </div>
     </MotionConfig>
   );

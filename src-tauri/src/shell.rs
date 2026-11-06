@@ -4,7 +4,52 @@
 //! Callers are responsible for only passing paths that came from a trusted
 //! source (scanned Start menu entries, files the user picked or listed).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+/// The same place again this soon is the same request: Explorer stays as it is.
+const SAME_PLACE: Duration = Duration::from_secs(5);
+/// Explorer windows NOVA opens within `WINDOW_SPAN`; whatever is asking for more
+/// has gone wrong, and nobody can close a hundred windows.
+const MOST_WINDOWS: usize = 6;
+const WINDOW_SPAN: Duration = Duration::from_secs(30);
+
+#[derive(Debug, PartialEq)]
+enum Explorer {
+    Open,
+    AlreadyOpen,
+    TooMany,
+}
+
+/// What this request for an Explorer window should do, given the recent ones.
+fn explorer_request(recent: &mut Vec<(Instant, PathBuf)>, now: Instant, path: &Path) -> Explorer {
+    recent.retain(|(at, _)| now.duration_since(*at) < WINDOW_SPAN);
+    if recent.iter().any(|(at, place)| place == path && now.duration_since(*at) < SAME_PLACE) {
+        return Explorer::AlreadyOpen;
+    }
+    if recent.len() >= MOST_WINDOWS {
+        return Explorer::TooMany;
+    }
+    recent.push((now, path.to_path_buf()));
+    Explorer::Open
+}
+
+/// False when the window shouldn't open (it just did); an error when too many did.
+/// Every way NOVA opens Explorer goes through here.
+fn explorer_allowed(path: &Path) -> Result<bool, String> {
+    static RECENT: Mutex<Vec<(Instant, PathBuf)>> = Mutex::new(Vec::new());
+    match explorer_request(&mut RECENT.lock().unwrap_or_else(|p| p.into_inner()), Instant::now(), path) {
+        Explorer::Open => Ok(true),
+        Explorer::AlreadyOpen => Ok(false),
+        Explorer::TooMany => Err("File Explorer was opened several times just now, so NOVA isn't opening more windows".into()),
+    }
+}
+
+/// A folder, or a shortcut to Explorer itself.
+fn opens_explorer(path: &Path) -> bool {
+    path.is_dir() || path.file_stem().is_some_and(|name| name.to_string_lossy().to_lowercase().contains("explorer"))
+}
 
 /// Runs `f` with COM initialized on the current (blocking-pool) thread.
 #[cfg(windows)]
@@ -29,6 +74,9 @@ pub fn open_path(path: &Path) -> Result<(), String> {
 
     if !path.exists() {
         return Err(format!("{} no longer exists", path.display()));
+    }
+    if opens_explorer(path) && !explorer_allowed(path)? {
+        return Ok(());
     }
     with_com(true, || {
         let target = HSTRING::from(path.as_os_str());
@@ -69,6 +117,40 @@ pub fn open_url(_url: &str) -> Result<(), String> {
     Err("Opening links requires Windows".into())
 }
 
+/// Opens one of Windows' own pages by its fixed link (never one that came from outside).
+#[cfg(windows)]
+pub fn open_system_link(link: &'static str) -> Result<(), String> {
+    run_program(link, "")
+}
+
+#[cfg(not(windows))]
+pub fn open_system_link(_link: &'static str) -> Result<(), String> {
+    Err("This requires Windows".into())
+}
+
+/// Starts a program the way Explorer would, so one that needs administrator
+/// rights gets Windows' prompt. Doesn't wait for it.
+#[cfg(windows)]
+pub fn run_program(program: &str, arguments: &str) -> Result<(), String> {
+    use windows::core::{w, HSTRING};
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    with_com(true, || {
+        // SAFETY: valid NUL-terminated wide strings for the duration of the call.
+        let result = unsafe { ShellExecuteW(None, w!("open"), &HSTRING::from(program), &HSTRING::from(arguments), None, SW_SHOWNORMAL) };
+        if result.0 as isize > 32 {
+            Ok(())
+        } else {
+            Err(format!("Windows couldn't start it (error {})", result.0 as isize))
+        }
+    })
+}
+
+#[cfg(not(windows))]
+pub fn run_program(_program: &str, _arguments: &str) -> Result<(), String> {
+    Err("This requires Windows".into())
+}
+
 /// Percent-encodes a search so it stays one harmless part of a link.
 pub fn encode_query(query: &str) -> String {
     url::form_urlencoded::byte_serialize(query.as_bytes()).collect::<String>().replace('+', "%20")
@@ -105,6 +187,9 @@ pub fn open_spotify_search(_query: &str) -> Result<bool, String> {
 pub fn reveal_path(path: &Path) -> Result<(), String> {
     if !path.exists() {
         return Err(format!("{} no longer exists", path.display()));
+    }
+    if !explorer_allowed(path)? {
+        return Ok(());
     }
     // Explorer is invoked directly (no shell), with the path as a single argument.
     std::process::Command::new("explorer.exe")
@@ -223,6 +308,36 @@ pub fn icon_data_url(_path: &Path, _size: i32) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explorer_opens_once_per_place_and_only_so_often() {
+        let start = Instant::now();
+        let mut recent = Vec::new();
+        let place = Path::new(r"C:\Users\me\Downloads");
+        // The same request a hundred times in a row: one window.
+        assert_eq!(explorer_request(&mut recent, start, place), Explorer::Open);
+        for _ in 0..100 {
+            assert_eq!(explorer_request(&mut recent, start, place), Explorer::AlreadyOpen);
+        }
+        // Asked for again later, it opens.
+        let later = start + SAME_PLACE + Duration::from_millis(1);
+        assert_eq!(explorer_request(&mut recent, later, place), Explorer::Open);
+        // Different places, too many at once.
+        for i in 2..MOST_WINDOWS {
+            assert_eq!(explorer_request(&mut recent, later, Path::new(&format!(r"C:\{i}"))), Explorer::Open);
+        }
+        assert_eq!(explorer_request(&mut recent, later, Path::new(r"C:\one-more")), Explorer::TooMany);
+        // And it recovers.
+        assert_eq!(explorer_request(&mut recent, later + WINDOW_SPAN, Path::new(r"C:\one-more")), Explorer::Open);
+    }
+
+    #[test]
+    fn knows_what_opens_explorer() {
+        let dir = std::env::temp_dir();
+        assert!(opens_explorer(&dir));
+        assert!(opens_explorer(Path::new(r"C:\ProgramData\Start Menu\File Explorer.lnk")));
+        assert!(!opens_explorer(Path::new(r"C:\Users\me\notes.txt")));
+    }
 
     #[test]
     fn converts_premultiplied_bgra() {

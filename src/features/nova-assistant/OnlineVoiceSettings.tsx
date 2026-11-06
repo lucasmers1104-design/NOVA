@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, Play } from "lucide-react";
 import { useState } from "react";
 import { Badge } from "@/components/ui/Badge";
-import { Button } from "@/components/ui/Button";
+import { Button, IconButton } from "@/components/ui/Button";
 import { aiKeys } from "@/features/ai/api";
 import { notifyError } from "@/features/notifications/store";
 import { SettingRow } from "@/features/settings/SettingsLayout";
 import { callNative, isDesktop } from "@/lib/native";
+import { isOnlineVoice, useVoice } from "./voice";
 
 /** Google's voices, all of which speak German (the model picks up the language from the text). */
 export const GEMINI_VOICES = [
@@ -63,9 +64,60 @@ const SERVICES = {
   },
 } as const;
 
-/** The key for the online voice picked above. */
-export function OnlineVoiceKeyRow({ voice }: { voice: string }) {
-  const service = voice.split(":")[1] === "elevenlabs" ? "elevenlabs" : "gemini";
+type Service = keyof typeof SERVICES;
+
+export function serviceOf(voice: string): Service {
+  return voice.split(":")[1] === "elevenlabs" ? "elevenlabs" : "gemini";
+}
+
+/** Settings → Local AI & performance: the online voices beside NOVA's own, with their keys. */
+export function OnlineVoiceList({ current, onChoose, onListen }: { current: string; onChoose: (voice: string) => void; onListen: (voice: string) => void }) {
+  const { keys, elevenlabs } = useOnlineVoices();
+  const problem = useVoice((s) => s.onlineVoiceProblem);
+  const services: readonly { service: Service; voices: readonly { id: string; name: string }[] }[] = [
+    { service: "gemini", voices: GEMINI_VOICES },
+    { service: "elevenlabs", voices: elevenlabs },
+  ];
+  return (
+    <div className="py-4">
+      <div className="text-[13.5px] font-medium text-fg">Online voices</div>
+      <p className="mt-0.5 text-[12.5px] text-fg-muted">The most natural voices. They need the internet and a free key. If one fails, NOVA's own voice takes over.</p>
+      {problem && isOnlineVoice(current) && <p className="mt-2 text-[12px] text-warning">The online voice didn't work, so another one took over: {problem}</p>}
+      {services.map(({ service, voices }) => (
+        <div key={service} className="mt-3">
+          <OnlineVoiceKeyRow service={service} />
+          <ul className="space-y-1.5">
+            {voices.map((voice) => {
+              const value = `online:${service}:${voice.id}`;
+              const usable = keys?.[service] ?? false;
+              return (
+                <li key={value} className="flex items-center justify-between gap-3 rounded-[12px] border border-line bg-white/[0.02] px-3 py-2">
+                  <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-[13px] text-fg">
+                    {voice.name}
+                    {current === value && <Badge tone="accent">NOVA's voice</Badge>}
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <IconButton size="sm" label={`Listen to ${voice.name}`} disabled={!usable} onClick={() => onListen(value)}>
+                      <Play size={14} aria-hidden />
+                    </IconButton>
+                    {current !== value && (
+                      <Button size="sm" variant="ghost" disabled={!usable} onClick={() => onChoose(value)}>
+                        Use
+                      </Button>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** The key for one online service. */
+export function OnlineVoiceKeyRow({ service }: { service: Service }) {
   const info = SERVICES[service];
   const client = useQueryClient();
   const { keys } = useOnlineVoices();

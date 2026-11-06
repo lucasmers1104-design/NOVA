@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.9.0 — 2026-11-06
+
+### Added
+- **NOVA changes game settings for you**: "mach Fortnite flüssiger" and it reads the settings and changes them directly, instead of only telling you what to do. Works with Fortnite, Valorant and other Unreal Engine games, Minecraft and Rocket League. The game has to be closed, you confirm first, and a backup is kept. NOVA only touches the settings file, never the game itself. Fortnite keeps mouse sensitivity and key bindings in Epic's cloud, so those can't be changed this way.
+- **Virus scans on request**: "mach einen Virenscan" starts Windows Defender in the background with a radar in the panel. You can carry on meanwhile, and NOVA tells you the result. If another antivirus protects your PC instead, NOVA says which one.
+- **NOVA frees up disk space**: it looks through temporary files, crash reports, the Recycle Bin, installers in Downloads and your programs, suggests what can go, and after your OK removes it or uninstalls it. Then it shows how much space you won and what went. Your own files can't go this way, and runtimes and drivers other programs need are refused.
+- **NOVA works in games**: double clap or "Hey NOVA" during a game and it answers by voice, without its window getting in the way. You can turn this off under Hey NOVA & claps. Whatever needs your OK has to wait until after the game, unless auto mode is on.
+- **Much more to customize**: your own picture as a background (PNG, JPG, WebP or GIF) with blur, a slowly drifting background, a color for the glass, sharp or extra round corners, and five fonts. Settings → Appearance.
+- **What's new**: after an update NOVA shows once what changed. You find it again under Settings → About NOVA.
+
+### Changed
+- Online voices are now also listed in Settings → Local AI & performance, with their keys and a button to listen, instead of only in a menu.
+
+### Fixed
+- **File Explorer opening again and again.** One answer from the AI could ask for it any number of times, and all of them opened. Now the same place opens once, and only a few windows can open in a row, whichever way it was asked for.
+- NOVA no longer sends keys into games with anti-cheat, which could have looked like cheating.
+
 ## 1.8.0 — 2026-11-06
 
 ### Added

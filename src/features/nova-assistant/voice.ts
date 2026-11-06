@@ -549,6 +549,9 @@ const LINES = {
     confirm: ["Bitte bestätige das kurz im Fenster."],
     failed: ["Da ist leider etwas schiefgegangen."],
     code: ["Den Code findest du im Chat."],
+    scanClean: ["Der Virenscan ist fertig. Alles sauber."],
+    scanThreats: ["Der Virenscan hat etwas gefunden. Schau bitte kurz in die Windows-Sicherheit."],
+    scanFailed: ["Der Virenscan konnte nicht laufen. Den Grund siehst du bei mir im Fenster."],
   },
   en: {
     greet: ["Hey! What can I do for you?", "I'm here. What's up?", "What can I do for you today?", "Hi! How can I help?", "Good to hear you. What do you need?"],
@@ -556,6 +559,9 @@ const LINES = {
     confirm: ["Please confirm that in the window."],
     failed: ["Sorry, something went wrong."],
     code: ["You'll find the code in the chat."],
+    scanClean: ["The virus scan is finished. All clean."],
+    scanThreats: ["The virus scan found something. Please take a look at Windows Security."],
+    scanFailed: ["The virus scan couldn't run. You'll see why in my window."],
   },
 } as const;
 

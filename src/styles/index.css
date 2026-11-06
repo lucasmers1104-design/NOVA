@@ -216,6 +216,69 @@
   }
 }
 
+/* The virus scan's radar: a beam sweeping around a shield, rings going out from it. */
+.nova-scan-radar {
+  position: relative;
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--nova-accent-soft);
+}
+.nova-scan-beam {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: conic-gradient(from 0deg, transparent 0 70%, var(--nova-accent-glow) 88%, var(--nova-accent-text) 100%);
+  animation: nova-scan-sweep 1.8s linear infinite;
+}
+.nova-scan-ring {
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--nova-accent-text);
+  border-radius: inherit;
+  opacity: 0;
+  animation: nova-scan-ping 2.4s ease-out infinite;
+}
+.nova-scan-ring-late {
+  animation-delay: 1.2s;
+}
+
+@keyframes nova-scan-sweep {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes nova-scan-ping {
+  0% {
+    transform: scale(0.35);
+    opacity: 0.8;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 0;
+  }
+}
+
+/* An animated background drifts slowly. Only a transform, so it stays cheap. */
+.nova-backdrop-drift {
+  animation: nova-backdrop-drift 48s ease-in-out infinite alternate;
+}
+
+@keyframes nova-backdrop-drift {
+  from {
+    transform: scale(1.3) rotate(-6deg) translate(-4%, -3%);
+  }
+  to {
+    transform: scale(1.3) rotate(8deg) translate(4%, 3%);
+  }
+}
+
 @keyframes nova-shimmer {
   from {
     background-position: 200% 0;

@@ -1,8 +1,13 @@
-import { Check, Plus, Wallpaper, X } from "lucide-react";
+import { Check, ImagePlus, Plus, Wallpaper, X } from "lucide-react";
 import type { CSSProperties } from "react";
+import { useBackdropImage } from "@/components/layout/Backdrop";
+import { Button } from "@/components/ui/Button";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
-import { type BackdropGradient, GRADIENT_PRESETS, type GradientPreset, type GradientStyle, gradientCss, MAX_BACKDROP_DIM, MAX_GLASS_OPACITY, MAX_GRADIENT_COLORS, MIN_GLASS_OPACITY, MIN_GRADIENT_COLORS, presetGradient } from "@/design/backdrop";
+import { Switch } from "@/components/ui/Switch";
+import { type BackdropGradient, GRADIENT_PRESETS, type GradientPreset, type GradientStyle, gradientCss, MAX_BACKDROP_BLUR, MAX_BACKDROP_DIM, MAX_CORNER_SCALE, MAX_GLASS_OPACITY, MAX_GRADIENT_COLORS, MIN_GLASS_OPACITY, MIN_GRADIENT_COLORS, presetGradient, UI_FONTS, type UiFont } from "@/design/backdrop";
+import { notifyError } from "@/features/notifications/store";
 import { cn } from "@/lib/cn";
+import { callNative } from "@/lib/native";
 import { useSettings } from "@/stores/settings";
 import { SettingRow } from "./SettingsLayout";
 
@@ -16,7 +21,7 @@ const SELECTED = "ring-2 ring-fg/80 ring-offset-2 ring-offset-[#151a29]";
 /** The color a newly added stop starts with. */
 const NEW_COLOR = "#ffffff";
 
-function Slider({ label, value, min, max, onChange }: { label: string; value: number; min: number; max: number; onChange: (value: number) => void }) {
+function Slider({ label, value, min, max, unit = " %", onChange }: { label: string; value: number; min: number; max: number; unit?: string; onChange: (value: number) => void }) {
   return (
     <div className="flex items-center gap-2 text-[12px] text-fg-muted">
       <input
@@ -29,9 +34,9 @@ function Slider({ label, value, min, max, onChange }: { label: string; value: nu
         className="nova-range w-40"
         style={{ "--range-fill": `${((value - min) / (max - min)) * 100}%` } as CSSProperties}
       />
-      <span className="w-9 text-right tabular-nums">
+      <span className="w-11 text-right tabular-nums">
         {value}
-        {label === "Direction" ? "°" : " %"}
+        {unit}
       </span>
     </div>
   );
@@ -47,9 +52,35 @@ export function BackdropSettings() {
   const setGlass = useSettings((s) => s.setGlassOpacity);
   const setAccent = useSettings((s) => s.setAccent);
 
+  const token = useSettings((s) => s.backdropImage);
+  const setToken = useSettings((s) => s.setBackdropImage);
+  const blur = useSettings((s) => s.backdropBlur);
+  const setBlur = useSettings((s) => s.setBackdropBlur);
+  const animated = useSettings((s) => s.backdropAnimated);
+  const setAnimated = useSettings((s) => s.setBackdropAnimated);
+  const tint = useSettings((s) => s.glassTint);
+  const setTint = useSettings((s) => s.setGlassTint);
+  const corners = useSettings((s) => s.cornerScale);
+  const setCorners = useSettings((s) => s.setCornerScale);
+  const font = useSettings((s) => s.uiFont);
+  const setFont = useSettings((s) => s.setUiFont);
+  const picture = useBackdropImage(token);
+  const usingPicture = !gradient && token !== null;
+
   const choose = (preset: GradientPreset) => {
     setGradient(presetGradient(preset));
+    setToken(null);
     setAccent({ kind: "custom", color: preset.accent });
+  };
+  const pickPicture = () => {
+    void callNative<string | null>("backdrop_image_pick").then(
+      (picked) => {
+        if (picked === null) return;
+        setToken(picked);
+        setGradient(null);
+      },
+      (error: unknown) => notifyError("Couldn't use that picture", error),
+    );
   };
   const edit = (patch: Partial<BackdropGradient>) => gradient && setGradient({ ...gradient, ...patch, presetId: null });
   const setColor = (index: number, color: string) => gradient && edit({ colors: gradient.colors.map((c, i) => (i === index ? color : c)) });
@@ -63,12 +94,31 @@ export function BackdropSettings() {
           <button
             type="button"
             role="radio"
-            aria-checked={gradient === null}
-            onClick={() => setGradient(null)}
-            className={cn("flex h-16 flex-col items-center justify-center gap-1 rounded-[12px] border border-line bg-white/[0.04] text-[11.5px] text-fg-muted transition-transform hover:scale-[1.03]", gradient === null && SELECTED)}
+            aria-checked={gradient === null && token === null}
+            onClick={() => {
+              setGradient(null);
+              setToken(null);
+            }}
+            className={cn("flex h-16 flex-col items-center justify-center gap-1 rounded-[12px] border border-line bg-white/[0.04] text-[11.5px] text-fg-muted transition-transform hover:scale-[1.03]", gradient === null && token === null && SELECTED)}
           >
             <Wallpaper size={16} aria-hidden />
             Wallpaper
+          </button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={usingPicture}
+            title="PNG, JPG, WebP or GIF, up to 25 MB"
+            onClick={pickPicture}
+            style={picture ? { backgroundImage: `url(${picture})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}
+            className={cn(
+              "flex h-16 flex-col items-center justify-center gap-1 overflow-hidden rounded-[12px] border border-dashed border-line-strong bg-white/[0.04] text-[11.5px] text-fg-muted transition-transform hover:scale-[1.03]",
+              picture && "text-white [text-shadow:0_1px_3px_rgb(0_0_0/0.8)]",
+              usingPicture && SELECTED,
+            )}
+          >
+            <ImagePlus size={16} aria-hidden />
+            Your picture
           </button>
           {GRADIENT_PRESETS.map((preset) => {
             const selected = gradient?.presetId === preset.id;
@@ -131,17 +181,53 @@ export function BackdropSettings() {
           </SettingRow>
           {gradient.style !== "mesh" && (
             <SettingRow label="Direction">
-              <Slider label="Direction" value={gradient.angle} min={0} max={359} onChange={(angle) => edit({ angle })} />
+              <Slider label="Direction" unit="°" value={gradient.angle} min={0} max={359} onChange={(angle) => edit({ angle })} />
             </SettingRow>
           )}
-          <SettingRow label="Darken" description="Keeps text readable on bright colors.">
+        </>
+      )}
+
+      {usingPicture && (
+        <SettingRow label="Blur" description="Softens the picture behind the glass.">
+          <Slider label="Blur" unit=" px" value={blur} min={0} max={MAX_BACKDROP_BLUR} onChange={setBlur} />
+        </SettingRow>
+      )}
+      {(gradient || usingPicture) && (
+        <>
+          <SettingRow label="Darken" description="Keeps text readable on bright backgrounds.">
             <Slider label="Darken" value={dim} min={0} max={MAX_BACKDROP_DIM} onChange={setDim} />
+          </SettingRow>
+          <SettingRow label="Animate" description="The background drifts slowly. Uses more graphics power, so leave it off on laptops and while gaming.">
+            <Switch label="Animate the background" checked={animated} onChange={setAnimated} />
           </SettingRow>
         </>
       )}
 
       <SettingRow label="Glass strength" description="Low lets the background shine through, high makes the panes more solid. Needs transparency effects.">
         <Slider label="Glass strength" value={glass} min={MIN_GLASS_OPACITY} max={MAX_GLASS_OPACITY} onChange={setGlass} />
+      </SettingRow>
+      <SettingRow label="Glass color" description="Gives the glass a color of your own. It stays dark enough to read on.">
+        <div className="flex items-center gap-2">
+          <label className="block size-9 cursor-default overflow-hidden rounded-full border border-line-strong" style={{ background: tint ?? "#181e2e" }} title={tint ? tint.toUpperCase() : "Usual dark glass"}>
+            <span className="sr-only">Glass color</span>
+            <input type="color" value={tint ?? "#181e2e"} onChange={(e) => setTint(e.target.value)} className="size-full cursor-default opacity-0" />
+          </label>
+          <Button size="sm" variant="ghost" disabled={tint === null} onClick={() => setTint(null)}>
+            Reset
+          </Button>
+        </div>
+      </SettingRow>
+      <SettingRow label="Corners" description="From sharp edges to extra round.">
+        <Slider label="Corners" value={corners} min={0} max={MAX_CORNER_SCALE} onChange={setCorners} />
+      </SettingRow>
+      <SettingRow label="Font">
+        <select aria-label="Font" value={font} onChange={(e) => setFont(e.target.value as UiFont)} className="h-9 w-44 rounded-control border border-line bg-black/25 px-2.5 text-[13px] text-fg outline-none focus:border-line-strong">
+          {Object.entries(UI_FONTS).map(([id, entry]) => (
+            <option key={id} value={id}>
+              {entry.label}
+            </option>
+          ))}
+        </select>
       </SettingRow>
     </>
   );

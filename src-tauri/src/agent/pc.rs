@@ -242,6 +242,21 @@ pub fn accepts_input(process_label: &str) -> bool {
     !NO_INPUT.iter().any(|name| process_label.ends_with(&format!("({name})")))
 }
 
+/// Games with anti-cheat: simulated keys can look like a cheat and get an account banned.
+const NO_GAME_INPUT: &[&str] = &["fortniteclient", "valorant", "rocketleague", "cs2", "r5apex", "overwatch", "pubg", "tslgame", "rainbowsix", "destiny2", "eldenring", "cod"];
+
+pub fn is_guarded_game(process_label: &str) -> bool {
+    let Some((_, process)) = process_label.rsplit_once('(') else { return false };
+    let process = process.trim_end_matches(')');
+    NO_GAME_INPUT.iter().any(|game| process.starts_with(game))
+}
+
+/// Keys that open a new window or tab each time: fine once, a disaster repeated.
+pub fn opens_something(key: &str) -> bool {
+    let key = key.to_lowercase().replace(' ', "");
+    ["ctrl+n", "ctrl+t", "ctrl+shift+n", "ctrl+shift+t"].contains(&key.as_str())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowVerb {
     Focus,
@@ -647,14 +662,15 @@ mod win {
         (result == ERROR_SUCCESS).then(|| String::from_utf16_lossy(&buffer[..(size as usize / 2).saturating_sub(1)]))
     }
 
-    /// Programs from the Windows uninstall list with the size they report, biggest first.
-    pub fn installed_programs() -> Vec<(String, u64)> {
+    /// Programs from the Windows uninstall list with the size they report and
+    /// their uninstall command, biggest first.
+    pub fn installed_programs() -> Vec<(String, u64, Option<String>)> {
         let roots = [
             (HKEY_LOCAL_MACHINE, w!("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall")),
             (HKEY_LOCAL_MACHINE, w!("SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall")),
             (HKEY_CURRENT_USER, w!("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall")),
         ];
-        let mut programs: Vec<(String, u64)> = Vec::new();
+        let mut programs: Vec<(String, u64, Option<String>)> = Vec::new();
         for (hive, path) in roots {
             let mut root = HKEY::default();
             // SAFETY: valid strings and out pointers; every opened key is closed.
@@ -676,10 +692,11 @@ mod win {
                     let mut kilobytes = 0u32;
                     let mut size = size_of::<u32>() as u32;
                     let _ = RegGetValueW(entry, PCWSTR::null(), w!("EstimatedSize"), RRF_RT_REG_DWORD, None, Some((&mut kilobytes as *mut u32).cast()), Some(&mut size));
+                    let command = read_string(entry, w!("UninstallString"));
                     let _ = RegCloseKey(entry);
                     if let Some(shown) = shown.filter(|s| !s.trim().is_empty()) {
-                        if !programs.iter().any(|(n, _)| *n == shown) {
-                            programs.push((shown, kilobytes as u64 * 1024));
+                        if !programs.iter().any(|(n, ..)| *n == shown) {
+                            programs.push((shown, kilobytes as u64 * 1024, command));
                         }
                     }
                 }
@@ -701,7 +718,7 @@ mod win {
     pub fn send_input(_: &Target, _: &[Combo], _: u32, _: Option<&str>) -> Result<u32, String> { Err(NO.into()) }
     pub fn read_window(_: &Target) -> Result<Vec<(String, String, Option<String>)>, String> { Err(NO.into()) }
     pub fn use_element(_: &Target, _: &str, _: Option<&str>, _: usize, _: Option<&str>) -> Result<String, String> { Err(NO.into()) }
-    pub fn installed_programs() -> Vec<(String, u64)> { Vec::new() }
+    pub fn installed_programs() -> Vec<(String, u64, Option<String>)> { Vec::new() }
 }
 
 #[cfg(test)]

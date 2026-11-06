@@ -59,6 +59,8 @@ export interface WakeCall {
   listen: boolean;
   /** Play the wake sound. */
   chime: boolean;
+  /** A game fills the screen: answer by voice, without the panel. */
+  headless?: boolean;
 }
 
 export interface PanelView {
@@ -109,7 +111,8 @@ export type ToolCard =
   | { kind: "app"; name: string }
   | { kind: "path"; path: string }
   | { kind: "link"; url: string; title: string }
-  | { kind: "productivity"; label: string; detail: string };
+  | { kind: "productivity"; label: string; detail: string }
+  | { kind: "freed"; bytes: number; items: { label: string; bytes: number }[]; freeNow: number };
 
 /** Mirrors `AgentEvent` in src-tauri/src/agent/mod.rs. */
 export type AgentEvent =

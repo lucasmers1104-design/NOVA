@@ -1,24 +1,45 @@
+import { useQuery } from "@tanstack/react-query";
 import { gradientCss } from "@/design/backdrop";
 import { useWallpaperBackdrop } from "@/design/wallpaper";
-import { isDesktop } from "@/lib/native";
+import { cn } from "@/lib/cn";
+import { callNative, isDesktop } from "@/lib/native";
 import { useSettings } from "@/stores/settings";
 
+/** The user's own background picture as a data URL; `token` changes with the picture. */
+export function useBackdropImage(token: string | null): string | null {
+  const { data } = useQuery({
+    queryKey: ["backdrop", "image", token],
+    queryFn: () => callNative<string | null>("backdrop_image_load"),
+    enabled: token !== null && isDesktop(),
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+  return token === null ? null : (data ?? null);
+}
+
 /**
- * What the glass refracts: the user's color gradient, their wallpaper (softly
- * blurred and dimmed for legibility), or static ambient light when both are
- * off. Deliberately not animated — a moving backdrop would make every blurred
- * pane re-render each frame.
+ * What the glass refracts: the user's color gradient or picture, their
+ * wallpaper (softly blurred and dimmed for legibility), or static ambient
+ * light when all are off. Still by default: a moving backdrop makes every
+ * blurred pane redraw each frame, so drifting is the user's choice.
  */
 export function Backdrop() {
   const gradient = useSettings((s) => s.backdropGradient);
+  const token = useSettings((s) => s.backdropImage);
   const dim = useSettings((s) => s.backdropDim);
+  const blur = useSettings((s) => s.backdropBlur);
+  const animated = useSettings((s) => s.backdropAnimated);
+  const image = useBackdropImage(gradient ? null : token);
   const enabled = useSettings((s) => s.wallpaperBackdrop && s.transparency);
-  const wallpaper = useWallpaperBackdrop(enabled && !gradient && isDesktop());
+  const wallpaper = useWallpaperBackdrop(enabled && !gradient && !token && isDesktop());
 
-  if (gradient) {
+  if (gradient || image) {
     return (
       <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="absolute inset-0" style={{ background: gradientCss(gradient) }} />
+        {gradient ? (
+          <div className={cn("absolute inset-0", animated && "nova-backdrop-drift")} style={{ background: gradientCss(gradient) }} />
+        ) : (
+          <img src={image!} alt="" className={cn("absolute inset-0 h-full w-full object-cover", animated && "nova-backdrop-drift")} style={blur > 0 ? { filter: `blur(${blur}px)`, transform: animated ? undefined : "scale(1.08)" } : undefined} />
+        )}
         <div className="absolute inset-0" style={{ background: `rgb(9 11 18 / ${dim / 100})` }} />
       </div>
     );

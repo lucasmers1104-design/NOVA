@@ -7,6 +7,7 @@ import { notifyError } from "@/features/notifications/store";
 import { SettingRow, SettingsSection } from "@/features/settings/SettingsLayout";
 import { isDesktop } from "@/lib/native";
 import { agentStatus, configureAgent } from "./api";
+import { OnlineVoiceList } from "./OnlineVoiceSettings";
 import { type BackendPref, type BenchRun, deviceLabel, formatBytes, type SpeechItem, type SpeechMode, type SpeechStatus, type SttPref, useSpeech } from "./speech/api";
 import type { AgentStatus } from "./types";
 import { speak } from "./voice";
@@ -160,8 +161,14 @@ export function SpeechSettings() {
         </select>
       </SettingRow>
 
+      <OnlineVoiceList
+        current={agent.prefs?.voice ?? ""}
+        onChoose={agent.choose}
+        onListen={(voice) => agent.prefs && void speak("Hallo, ich bin NOVA. So klinge ich mit dieser Stimme.", { ...agent.prefs, voice }, "test")}
+      />
+
       <div className="py-4">
-        <div className="text-[13.5px] font-medium text-fg">Voices</div>
+        <div className="text-[13.5px] font-medium text-fg">Voices on this PC</div>
         <p className="mt-0.5 text-[12.5px] text-fg-muted">German voices that run on this PC, offline. Pick one to make it NOVA's voice.</p>
         <ul className="mt-3 space-y-1.5">
           {voices.map((voice) => {

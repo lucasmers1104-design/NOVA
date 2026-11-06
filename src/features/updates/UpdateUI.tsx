@@ -8,6 +8,7 @@ import { formatBytes } from "@/lib/format";
 import { isDesktop } from "@/lib/native";
 import { useSettings } from "@/stores/settings";
 import { effectiveUpdateSource, useUpdates } from "./store";
+import { announceUpdate } from "./WhatsNew";
 
 /** Delay after launch before the automatic check, so startup stays fast. */
 const STARTUP_CHECK_DELAY_MS = 6000;
@@ -21,7 +22,7 @@ export function useStartupUpdates(): void {
     if (!isDesktop()) return;
     void getVersion().then((version) => {
       const settings = useSettings.getState();
-      if (settings.lastSeenVersion && settings.lastSeenVersion !== version) {
+      if (settings.lastSeenVersion && settings.lastSeenVersion !== version && !announceUpdate(settings.lastSeenVersion, version)) {
         notify(`NOVA was updated to ${version}`, { kind: "success", body: `You were on ${settings.lastSeenVersion}. Enjoy the new version!` });
       }
       if (settings.lastSeenVersion !== version) settings.setLastSeenVersion(version);

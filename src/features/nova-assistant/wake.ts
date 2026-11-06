@@ -14,8 +14,8 @@ export interface WakePrefs {
   afterWake: AfterWake;
   /** A short sound when NOVA wakes. */
   chime: boolean;
-  /** Don't listen while a fullscreen app, game or presentation is in front. */
-  pauseInFullscreen: boolean;
+  /** Keep listening in games and fullscreen apps: NOVA answers by voice, without its window. */
+  inGames: boolean;
   /** Paused from the dot's menu: the microphone is closed until resumed. */
   muted: boolean;
 }
@@ -71,7 +71,7 @@ export const PAUSE_LABELS: Record<WakePause, string> = {
   dictation: "Paused while you dictate",
   speaking: "Paused while NOVA speaks",
   locked: "Paused while the PC is locked",
-  fullscreen: "Paused while a fullscreen app runs",
+  fullscreen: "Paused while a presentation or fullscreen app runs",
 };
 
 /** One line describing a listener's state. */
