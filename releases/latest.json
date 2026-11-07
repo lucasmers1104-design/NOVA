@@ -1,11 +1,11 @@
 {
-  "version": "1.10.1",
-  "notes": "- Plugins: a new Plugins page installs signed `.novaplugin` files that add pages, widgets and accent colors. Each plugin runs isolated from the rest of NOVA and only gets what you allow, and you can turn each permission off.\n- Optional usage statistics: NOVA asks once whether it may send usage statistics to help improve it. Nothing is sent before you click \"Akzeptieren\", and NOVA works exactly the same if you don't. Never included: chats, voice, files, screenshots, keystrokes, window or program names. Settings → Privacy shows what was sent; turning it off stops it at once and deletes this PC's data on the service.",
-  "pub_date": "2026-11-07T13:10:33.865Z",
+  "version": "1.10.2",
+  "notes": "- A hands-on tour: NOVA now introduces itself once. Pick a name and a color, download its voice and hear it, connect an AI, try \"Hey NOVA\" and clapping, walk through every section in the real app and learn the shortcuts. Everything is optional. Start it again any time under Settings → About NOVA or with Ctrl+K.",
+  "pub_date": "2026-11-07T16:47:55.722Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSNTJic1Z1TU1yN2dCWWpMWWxyTkg3RmVsUWw0QXRRUkVrZzJHSXVMV0lnc04vNG5RWlR1VEVTcFA3SXJWcTJDUUdlek1KSGZxbkdlN2R4SWxOUUpoOGtSOVd4dXQwQ0E0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0MDU3MDMzCWZpbGU6Tk9WQV8xLjEwLjFfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjEuMTAuMQpKK044NWpKS0RTZUwvYjIrZnZiR1lMTjhub2xqVWdvdXArWGlMNzQxaXpGblNidmxCWXlGNDJiZjVPcUpzNFFTbmNjdDc5Z0JRZmhYVXR0Sk1nR2lEZz09Cg==",
-      "url": "https://raw.githubusercontent.com/lucasmers1104-design/NOVA/main/releases/NOVA_1.10.1_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSNTJic1Z1TU1yN3FnbjdSRmsydlVmMG9xWS9PTHp6UEc3ZWJQazhLZUFwUXBZTlJqWjE4U1lkdWNpNk1EeCtiRkZKVWJWekZqVFl2UW96eS9UTHpwY2JDbDdTekEyYUFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0MDcwMDc1CWZpbGU6Tk9WQV8xLjEwLjJfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjEuMTAuMgpLVmJnald5ejUwU3ZPa2dOc2lZQlF1WHNhZE5QcU8wbUUyTE8rZ3pDaXJTYWg2NHp6dzhOMzdUZFBFdUozbytuVDVXR3pJcncyOVdtOVhKa2c5ZHpDZz09Cg==",
+      "url": "https://raw.githubusercontent.com/lucasmers1104-design/NOVA/main/releases/NOVA_1.10.2_x64-setup.exe"
     }
   }
 }
