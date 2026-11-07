@@ -1,9 +1,10 @@
-import { AppWindow, Blocks, RefreshCw, CircleCheck, LayoutGrid, Layers, ListTodo, type LucideIcon, PanelLeft, Palette, SlidersHorizontal, Sparkles, Wallpaper } from "lucide-react";
+import { AppWindow, Blocks, Compass, RefreshCw, CircleCheck, LayoutGrid, Layers, ListTodo, type LucideIcon, PanelLeft, Palette, SlidersHorizontal, Sparkles, Wallpaper } from "lucide-react";
 import { queryClient } from "@/app/queryClient";
 import { type AppEntry, appKeys, useAppPreferences } from "@/features/apps/api";
 import { notify, notifyError } from "@/features/notifications/store";
 import { useProductivity } from "@/features/productivity/store";
 import { PROFILE_ICONS, useProfiles } from "@/features/profiles/store";
+import { useTour } from "@/features/tour/store";
 import { useUpdates } from "@/features/updates/store";
 import { callNative, isDesktop as isDesktopRuntime } from "@/lib/native";
 import { allWidgets } from "@/widgets/registry";
@@ -199,6 +200,15 @@ export function buildCommands(): Command[] {
           icon: Sparkles,
           keywords: ["assistant", "ai", "dot", "nova", "chat", "help"],
           run: () => void callNative("assistant_toggle").catch((error: unknown) => notifyError("Couldn't open NOVA AI", error)),
+        },
+        {
+          id: "app.tour",
+          title: "Start the tour",
+          subtitle: "A hands-on introduction to NOVA",
+          group: "Layout",
+          icon: Compass,
+          keywords: ["tour", "tutorial", "einführung", "intro", "help", "hilfe", "onboarding"],
+          run: () => useTour.getState().start(),
         },
         {
           id: "app.check-updates",

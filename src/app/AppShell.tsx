@@ -13,6 +13,7 @@ import { NotificationCenter, Toaster } from "@/features/notifications/Notificati
 import { usePluginSync } from "@/features/plugins/usePluginSync";
 import { useReminders } from "@/features/productivity/reminders";
 import { ConsentDialog, usePageTracking } from "@/features/telemetry/ConsentDialog";
+import { Tour } from "@/features/tour/Tour";
 import { UpdateBanner, useStartupUpdates } from "@/features/updates/UpdateUI";
 import { WhatsNewDialog } from "@/features/updates/WhatsNew";
 import { type MotionPreference, useSettings } from "@/stores/settings";
@@ -76,6 +77,7 @@ export function AppShell() {
         <UpdateBanner />
         <WhatsNewDialog />
         <ConsentDialog />
+        <Tour />
       </div>
     </MotionConfig>
   );

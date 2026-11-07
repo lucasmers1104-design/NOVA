@@ -15,7 +15,7 @@ interface DialogProps {
   size?: "md" | "lg";
 }
 
-const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea, [tabindex]:not([tabindex="-1"])';
+export const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea, [tabindex]:not([tabindex="-1"])';
 
 export function Dialog(props: DialogProps) {
   // In the body: inside a glass widget, `fixed` would be relative to the widget and get clipped.

@@ -78,6 +78,8 @@ export interface Settings {
   autoUpdate: boolean;
   /** Version that last ran; used to announce completed updates. */
   lastSeenVersion: string;
+  /** The introduction appeared and was finished or skipped; it doesn't appear by itself again. */
+  tourSeen: boolean;
 }
 
 interface SettingsActions {
@@ -112,6 +114,7 @@ interface SettingsActions {
   setUpdateSource: (source: string) => void;
   setAutoUpdate: (enabled: boolean) => void;
   setLastSeenVersion: (version: string) => void;
+  setTourSeen: (seen: boolean) => void;
   resetSettings: () => void;
 }
 
@@ -145,6 +148,7 @@ export function defaultSettings(): Settings {
     updateSource: "",
     autoUpdate: true,
     lastSeenVersion: "",
+    tourSeen: false,
   };
 }
 
@@ -230,6 +234,7 @@ export function sanitizeSettings(input: unknown): Partial<Settings> {
   if (typeof raw.updateSource === "string") out.updateSource = raw.updateSource.slice(0, 200);
   if (typeof raw.autoUpdate === "boolean") out.autoUpdate = raw.autoUpdate;
   if (typeof raw.lastSeenVersion === "string" && /^[0-9A-Za-z.+-]{0,32}$/.test(raw.lastSeenVersion)) out.lastSeenVersion = raw.lastSeenVersion;
+  if (typeof raw.tourSeen === "boolean") out.tourSeen = raw.tourSeen;
   return out;
 }
 
@@ -280,12 +285,14 @@ export const useSettings = create<Settings & SettingsActions>()(
       setUpdateSource: (source) => set({ updateSource: source.slice(0, 200) }),
       setAutoUpdate: (autoUpdate) => set({ autoUpdate }),
       setLastSeenVersion: (lastSeenVersion) => set({ lastSeenVersion }),
+      setTourSeen: (tourSeen) => set({ tourSeen }),
       // Reset keeps lastSeenVersion so it doesn't trigger a false "updated" notice.
       // Only how NOVA looks and behaves: who you are and what you set up yourself stays.
       resetSettings: () =>
         set((s) => ({
           ...defaultSettings(),
           lastSeenVersion: s.lastSeenVersion,
+          tourSeen: s.tourSeen,
           displayName: s.displayName,
           weatherPlace: s.weatherPlace,
           weatherFahrenheit: s.weatherFahrenheit,
@@ -332,6 +339,7 @@ export const useSettings = create<Settings & SettingsActions>()(
         updateSource: s.updateSource,
         autoUpdate: s.autoUpdate,
         lastSeenVersion: s.lastSeenVersion,
+        tourSeen: s.tourSeen,
       }),
       merge: (persisted, current) => ({ ...current, ...sanitizeSettings(persisted) }),
     },

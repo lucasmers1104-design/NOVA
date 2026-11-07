@@ -179,6 +179,7 @@ function NavButton({ item, active, collapsed, onSelect }: NavButtonProps) {
       onClick={() => onSelect(item.id)}
       aria-current={active ? "page" : undefined}
       aria-label={item.label}
+      data-nav={item.id}
       className={cn(
         "group relative flex h-10 w-full items-center gap-3 rounded-control pl-[17px] text-[13.5px] font-medium transition-colors duration-200",
         active ? "text-fg" : "text-fg-muted hover:bg-white/[0.04] hover:text-fg",

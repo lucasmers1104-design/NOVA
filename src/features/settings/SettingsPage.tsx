@@ -15,6 +15,7 @@ import { AssistantSettings } from "@/features/nova-assistant/AssistantSettings";
 import { WakeSettings } from "@/features/nova-assistant/WakeSettings";
 import { useSystemInfo } from "@/features/system/api";
 import { TelemetrySettings } from "@/features/telemetry/TelemetrySettings";
+import { useTour } from "@/features/tour/store";
 import { showWhatsNew } from "@/features/updates/WhatsNew";
 import { cn } from "@/lib/cn";
 import { callNative, isDesktop } from "@/lib/native";
@@ -72,6 +73,7 @@ const GROUPS: readonly { label: string; sections: readonly { id: string; label: 
 /** What the search finds: the settings by the name their row shows, with the words people may use instead. */
 const SEARCHABLE: readonly { label: string; section: string; words?: string }[] = [
   { label: "Your name", section: "you", words: "name heißen nennen anrede" },
+  { label: "Start the tour", section: "about", words: "tour einführung tutorial hilfe" },
   { label: "Accent color", section: "appearance", words: "farbe akzent color" },
   { label: "Background", section: "appearance", words: "hintergrund verlauf gradient bild picture png wallpaper" },
   { label: "Transparency effects", section: "appearance", words: "glas glass transparenz" },
@@ -497,6 +499,9 @@ function AboutSection() {
       </div>
       <SettingRow label="Version" description={runtime ? `Desktop runtime · Tauri ${runtime.tauri}` : "Browser preview — native features are unavailable."}>
         <span className="flex items-center gap-2">
+          <Button size="sm" variant="ghost" onClick={() => useTour.getState().start()}>
+            Start the tour
+          </Button>
           <Button size="sm" variant="ghost" onClick={showWhatsNew}>
             What's new
           </Button>

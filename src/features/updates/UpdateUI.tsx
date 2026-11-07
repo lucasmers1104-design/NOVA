@@ -5,6 +5,7 @@ import { useEffect } from "react";
 import { Button } from "@/components/ui/Button";
 import { notify } from "@/features/notifications/store";
 import { trackEvent, useConsentPrompt } from "@/features/telemetry/api";
+import { useTourPending } from "@/features/tour/store";
 import { formatBytes } from "@/lib/format";
 import { isDesktop } from "@/lib/native";
 import { useSettings } from "@/stores/settings";
@@ -40,15 +41,17 @@ export function useStartupUpdates(): void {
 
 export function UpdateBanner() {
   const { status, info, countdown, postponed, downloaded, total, error, installFailed, install, postpone, tick } = useUpdates();
-  // The consent popup comes first: no restart while someone is still reading it.
+  // The consent popup and the tour come first: no restart while someone is still in them.
   const consentOpen = useConsentPrompt((s) => s.open);
-  const visible = !consentOpen && !postponed && info !== null && (status === "available" || status === "downloading" || status === "installing" || (status === "error" && installFailed));
+  const tourPending = useTourPending();
+  const waiting = consentOpen || tourPending;
+  const visible = !waiting && !postponed && info !== null && (status === "available" || status === "downloading" || status === "installing" || (status === "error" && installFailed));
 
   useEffect(() => {
-    if (countdown === null || status !== "available" || consentOpen) return;
+    if (countdown === null || status !== "available" || waiting) return;
     const timer = window.setInterval(tick, 1000);
     return () => window.clearInterval(timer);
-  }, [countdown === null, status, tick, consentOpen]);
+  }, [countdown === null, status, tick, waiting]);
 
   const percent = total ? Math.min(100, (downloaded / total) * 100) : null;
 

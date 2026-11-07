@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 import { Markdown } from "@/components/ui/Markdown";
 import { useConsentPrompt } from "@/features/telemetry/api";
+import { useTourPending } from "@/features/tour/store";
 
 export interface ChangelogSection {
   version: string;
@@ -61,10 +62,11 @@ export function showWhatsNew(): void {
 export function WhatsNewDialog() {
   const sections = useWhatsNew((s) => s.sections);
   const consentOpen = useConsentPrompt((s) => s.open);
+  const tourPending = useTourPending();
   const close = () => useWhatsNew.setState({ sections: [] });
   return (
     <Dialog
-      open={sections.length > 0 && !consentOpen}
+      open={sections.length > 0 && !consentOpen && !tourPending}
       onClose={close}
       size="lg"
       title={sections.length === 1 ? `What's new in NOVA ${sections[0]!.version}` : "What's new in NOVA"}

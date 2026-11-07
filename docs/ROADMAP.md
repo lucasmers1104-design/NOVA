@@ -135,6 +135,10 @@ Legend: ✅ done · ⬜ planned
 - ✅ Optional usage statistics: nothing leaves before "Akzeptieren", closed list of events, withdrawal with deletion, a view of what was sent
 - ⚠️ A plugin stuck in a loop can use a CPU core until it is turned off; NOVA's window stays responsive
 
+## 1.10.2 — A hands-on tour ✅
+- ✅ Appears once, after the consent popup and before "What's new": name, color, voice download, AI key, "Hey NOVA", a walk through the real app, shortcuts
+- ⚠️ German only, like the consent popup, while the rest of the interface is English
+
 ## Next ideas
 - Calendar sync adapters (Outlook, Google) behind explicit opt-in
 - A public plugin catalog and plugins contributing tools to NOVA AI (see [PLUGIN_API.md](PLUGIN_API.md#later))
