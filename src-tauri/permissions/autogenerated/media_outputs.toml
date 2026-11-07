@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-media-outputs"
+description = "Enables the media_outputs command without any pre-configured scope."
+commands.allow = ["media_outputs"]
+
+[[permission]]
+identifier = "deny-media-outputs"
+description = "Denies the media_outputs command without any pre-configured scope."
+commands.deny = ["media_outputs"]

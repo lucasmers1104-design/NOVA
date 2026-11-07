@@ -67,5 +67,5 @@ export const dotReady = () => callNative<DotView>("assistant_dot_ready");
 export const panelReady = () => callNative<PanelView>("assistant_panel_ready");
 export const openDotMenu = () => callNative<void>("assistant_dot_menu");
 /** Shows NOVA's main window, optionally at Settings → NOVA AI assistant or AI providers. */
-export const openNova = (section?: "assistant" | "ai" | "productivity") => callNative<void>("assistant_open_main", { section: section ?? null });
+export const openNova = (section?: "assistant" | "ai" | "productivity" | "routines" | "media") => callNative<void>("assistant_open_main", { section: section ?? null });
 export const openWebPage = (url: string) => callNative<void>("open_url", { url });

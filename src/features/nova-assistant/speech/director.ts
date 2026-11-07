@@ -33,6 +33,7 @@ interface Reply {
   /** The reply's first sentence is on its way to the speakers. */
   replyReady: boolean;
   confirmAsked: boolean;
+  unasked: boolean;
 }
 
 export type SpeakerFactory = typeof createReplySpeaker;
@@ -49,7 +50,7 @@ export class ReplyDirector {
 
   handle(event: ReplyEvent, prefs: AgentPrefs | null | undefined): void {
     if (event.type === "start") {
-      this.start(event.replyId, event.voice, event.ack, prefs);
+      this.start(event.replyId, event.voice, event.ack, prefs, event.unasked ?? false);
       return;
     }
     const reply = this.reply;
@@ -70,7 +71,7 @@ export class ReplyDirector {
         break;
       case "done":
         this.say(reply, reply.segmenter.finish());
-        this.finish(reply, reply.voice && reply.prefs.keepListening);
+        this.finish(reply, reply.voice && reply.prefs.keepListening && !reply.unasked);
         break;
       case "failed":
         if (reply.voice) this.line(reply, "failed");
@@ -94,7 +95,7 @@ export class ReplyDirector {
     endTurn();
   }
 
-  private start(id: string, voice: boolean, ack: string | null, prefs: AgentPrefs | null | undefined) {
+  private start(id: string, voice: boolean, ack: string | null, prefs: AgentPrefs | null | undefined, unasked: boolean) {
     this.cancel();
     if (!prefs || !(voice || prefs.speakReplies)) return;
     nextSpeechTurn();
@@ -109,6 +110,7 @@ export class ReplyDirector {
       ackTimer: null,
       replyReady: false,
       confirmAsked: false,
+      unasked,
     };
     this.reply = reply;
     setActiveReply({ cancel: () => this.cancel() });

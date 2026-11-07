@@ -159,7 +159,7 @@ describe("NovaDot", () => {
 });
 
 const AGENT: AgentStatus = {
-  prefs: { provider: null, models: {}, effort: "medium", monthlyLimitUsd: null, speakReplies: false, voice: "", speechRate: 1, speechVolume: 1, language: "auto", keepListening: true, autoMode: false },
+  prefs: { provider: null, models: {}, effort: "medium", monthlyLimitUsd: null, speakReplies: false, voice: "", speechRate: 1, speechVolume: 1, language: "auto", keepListening: true, autoMode: false, memory: true },
   activeProvider: "Anthropic",
   activeModel: "claude-opus-5-5",
   keys: { anthropic: true, openai: false, gemini: false },

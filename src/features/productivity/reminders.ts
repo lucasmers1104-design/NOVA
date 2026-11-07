@@ -4,7 +4,8 @@ import { notify } from "@/features/notifications/store";
 import { isDesktop } from "@/lib/native";
 import { readJson, writeJson } from "@/lib/persistence";
 import { useSettings } from "@/stores/settings";
-import { dueReminders, reminderKey } from "./model";
+import { uiLocale } from "@/lib/time";
+import { clockTime, dueReminders, reminderKey } from "./model";
 import { useProductivity } from "./store";
 
 const REMINDED_KEY = "nova.reminders";
@@ -37,7 +38,7 @@ export function useReminders(): void {
       if (due.length === 0 || cancelled) return;
       for (const task of due) {
         reminded.add(reminderKey(task));
-        const body = `Due at ${task.dueTime}${task.notes ? ` — ${task.notes.split("\n")[0]}` : ""}`;
+        const body = `Due at ${clockTime(task.dueTime!, useSettings.getState().use24HourClock, uiLocale())}${task.notes ? ` — ${task.notes.split("\n")[0]}` : ""}`;
         notify(task.title, { kind: "reminder", body });
         void showSystemNotification(`Reminder: ${task.title}`, body);
       }

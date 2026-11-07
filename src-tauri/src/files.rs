@@ -94,7 +94,7 @@ fn favorites(db: &Database) -> Vec<PathBuf> {
         .ok()
         .flatten()
         .and_then(|raw| serde_json::from_str::<FilePreferences>(&raw).ok())
-        .map(|prefs| prefs.favorites.into_iter().map(|f| PathBuf::from(f.path)).filter(|p| p.is_dir()).collect())
+        .map(|prefs| prefs.favorites.into_iter().map(|f| PathBuf::from(f.path)).filter(|p| p.is_dir() && !crate::agent::tools::is_system_place(&p.canonicalize().unwrap_or_else(|_| p.clone()))).collect())
         .unwrap_or_default()
 }
 

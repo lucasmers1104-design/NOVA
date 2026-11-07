@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-media-sleep"
+description = "Enables the media_sleep command without any pre-configured scope."
+commands.allow = ["media_sleep"]
+
+[[permission]]
+identifier = "deny-media-sleep"
+description = "Denies the media_sleep command without any pre-configured scope."
+commands.deny = ["media_sleep"]

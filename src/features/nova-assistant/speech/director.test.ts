@@ -18,7 +18,7 @@ const PREFS: AgentPrefs = {
   speechVolume: 1,
   language: "de-DE",
   keepListening: true,
-  autoMode: false,
+  autoMode: false, memory: true,
 };
 
 interface Spoken {
@@ -159,6 +159,11 @@ describe("ReplyDirector", () => {
     it("doesn't for typed requests, even when they are read aloud", async () => {
       const typed = [reply({ type: "start", ack: null }, false), reply({ type: "text", text: "Klar." }, false), reply({ type: "done" }, false)];
       expect(await followUpsAfter({ ...PREFS, speakReplies: true }, typed)).toBe(0);
+    });
+
+    it("doesn't after a routine spoke up by itself: nobody asked", async () => {
+      const unasked = [reply({ type: "start", ack: null, unasked: true }), reply({ type: "text", text: "Guten Morgen." }), reply({ type: "done" })];
+      expect(await followUpsAfter(PREFS, unasked)).toBe(0);
     });
 
     it("doesn't after a stop or a failure", async () => {

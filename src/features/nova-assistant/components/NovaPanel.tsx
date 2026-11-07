@@ -46,6 +46,7 @@ import { NovaScan } from "./NovaScan";
 import { NovaConversation } from "./NovaConversation";
 import { NovaHistory } from "./NovaHistory";
 import { NovaInput } from "./NovaInput";
+import { NovaNowPlaying } from "./NovaNowPlaying";
 import { NovaStatusOrb, NovaVoiceVisualizer, statusLabel } from "./NovaStatus";
 import { NovaToolbar } from "./NovaToolbar";
 import { NovaVoiceLine } from "./NovaVoiceLine";
@@ -59,9 +60,10 @@ const TRANSFORM_ORIGIN: Record<DotCorner, string> = {
 };
 
 const SUGGESTIONS = [
-  "Find my newest PDF",
+  "Play the newest MrBeast video on YouTube",
   "What's slowing my PC down?",
-  "Explain what's on my screen",
+  "Tell me when my download is finished",
+  "Set up a gaming mode for me",
 ];
 const LOCAL_SUGGESTIONS = ["Find my newest PDF", "Open the calculator"];
 
@@ -313,6 +315,8 @@ export function NovaPanel(props: NovaPanelProps) {
           onPrefs(patch);
         }}
       />
+
+      <NovaNowPlaying />
 
       {view === "history" ? (
         <NovaHistory />

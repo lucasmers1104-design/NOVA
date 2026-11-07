@@ -37,6 +37,75 @@ impl Format {
     }
 }
 
+/// One page of a PDF as a picture, and how many pages it has: Windows' own PDF
+/// reader draws it, also pages that are only scans.
+#[cfg(windows)]
+pub fn pdf_page_png(path: &Path, page: u32) -> CommandResult<(Vec<u8>, u32)> {
+    use windows::core::HSTRING;
+    use windows::Data::Pdf::{PdfDocument, PdfPageRenderOptions};
+    use windows::Storage::StorageFile;
+    use windows::Storage::Streams::{DataReader, InMemoryRandomAccessStream};
+    let fail = |e: windows::core::Error| format!("Windows couldn't read this PDF: {}", e.message());
+    crate::shell::with_com(false, || {
+        let canonical = path.canonicalize().map_err(|e| e.to_string())?;
+        let plain = canonical.to_string_lossy();
+        let file = StorageFile::GetFileFromPathAsync(&HSTRING::from(plain.strip_prefix(r"\\?\").unwrap_or(&plain))).map_err(fail)?.join().map_err(fail)?;
+        let document = PdfDocument::LoadFromFileAsync(&file).map_err(fail)?.join().map_err(fail)?;
+        let pages = document.PageCount().map_err(fail)?;
+        if page == 0 || page > pages {
+            return Err(format!("This PDF has {pages} pages."));
+        }
+        let drawn = document.GetPage(page - 1).map_err(fail)?;
+        let stream = InMemoryRandomAccessStream::new().map_err(fail)?;
+        let options = PdfPageRenderOptions::new().map_err(fail)?;
+        // Sharp enough to read small print, small enough to send.
+        options.SetDestinationWidth(1400).map_err(fail)?;
+        drawn.RenderWithOptionsToStreamAsync(&stream, &options).map_err(fail)?.join().map_err(fail)?;
+        stream.Seek(0).map_err(fail)?;
+        let size = stream.Size().map_err(fail)? as u32;
+        let reader = DataReader::CreateDataReader(&stream).map_err(fail)?;
+        reader.LoadAsync(size).map_err(fail)?.join().map_err(fail)?;
+        let mut bytes = vec![0u8; size as usize];
+        reader.ReadBytes(&mut bytes).map_err(fail)?;
+        Ok((bytes, pages))
+    })
+}
+
+#[cfg(not(windows))]
+pub fn pdf_page_png(_: &Path, _: u32) -> CommandResult<(Vec<u8>, u32)> {
+    Err("This requires Windows".into())
+}
+
+/// The text of a Word document: a zip file with its text in one XML file.
+pub fn docx_text(bytes: &[u8]) -> CommandResult<String> {
+    use std::io::Read;
+    const NOT_WORD: &str = "This doesn't look like a Word document";
+    let u16_at = |at: usize| -> Option<usize> { Some(u16::from_le_bytes(bytes.get(at..at + 2)?.try_into().ok()?) as usize) };
+    let u32_at = |at: usize| -> Option<usize> { Some(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?) as usize) };
+    let end = bytes.windows(4).rposition(|four| four == b"PK\x05\x06").ok_or(NOT_WORD)?;
+    let mut entry = u32_at(end + 16).ok_or(NOT_WORD)?;
+    for _ in 0..u16_at(end + 10).ok_or(NOT_WORD)? {
+        if bytes.get(entry..entry + 4) != Some(b"PK\x01\x02") {
+            break;
+        }
+        let (method, packed, name_len) = (u16_at(entry + 10).ok_or(NOT_WORD)?, u32_at(entry + 20).ok_or(NOT_WORD)?, u16_at(entry + 28).ok_or(NOT_WORD)?);
+        let (extra_len, note_len, local) = (u16_at(entry + 30).ok_or(NOT_WORD)?, u16_at(entry + 32).ok_or(NOT_WORD)?, u32_at(entry + 42).ok_or(NOT_WORD)?);
+        if bytes.get(entry + 46..entry + 46 + name_len) == Some(b"word/document.xml") {
+            let start = local + 30 + u16_at(local + 26).ok_or(NOT_WORD)? + u16_at(local + 28).ok_or(NOT_WORD)?;
+            let data = bytes.get(start..start + packed).ok_or(NOT_WORD)?;
+            let mut xml = Vec::new();
+            let read = match method {
+                0 => data.take(MAX_CONTENT_CHARS as u64 * 8).read_to_end(&mut xml),
+                _ => flate2::read::DeflateDecoder::new(data).take(MAX_CONTENT_CHARS as u64 * 8).read_to_end(&mut xml),
+            };
+            read.map_err(|_| NOT_WORD.to_string())?;
+            return Ok(crate::agent::web::html_to_text(&String::from_utf8_lossy(&xml).replace("</w:p>", "<br>")).1);
+        }
+        entry += 46 + name_len + extra_len + note_len;
+    }
+    Err(NOT_WORD.into())
+}
+
 /// `Documents\NOVA Workspace`, created on first use.
 pub fn workspace() -> CommandResult<PathBuf> {
     let documents = crate::files::known_folders()
@@ -658,6 +727,56 @@ mod tests {
     use super::*;
 
     const SAMPLE: &str = "## Überblick\n\nDer **3D-Drucker** kostet 249 € – „gut“.\n\n- Erster Punkt\n- Zweiter Punkt\n\n1. Eins\n2. Zwei\n\n```\nlet x = 1;\n```\n\n> Zitat";
+
+    /// A zip file with one uncompressed entry, as small as a Word document can be.
+    fn zip_with(name: &str, content: &str) -> Vec<u8> {
+        let (name, content) = (name.as_bytes(), content.as_bytes());
+        let size = (content.len() as u32).to_le_bytes();
+        let name_len = (name.len() as u16).to_le_bytes();
+        let mut file = b"PK\x03\x04".to_vec();
+        file.extend([0u8; 22]);
+        file.extend(name_len);
+        file.extend([0u8; 2]);
+        file.extend(name);
+        file.extend(content);
+        let central = file.len() as u32;
+        file.extend(b"PK\x01\x02");
+        file.extend([0u8; 16]);
+        file.extend(size);
+        file.extend(size);
+        file.extend(name_len);
+        file.extend([0u8; 16]);
+        file.extend(name);
+        file.extend(b"PK\x05\x06");
+        file.extend([0u8; 4]);
+        file.extend([1, 0, 1, 0]);
+        file.extend([0u8; 4]);
+        file.extend(central.to_le_bytes());
+        file.extend([0u8; 2]);
+        file
+    }
+
+    #[test]
+    fn reads_the_text_of_a_word_document() {
+        let xml = "<w:document><w:body><w:p><w:r><w:t>Erste Zeile &amp; mehr</w:t></w:r></w:p><w:p><w:r><w:t>Zweite Zeile</w:t></w:r></w:p></w:body></w:document>";
+        assert_eq!(docx_text(&zip_with("word/document.xml", xml)).unwrap(), "Erste Zeile & mehr\nZweite Zeile");
+    }
+
+    #[test]
+    fn a_broken_word_document_is_an_error_and_never_a_crash() {
+        assert!(docx_text(&zip_with("anderes.xml", "x")).is_err());
+        assert!(docx_text(b"gar kein zip").is_err());
+        assert!(docx_text(b"PK\x05\x06").is_err());
+        let good = zip_with("word/document.xml", "<w:p>Text</w:p>");
+        for cut in 0..good.len() {
+            let _ = docx_text(&good[..cut]);
+        }
+        for at in 0..good.len() {
+            let mut bad = good.clone();
+            bad[at] = 0xFF;
+            let _ = docx_text(&bad);
+        }
+    }
 
     #[test]
     fn removes_only_real_emphasis_and_keeps_code_indentation() {

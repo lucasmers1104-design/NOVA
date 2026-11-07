@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-media-played"
+description = "Enables the media_played command without any pre-configured scope."
+commands.allow = ["media_played"]
+
+[[permission]]
+identifier = "deny-media-played"
+description = "Denies the media_played command without any pre-configured scope."
+commands.deny = ["media_played"]

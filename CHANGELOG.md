@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.10.0 — 2026-11-07
+
+### Added
+- **YouTube**: "Spiel das neue Video von MrBeast" or "Zeig mir ein Video über Sourdough" starts it right away in your browser, and pauses what else is playing. NOVA can list a channel's newest videos, tell you about one, and switch fullscreen and captions. No key or account needed. Ads stay, they're YouTube's.
+- **Volume per program**: "Mach Discord leiser" or "Spiel lauter, Spotify leiser", also during a game, and with a slider for each program on the Media page.
+- **Switch where the sound comes out**: "Stell auf Kopfhörer um", by voice or on the Media page.
+- **A bigger Media page**: jump around in a song with the position slider, see lyrics that follow along, type something and start it on YouTube or Spotify, and a sleep timer that stops the music. "Mach die Musik in 30 Minuten aus" works too. Lyrics come from the free LRCLIB database, only when you open them.
+- **A small player right at NOVA**: NOVA's window shows what's playing with pause and next, and so does the dot's right-click menu.
+- **NOVA remembers what played**, also while the Media page is closed: "Wie hieß der Song von vorhin?"
+- **NOVA keeps an eye on things and speaks up by itself**, also during a game: "Sag mir, wenn der Download von Fortnite fertig ist", "wenn der Speicher voll wird", "wenn die CPU dauerhaft über 90 Prozent ist", "wenn MrBeast ein neues Video hat", "wenn Blender fertig ist". For Steam it also knows how far along a download is, for Epic about how far.
+- **Routines**: "Mach mir einen Gaming-Modus: schließ Chrome, stell Discord auf 30 Prozent und starte Fortnite". You see every step once and allow it, then one word is enough. They can run at a set time, and something NOVA keeps an eye on can start them, such as when a game starts.
+- **Briefings at a set time**: "Sag mir jeden Morgen um 8 das Wetter und meine Aufgaben". If the PC comes on a little later, it still happens.
+- **Memory**: "Merk dir, dass mein Hauptspiel Fortnite ist". NOVA keeps short notes on your PC and knows them in every new conversation. See and delete them on the new Routines page, or turn it off there.
+- **The new Routines page** shows everything NOVA does by itself and remembers.
+- **NOVA works through websites**: "Such mir das günstigste Angebot für einen 27-Zoll-Monitor". You allow it once per request, then it reads pages and clicks links in your browser. Buying, paying, logging in and sending things stay with you.
+- **NOVA reads your files**: "Fass mir die PDF zusammen" works with text files, Word documents and PDFs, after you allow it.
+- **Sort a folder**: "Räum meinen Downloads-Ordner auf" sorts files into subfolders by kind. You see the plan first, nothing is overwritten, and it can be taken back.
+- **A checkup for the PC**: "Wie geht es meinem PC?" looks at free space, what can go, what uses the most and what starts with Windows, and says what's worth doing. As a routine it can run every week.
+- A request can now take more steps before NOVA stops, which long tasks need.
+
+### Fixed
+- The 24-hour clock setting now also counts for task times, reminders, notifications and what played on the Media page.
+- When Windows' speech recognition seemed not to work, NOVA stayed with its own for good. A day later Windows now gets another chance.
+- NOVA's internal settings, such as auto mode, routines and what it remembers, can only be changed through NOVA's own checked code now. Favorites can't reach Windows or program folders.
+
 ## 1.9.3 — 2026-11-07
 
 ### Added

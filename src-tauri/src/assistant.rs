@@ -55,6 +55,7 @@ const EVENT_DOT: &str = "assistant://dot";
 const EVENT_PREFS: &str = "assistant://prefs";
 const EVENT_NAVIGATE: &str = "nova://navigate";
 const EVENT_WAKE: &str = "assistant://wake";
+const EVENT_NOTICE: &str = "assistant://notice";
 
 // ---------------------------------------------------------------------------
 // Preferences
@@ -906,6 +907,48 @@ fn hide_panel<R: Runtime>(app: &AppHandle<R>, generation: u64) {
     let _ = app.emit_to(DOT_LABEL, EVENT_PANEL, PanelEvent { open: false });
 }
 
+pub fn notify<R: Runtime>(app: &AppHandle<R>, title: &str, body: &str) {
+    let _ = app.notification().builder().title(title).body(body).show();
+}
+
+/// NOVA speaks up by itself: a notification, and the panel's page says it, also with
+/// its window closed or a game in front. The page is made first if it never opened.
+pub fn announce<R: Runtime>(app: &AppHandle<R>, text: String) {
+    notify(app, "NOVA", &text);
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let (loaded, creating) = {
+            let mut inner = state(&app).lock();
+            let exists = inner.panel_creating || app.get_webview_window(PANEL_LABEL).is_some();
+            inner.panel_creating |= !exists;
+            (inner.panel_loaded, exists)
+        };
+        if !loaded && !creating {
+            let created = create_panel(&app);
+            state(&app).lock().panel_creating = false;
+            if let Err(error) = created {
+                eprintln!("[NOVA] assistant panel unavailable: {error}");
+                return;
+            }
+        }
+        for _ in 0..80 {
+            if state(&app).lock().panel_loaded {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        if let Some(panel) = app.get_webview_window(PANEL_LABEL) {
+            crate::desktop::set_page_visible(&panel, true);
+        }
+        let _ = app.emit_to(PANEL_LABEL, EVENT_NOTICE, NoticeEvent { text });
+    });
+}
+
+#[derive(Clone, Serialize)]
+struct NoticeEvent {
+    text: String,
+}
+
 /// A game is in front and NOVA's window isn't open, so nobody can see or click anything of NOVA's.
 pub fn in_game<R: Runtime>(app: &AppHandle<R>) -> bool {
     !state(app).lock().panel_open && fullscreen_in_front()
@@ -1302,10 +1345,19 @@ const MENU_SETTINGS: &str = "assistant-settings";
 const MENU_HIDE: &str = "assistant-hide";
 const MENU_QUIT: &str = "assistant-quit";
 const MENU_LISTEN: &str = "assistant-listen";
+const MENU_PLAY: &str = "assistant-play";
+const MENU_NEXT: &str = "assistant-next";
 
 /// Handles the assistant's items in the tray and dot menus.
 pub fn on_menu_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
     match event.id().as_ref() {
+        MENU_PLAY | MENU_NEXT => {
+            let action = if event.id().as_ref() == MENU_PLAY { "toggle" } else { "next" };
+            // Off the main thread: asking the player can take a moment.
+            std::thread::spawn(move || {
+                let _ = crate::media::platform::control(action);
+            });
+        }
         MENU_TALK => toggle(app),
         MENU_OPEN => open_main(app, None),
         MENU_SETTINGS => open_main(app, Some("assistant")),
@@ -1596,6 +1648,9 @@ pub async fn assistant_panel_ready<R: Runtime>(app: AppHandle<R>, window: Webvie
 #[tauri::command]
 pub fn assistant_dot_menu<R: Runtime>(app: AppHandle<R>, window: WebviewWindow<R>) -> CommandResult<()> {
     let open = state(&app).lock().panel_open;
+    // What plays right now, when the player tells: the smallest music player there is.
+    // On its own thread: this one is the UI's, and Windows' media session needs another kind.
+    let playing = std::thread::spawn(|| crate::media::platform::state().ok().flatten()).join().ok().flatten().filter(|media| !media.title().is_empty());
     let build = || -> tauri::Result<Menu<R>> {
         let talk = MenuItem::with_id(&app, MENU_TALK, if open { "Close NOVA AI" } else { "Talk to NOVA" }, true, None::<&str>)?;
         let main = MenuItem::with_id(&app, MENU_OPEN, "Open NOVA", true, None::<&str>)?;
@@ -1603,13 +1658,21 @@ pub fn assistant_dot_menu<R: Runtime>(app: AppHandle<R>, window: WebviewWindow<R
         let hide = MenuItem::with_id(&app, MENU_HIDE, "Hide the dot", true, None::<&str>)?;
         let quit = MenuItem::with_id(&app, MENU_QUIT, "Quit NOVA", true, None::<&str>)?;
         let separator = PredefinedMenuItem::separator(&app)?;
-        match crate::wake::listening(&app) {
-            Some(on) => {
-                let listen = MenuItem::with_id(&app, MENU_LISTEN, if on { "Pause listening" } else { "Resume listening" }, true, None::<&str>)?;
-                Menu::with_items(&app, &[&talk, &listen, &main, &settings, &separator, &hide, &quit])
-            }
-            None => Menu::with_items(&app, &[&talk, &main, &settings, &separator, &hide, &quit]),
+        let music_line = PredefinedMenuItem::separator(&app)?;
+        let listen = crate::wake::listening(&app).map(|on| MenuItem::with_id(&app, MENU_LISTEN, if on { "Pause listening" } else { "Resume listening" }, true, None::<&str>)).transpose()?;
+        let song = playing.as_ref().map(|media| MenuItem::with_id(&app, "assistant-song", media.track().chars().take(50).collect::<String>(), false, None::<&str>)).transpose()?;
+        let play = playing.as_ref().map(|media| MenuItem::with_id(&app, MENU_PLAY, if media.is_playing() { "Pause" } else { "Play" }, true, None::<&str>)).transpose()?;
+        let next = playing.as_ref().map(|_| MenuItem::with_id(&app, MENU_NEXT, "Next", true, None::<&str>)).transpose()?;
+        let mut items: Vec<&dyn tauri::menu::IsMenuItem<R>> = Vec::new();
+        if let (Some(song), Some(play), Some(next)) = (&song, &play, &next) {
+            items.extend([song as &dyn tauri::menu::IsMenuItem<R>, play, next, &music_line]);
         }
+        items.push(&talk);
+        if let Some(listen) = &listen {
+            items.push(listen);
+        }
+        items.extend([&main as &dyn tauri::menu::IsMenuItem<R>, &settings, &separator, &hide, &quit]);
+        Menu::with_items(&app, &items)
     };
     let menu = build().map_err(|e| e.to_string())?;
     window.popup_menu(&menu).map_err(|e| e.to_string())
@@ -1617,9 +1680,9 @@ pub fn assistant_dot_menu<R: Runtime>(app: AppHandle<R>, window: WebviewWindow<R
 
 #[tauri::command]
 pub async fn assistant_open_main<R: Runtime>(app: AppHandle<R>, section: Option<String>) -> CommandResult<()> {
-    if section.as_deref() == Some("productivity") {
+    if let Some(route) = ["productivity", "routines", "media"].into_iter().find(|route| section.as_deref() == Some(route)) {
         open_main(&app, None);
-        let _ = app.emit_to("main", EVENT_NAVIGATE, NavigateEvent { route: "productivity", section: "" });
+        let _ = app.emit_to("main", EVENT_NAVIGATE, NavigateEvent { route, section: "" });
         return Ok(());
     }
     let section = match section.as_deref() {

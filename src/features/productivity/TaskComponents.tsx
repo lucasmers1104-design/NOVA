@@ -1,3 +1,4 @@
+import { useSettings } from "@/stores/settings";
 import { Bell, Check, Flag, Plus, Trash } from "lucide-react";
 import { type FormEvent, useId, useState } from "react";
 import { Button, IconButton } from "@/components/ui/Button";
@@ -21,7 +22,8 @@ export function TaskRow({ task, onOpen }: { task: Task; onOpen: (task: Task) => 
   const project = projects.find((p) => p.id === task.projectId);
   const done = task.completedAt !== null;
   const overdue = isOverdue(task, now);
-  const due = relativeDueLabel(task, now, uiLocale());
+  const use24Hour = useSettings((s) => s.use24HourClock);
+  const due = relativeDueLabel(task, now, uiLocale(), use24Hour);
 
   return (
     <li className="group flex items-center gap-3 rounded-[12px] px-3 py-2.5 transition-colors hover:bg-white/[0.04]">

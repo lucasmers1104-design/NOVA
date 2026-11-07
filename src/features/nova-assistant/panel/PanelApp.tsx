@@ -201,6 +201,19 @@ export function PanelApp() {
     return () => void stop.then((unlisten) => unlisten());
   }, []);
 
+  // Something NOVA kept an eye on happened: the same, in its own words.
+  useEffect(() => {
+    const stop = listen<{ text: string }>(ASSISTANT_EVENTS.notice, ({ payload }) => {
+      void (async () => {
+        await playChime();
+        const fresh = agentRef.current ?? (await agentStatus().catch(() => null));
+        if (fresh && !speechActive() && useVoice.getState().mode === "idle") await speak(payload.text, fresh.prefs, "notice", speaksGerman(fresh.prefs.language));
+        if (!openRef.current) void callNative("assistant_headless_done").catch(() => {});
+      })();
+    });
+    return () => void stop.then((unlisten) => unlisten());
+  }, []);
+
   // A virus scan asked for out loud also ends out loud, when nothing else is being said.
   const spokenScan = useRef(false);
   useEffect(() => onReply((event) => {

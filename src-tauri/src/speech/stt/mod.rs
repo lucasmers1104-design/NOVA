@@ -40,9 +40,17 @@ const DEAF_TURNS_KEY: &str = "nova.assistant.windowsDeafTurns";
 /// when its online service stays silent, with nothing reported as wrong). Speech
 /// without one word never happens where dictation works, so once is enough.
 const DEAF_LIMIT: u32 = 1;
+/// When that was last seen. A day later Windows gets another chance: an online
+/// service comes back, and otherwise nothing would ever try it again.
+const DEAF_AT_KEY: &str = "nova.assistant.windowsDeafAt";
+const DEAF_FORGOTTEN_AFTER_MS: i64 = 24 * 3_600_000;
 
 fn deaf_turns<R: Runtime>(app: &AppHandle<R>) -> u32 {
     app.state::<Database>().with(|c| storage::kv_get(c, DEAF_TURNS_KEY)).ok().flatten().and_then(|v| v.parse().ok()).unwrap_or(0)
+}
+
+fn deaf_counts(at: Option<i64>, now: i64) -> bool {
+    at.is_some_and(|at| now - at < DEAF_FORGOTTEN_AFTER_MS)
 }
 
 /// Starts over with Windows' recognizer (the user chose in Settings).
@@ -55,7 +63,10 @@ pub fn forget_deaf_turns<R: Runtime>(app: &AppHandle<R>) {
 /// takes over and is downloaded if needed. True from then on.
 pub fn note_windows_turn<R: Runtime>(app: &AppHandle<R>, deaf: bool) -> bool {
     let turns = if deaf { deaf_turns(app).saturating_add(1) } else { 0 };
-    let _ = app.state::<Database>().with(|c| storage::kv_set(c, DEAF_TURNS_KEY, &turns.to_string()));
+    let _ = app.state::<Database>().with(|c| {
+        storage::kv_set(c, DEAF_AT_KEY, &storage::now_millis().to_string())?;
+        storage::kv_set(c, DEAF_TURNS_KEY, &turns.to_string())
+    });
     if turns < DEAF_LIMIT {
         return false;
     }
@@ -75,7 +86,11 @@ pub fn use_local<R: Runtime>(app: &AppHandle<R>) -> bool {
         return false;
     }
     if deaf_turns(app) >= DEAF_LIMIT {
-        return true;
+        let at = app.state::<Database>().with(|c| storage::kv_get(c, DEAF_AT_KEY)).ok().flatten().and_then(|v| v.parse().ok());
+        if deaf_counts(at, storage::now_millis()) {
+            return true;
+        }
+        forget_deaf_turns(app);
     }
     match super::prefs(app).stt {
         SttPref::Windows => false,

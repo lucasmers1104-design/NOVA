@@ -50,7 +50,7 @@ const STATUS: SpeechStatus = {
 };
 
 const AGENT = {
-  prefs: { provider: null, models: {}, effort: "medium", monthlyLimitUsd: null, speakReplies: false, voice: "", speechRate: 1, speechVolume: 1, language: "de-DE", keepListening: true, autoMode: false },
+  prefs: { provider: null, models: {}, effort: "medium", monthlyLimitUsd: null, speakReplies: false, voice: "", speechRate: 1, speechVolume: 1, language: "de-DE", keepListening: true, autoMode: false, memory: true },
   activeProvider: null,
   activeModel: null,
   keys: { anthropic: false, openai: false, gemini: false },

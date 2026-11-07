@@ -1,6 +1,7 @@
 import {
   AppWindow,
   Box,
+  Brain,
   Check,
   ChevronDown,
   ClipboardList,
@@ -8,6 +9,7 @@ import {
   Copy,
   Cpu,
   ExternalLink,
+  Eye,
   File,
   FileArchive,
   FileAudio,
@@ -26,6 +28,7 @@ import {
   ListChecks,
   type LucideIcon,
   MessageSquareText,
+  MonitorPlay,
   Music2,
   Power,
   Presentation,
@@ -37,7 +40,9 @@ import {
   Timer,
   Trash2,
   Type,
+  Volume2,
   Wifi,
+  Workflow,
   X,
 } from "lucide-react";
 import { motion } from "motion/react";
@@ -45,7 +50,7 @@ import { type ReactNode, useEffect, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
 import { openNova, openPath, openWebPage } from "../api";
-import { FinderHintCard, GameCard, MusicCard, PowerCard, SpeedCard, SystemCard, TimerCard, WeatherCard } from "./NovaResultCards";
+import { FactsCard, FinderHintCard, GameCard, MusicCard, PowerCard, SpeedCard, SystemCard, TimerCard, VideosCard, WeatherCard } from "./NovaResultCards";
 import type { ToolItem } from "../conversation";
 import type { FileHit, ToolCard } from "../types";
 
@@ -255,6 +260,10 @@ function ResultCard({ card }: { card: ToolCard }) {
       return <PowerCard card={card} />;
     case "finderHint":
       return <FinderHintCard />;
+    case "videos":
+      return <VideosCard card={card} />;
+    case "facts":
+      return <FactsCard card={card} />;
     case "app":
       return null;
   }
@@ -359,6 +368,17 @@ const TOOL_ICONS: Record<string, LucideIcon> = {
   internet_speed: Wifi,
   power: Power,
   clipboard: ClipboardList,
+  youtube: MonitorPlay,
+  app_volume: Volume2,
+  audio_output: Volume2,
+  routine: Workflow,
+  watch: Eye,
+  memory: Brain,
+  tidy_folder: FolderOpen,
+  pc_check: Cpu,
+  read_file: FileText,
+  browser_read: Globe,
+  browser_use: Globe,
 };
 
 /** The action's icon, with a ring while it runs and a mark when it's over. */

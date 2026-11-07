@@ -2,7 +2,8 @@
 //! through here, and only for features the user explicitly configured
 //! (AI providers with a key, weather with a location, news feeds they added,
 //! NOVA's voice when spoken replies use it, web pages NOVA AI is asked to read,
-//! a test file when asked how fast the internet is).
+//! a test file when asked how fast the internet is, YouTube's pages when asked to
+//! find or watch a video, a song's text when the lyrics are opened).
 
 use std::sync::OnceLock;
 use std::time::Duration;

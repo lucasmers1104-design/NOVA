@@ -384,6 +384,11 @@ pub async fn system_network_interfaces(monitor: tauri::State<'_, SystemMonitor>)
 }
 
 /// Temperature sensors exposed to unprivileged apps; often empty on Windows.
+/// The hottest sensor Windows reports; `None` on the many PCs that don't tell.
+pub fn hottest_sensor() -> Option<f32> {
+    collect_temperatures().iter().map(|sensor| sensor.celsius).max_by(f32::total_cmp)
+}
+
 #[tauri::command]
 pub async fn system_temperatures() -> CommandResult<Vec<TemperatureSensor>> {
     tauri::async_runtime::spawn_blocking(collect_temperatures).await.map_err(|e| e.to_string())

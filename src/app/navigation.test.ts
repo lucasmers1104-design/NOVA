@@ -23,6 +23,7 @@ describe("navigation registry", () => {
       "Apps",
       "NOVA AI",
       "Productivity",
+      "Routines",
       "Media",
       "Files",
       "Live Information",
@@ -32,8 +33,8 @@ describe("navigation registry", () => {
   });
 
   it("applies the user's sidebar order and visibility", () => {
-    const groups = resolveSidebar(["media", "system", "apps", "ai", "productivity", "files", "live"], ["apps", "studio"]);
-    expect(groups.workspace.map((i) => i.id)).toEqual(["home", "media", "system", "ai", "productivity", "files", "live"]);
+    const groups = resolveSidebar(["media", "system", "apps", "ai", "productivity", "routines", "files", "live"], ["apps", "studio"]);
+    expect(groups.workspace.map((i) => i.id)).toEqual(["home", "media", "system", "ai", "productivity", "routines", "files", "live"]);
     expect(groups.customize).toEqual([]);
     expect(groups.footer.map((i) => i.id)).toEqual(["settings"]);
   });

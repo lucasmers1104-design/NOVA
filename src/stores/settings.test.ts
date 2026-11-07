@@ -23,7 +23,7 @@ describe("sanitizeSettings", () => {
   it("repairs navigation preferences", () => {
     const sanitized = sanitizeSettings({ navOrder: ["media", "media", "bogus", "home", "system"], navHidden: ["home", "files", "settings"] });
     expect(sanitized.navOrder?.slice(0, 2)).toEqual(["media", "system"]);
-    expect(sanitized.navOrder).toHaveLength(7);
+    expect(sanitized.navOrder).toHaveLength(8);
     expect(sanitized.navHidden).toEqual(["files"]);
   });
 

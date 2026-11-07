@@ -1,7 +1,7 @@
 {
   "name": "nova",
   "private": true,
-  "version": "1.9.3",
+  "version": "1.10.0",
   "description": "NOVA — Your Personal Command Center",
   "type": "module",
   "scripts": {

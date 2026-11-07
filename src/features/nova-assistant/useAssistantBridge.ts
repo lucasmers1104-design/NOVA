@@ -28,7 +28,7 @@ export function useAssistantBridge(): void {
     if (!isDesktop()) return;
     const unlisten = listen<{ route?: unknown; section?: unknown }>(ASSISTANT_EVENTS.navigate, ({ payload }) => {
       if (payload.route === "settings" && typeof payload.section === "string") openSettings(payload.section);
-      if (payload.route === "productivity") navigate("productivity");
+      if (payload.route === "productivity" || payload.route === "routines" || payload.route === "media") navigate(payload.route);
     });
     return () => void unlisten.then((stop) => stop());
   }, [openSettings, navigate]);

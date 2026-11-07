@@ -106,6 +106,7 @@ pub fn run() {
             speech::init(app.handle(), speech_prefs);
             wake::init(app.handle(), wake_prefs);
             capture::watch_foreground();
+            agent::auto::start(app.handle());
             Ok(())
         })
         .on_window_event(|window, event| match (window.label(), event) {
@@ -175,6 +176,23 @@ pub fn run() {
             media::media_control,
             media::media_volume,
             media::media_volume_set,
+            media::media_seek,
+            media::media_mixer,
+            media::media_mixer_set,
+            media::media_outputs,
+            media::media_output_set,
+            media::media_lyrics,
+            agent::everyday::media_sleep,
+            agent::media_play,
+            agent::auto::media_played,
+            agent::auto::media_played_clear,
+            agent::auto::automation_list,
+            agent::auto::automation_run,
+            agent::auto::automation_delete_routine,
+            agent::auto::automation_delete_watcher,
+            agent::memory::memory_list,
+            agent::memory::memory_add,
+            agent::memory::memory_delete,
             ai::ai_key_status,
             ai::ai_key_set,
             ai::ai_key_delete,

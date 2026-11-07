@@ -16,6 +16,8 @@ pub enum Intent {
     Media(&'static str),
     /// "spiele Entspannungsmusik".
     Spotify(String),
+    /// "spiel lofi hip hop auf youtube".
+    YouTube(String),
     /// "suche im Internet nach Kinoprogramm".
     WebSearch(String),
     /// "neue Aufgabe Müll rausbringen".
@@ -110,6 +112,12 @@ pub fn parse(text: &str) -> Intent {
     for verb in ["spiele ", "spiel ", "play "] {
         if polite.starts_with(verb) {
             if let Some(mut query) = find_after(original, verb) {
+                for tail in [" auf youtube ab", " auf youtube", " on youtube"] {
+                    if query.to_lowercase().ends_with(tail) {
+                        query.truncate(query.len() - tail.len());
+                        return Intent::YouTube(query);
+                    }
+                }
                 for tail in [" ab", " auf spotify", " on spotify"] {
                     if query.to_lowercase().ends_with(tail) {
                         query.truncate(query.len() - tail.len());

@@ -1,10 +1,10 @@
-import { Check, FolderPlus, Gamepad2, HardDrive, Music2, Power, Timer, X } from "lucide-react";
+import { Brain, Check, Eye, FolderInput, FolderPlus, Gamepad2, HardDrive, type LucideIcon, Music2, Play, Power, Timer, Volume2, Workflow, X } from "lucide-react";
 import { motion } from "motion/react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { describeWeather } from "@/features/live/api";
 import { cn } from "@/lib/cn";
-import { cancelPower, cancelTimer, finderAddAllDrives, finderPickFolder } from "../api";
+import { cancelPower, cancelTimer, finderAddAllDrives, finderPickFolder, openNova, openWebPage } from "../api";
 import { elapsedLabel } from "../scan";
 import type { ToolCard } from "../types";
 import { formatSize } from "./NovaToolCard";
@@ -248,6 +248,73 @@ export function PowerCard({ card }: { card: CardOf<"power"> }) {
         <Button size="sm" variant="secondary" onClick={() => void cancelPower().then(() => setCalledOff(true), () => {})}>
           Call off
         </Button>
+      )}
+    </div>
+  );
+}
+
+/** What YouTube found, or the video that starts. A click opens it in the browser. */
+export function VideosCard({ card }: { card: CardOf<"videos"> }) {
+  const [big, ...rest] = card.playing ? card.videos : [undefined, ...card.videos];
+  const open = (id: string) => void openWebPage(`https://www.youtube.com/watch?v=${id}`);
+  return (
+    <div className={cn(CARD, "space-y-2")}>
+      {big && (
+        <button type="button" onClick={() => open(big.id)} className="block w-full text-left">
+          <span className="relative block aspect-video overflow-hidden rounded-[10px] bg-white/[0.05]">
+            <img src={`https://i.ytimg.com/vi/${big.id}/hqdefault.jpg`} alt="" draggable={false} className="size-full object-cover" />
+            <span className="absolute inset-0 flex items-center justify-center bg-black/25">
+              <span className="flex size-10 items-center justify-center rounded-full bg-black/60 text-white">
+                <Play size={18} fill="currentColor" className="ml-0.5" aria-hidden />
+              </span>
+            </span>
+            {big.length && <span className="absolute right-1.5 bottom-1.5 rounded bg-black/70 px-1 text-[10.5px] text-white tabular-nums">{big.length}</span>}
+          </span>
+          <span className="mt-1.5 line-clamp-2 block text-[12.5px] font-medium text-fg">{big.title}</span>
+          {big.channel && <span className="block truncate text-[11px] text-fg-muted">{big.channel}</span>}
+        </button>
+      )}
+      {rest.filter((video) => video !== undefined).map((video, index) => (
+        <button key={video.id} type="button" onClick={() => open(video.id)} title={video.title} className="flex w-full items-center gap-2.5 rounded-[9px] text-left hover:bg-white/[0.05]">
+          <span className="w-3 shrink-0 text-right text-[11px] text-fg-subtle tabular-nums">{index + 1}</span>
+          <img src={`https://i.ytimg.com/vi/${video.id}/mqdefault.jpg`} alt="" draggable={false} className="aspect-video w-[72px] shrink-0 rounded-[6px] bg-white/[0.05] object-cover" />
+          <span className="min-w-0 flex-1">
+            <span className="line-clamp-2 block text-[12px] leading-snug text-fg">{video.title}</span>
+            <span className="block truncate text-[11px] text-fg-subtle">{[video.channel, video.live ? "Live" : video.length, video.age].filter(Boolean).join(" · ")}</span>
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const FACT_ICONS: Record<CardOf<"facts">["icon"], LucideIcon> = { volume: Volume2, routine: Workflow, watch: Eye, memory: Brain, tidy: FolderInput };
+
+/** Something saved or changed: what it is, in a few lines. */
+export function FactsCard({ card }: { card: CardOf<"facts"> }) {
+  const Icon = FACT_ICONS[card.icon];
+  const onPage = card.icon === "routine" || card.icon === "watch" || card.icon === "memory";
+  return (
+    <div className={CARD}>
+      <div className="flex items-center gap-2.5">
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-[10px] accent-soft text-accent-text">
+          <Icon size={15} aria-hidden />
+        </span>
+        <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-fg">{card.title}</span>
+        {onPage && (
+          <Button size="sm" variant="ghost" onClick={() => void openNova("routines")}>
+            Open
+          </Button>
+        )}
+      </div>
+      {card.lines.length > 0 && (
+        <ul className="mt-2 space-y-0.5 border-t border-line pt-2">
+          {card.lines.map((line) => (
+            <li key={line} className="text-[11.5px] leading-snug text-fg-muted">
+              {line}
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );

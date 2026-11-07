@@ -193,6 +193,8 @@ pub enum Heard {
 pub enum Source {
     Phrase,
     Clap,
+    /// A routine's time has come.
+    Schedule,
 }
 
 // ---------------------------------------------------------------------------

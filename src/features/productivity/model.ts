@@ -116,10 +116,17 @@ export function reminderKey(task: Pick<Task, "id" | "dueDate" | "dueTime">): str
   return `${task.id}@${task.dueDate}T${task.dueTime}`;
 }
 
-export function relativeDueLabel(task: Pick<Task, "dueDate" | "dueTime">, now: Date, locale: string): string | null {
+/** "14:30" as the user's clock shows it: stays, or "2:30 PM". */
+export function clockTime(time: string, use24Hour: boolean, locale: string): string {
+  if (use24Hour) return time;
+  const [hours, minutes] = time.split(":").map(Number);
+  return new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "2-digit", hourCycle: "h12" }).format(new Date(2000, 0, 1, hours ?? 0, minutes ?? 0));
+}
+
+export function relativeDueLabel(task: Pick<Task, "dueDate" | "dueTime">, now: Date, locale: string, use24Hour = true): string | null {
   if (!task.dueDate) return null;
   const today = toISODate(now);
-  const time = task.dueTime ? ` ${task.dueTime}` : "";
+  const time = task.dueTime ? ` ${clockTime(task.dueTime, use24Hour, locale)}` : "";
   if (task.dueDate === today) return `Today${time}`;
   if (task.dueDate === addDays(today, 1)) return `Tomorrow${time}`;
   if (task.dueDate === addDays(today, -1)) return `Yesterday${time}`;

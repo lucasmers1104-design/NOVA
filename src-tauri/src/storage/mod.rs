@@ -159,13 +159,25 @@ pub async fn settings_get(db: tauri::State<'_, Database>, key: String) -> Comman
     db.with(|conn| kv::get(conn, &key))
 }
 
+/// What only NOVA's own checked code writes: auto mode, what routines do and what
+/// NOVA remembers don't change through a page writing a setting directly.
+fn rust_owned(key: &str) -> bool {
+    key.starts_with("nova.assistant") || matches!(key, "nova.finder" | "nova.automation" | "nova.memory" | "nova.played" | "nova.tidy.last")
+}
+
 #[tauri::command]
 pub async fn settings_set(db: tauri::State<'_, Database>, key: String, value: String) -> CommandResult<()> {
+    if rust_owned(&key) {
+        return Err("That setting can't be written directly".into());
+    }
     db.with(|conn| kv::set(conn, &key, &value))
 }
 
 #[tauri::command]
 pub async fn settings_delete(db: tauri::State<'_, Database>, key: String) -> CommandResult<()> {
+    if rust_owned(&key) {
+        return Err("That setting can't be deleted directly".into());
+    }
     db.with(|conn| kv::delete(conn, &key))
 }
 

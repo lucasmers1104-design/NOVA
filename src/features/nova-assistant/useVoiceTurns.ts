@@ -84,7 +84,8 @@ export function useVoiceTurns({ agent, wake, typing, onStart, onSend }: VoiceTur
       // "Hey NOVA, wie spät ist es?": the request is already there.
       if (wake.call.request) {
         onSendRef.current?.();
-        void useConversation.getState().send(wake.call.request, { voice: true, ack: voiceLine("ack", language) });
+        const unasked = wake.call.source === "schedule";
+        void useConversation.getState().send(wake.call.request, { voice: true, ack: unasked ? undefined : voiceLine("ack", language), unasked });
         return;
       }
       // Said before the microphone opens, so NOVA doesn't hear itself. A greeting

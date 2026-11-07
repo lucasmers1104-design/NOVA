@@ -1,3 +1,4 @@
+import { useSettings } from "@/stores/settings";
 import { Bell, BellRing, CircleAlert, CircleCheck, Info, TriangleAlert, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef } from "react";
@@ -25,7 +26,7 @@ function timeAgo(at: number): string {
   const seconds = Math.round((Date.now() - at) / 1000);
   if (seconds < 60) return "Just now";
   if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
-  return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hourCycle: useSettings.getState().use24HourClock ? "h23" : "h12" });
 }
 
 /** Transient toasts, bottom-right. */

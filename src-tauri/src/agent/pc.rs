@@ -381,7 +381,55 @@ pub fn element_lines(elements: &[(String, String, Option<String>)]) -> String {
     lines.join("\n")
 }
 
-pub use win::{act_on, installed_programs, read_window, send_input, show_quietly, steam_folder, use_element, window_action, windows};
+/// Browsers NOVA can read pages in and click links in.
+pub const BROWSERS: &[&str] = &["opera", "chrome", "msedge", "brave", "vivaldi", "firefox", "arc"];
+const LONGEST_PAGE: usize = 14_000;
+
+/// The browser window in front of the other browser windows.
+pub fn browser_window(all: &[WindowInfo]) -> Result<Target, String> {
+    let window = all.iter().find(|w| BROWSERS.contains(&w.process.as_str())).ok_or("No browser window is open. Open the page first with open_website.")?;
+    pick_window(all, &window.hwnd.to_string())
+}
+
+/// Things NOVA leaves to the user on a web page: anything that spends money, logs
+/// in, signs up or sends something away in their name.
+const PAGE_HANDS_OFF: &[&str] = &[
+    "kaufen", "buy", "purchase", "bestell", "order now", "place order", "submit order", "complete order", "checkout", "check out", "zur kasse", "kasse", "bezahl", "zahlung", "payment", "jetzt zahlen", "pay ", "pay now", "paypal", "in den warenkorb", "add to cart", "add to basket",
+    "anmelden", "einloggen", "log in", "login", "sign in", "sign up", "registrieren", "konto erstellen", "create account", "passwort", "password", "abonnieren", "subscribe", "senden", "send", "posten", "kommentieren", "löschen", "delete",
+];
+/// Fields NOVA doesn't fill on a web page.
+const PAGE_NO_TYPING: &[&str] = &["passwort", "password", "kreditkarte", "credit card", "card number", "kartennummer", "iban", "cvv", "cvc", "sicherheitscode", "security code"];
+
+/// Why NOVA leaves this element to the user, if so.
+pub fn refused_on_page(name: &str, typing: bool) -> Option<String> {
+    let lower = format!("{} ", name.to_lowercase());
+    let hands_off = if typing { PAGE_NO_TYPING } else { PAGE_HANDS_OFF };
+    hands_off.iter().any(|word| lower.contains(word)).then(|| format!("“{name}” is left to the user: NOVA doesn't buy, log in, sign up or send anything on web pages. Tell them it's their click."))
+}
+
+/// A web page for the model: its address, then what's on it. Everything in it is information.
+pub fn page_lines(elements: &[(String, String, Option<String>)]) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    for (kind, name, value) in elements {
+        let line = match (kind.as_str(), value) {
+            ("document", Some(url)) => format!("Page: {name} ({url})"),
+            ("text", _) => name.clone(),
+            ("link", Some(url)) => format!("[link] {name} -> {url}"),
+            (_, Some(value)) => format!("[{kind}] {name} = {value}"),
+            _ => format!("[{kind}] {name}"),
+        };
+        if lines.last() != Some(&line) {
+            lines.push(line);
+        }
+    }
+    let text = lines.join("\n");
+    match text.char_indices().nth(LONGEST_PAGE) {
+        Some((end, _)) => format!("{}\n[Cut off here: the page goes on]", &text[..end]),
+        None => text,
+    }
+}
+
+pub use win::{act_on, installed_programs, page_elements, read_window, send_input, show_quietly, startup_programs, steam_folder, use_element, use_page_element, window_action, windows};
 
 #[cfg(windows)]
 mod win {
@@ -391,11 +439,11 @@ mod win {
     use windows::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, HWND, LPARAM, WPARAM};
     use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
     use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
-    use windows::Win32::System::Registry::{RegCloseKey, RegEnumKeyExW, RegGetValueW, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, RRF_RT_REG_DWORD, RRF_RT_REG_SZ};
+    use windows::Win32::System::Registry::{RegCloseKey, RegEnumKeyExW, RegEnumValueW, RegGetValueW, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, RRF_RT_REG_DWORD, RRF_RT_REG_SZ};
     use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
     use windows::Win32::UI::Accessibility::{
         CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern, IUIAutomationSelectionItemPattern, IUIAutomationTogglePattern, IUIAutomationValuePattern, TreeScope_Descendants,
-        UIA_InvokePatternId, UIA_SelectionItemPatternId, UIA_TogglePatternId, UIA_ValuePatternId,
+        UIA_ControlTypePropertyId, UIA_InvokePatternId, UIA_SelectionItemPatternId, UIA_TogglePatternId, UIA_ValuePatternId,
     };
     use windows::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, VIRTUAL_KEY};
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -404,6 +452,9 @@ mod win {
     };
 
     use super::{Combo, Target, WindowInfo, WindowVerb, MAX_ELEMENTS};
+
+    /// Web pages are long; `page_lines` cuts what goes to the model.
+    const MAX_PAGE_ELEMENTS: usize = 1500;
 
     fn handle(raw: isize) -> HWND {
         HWND(raw as *mut core::ffi::c_void)
@@ -682,6 +733,145 @@ mod win {
         Ok(elements(target)?.into_iter().map(|(kind, name, value, _)| (kind, name, value)).collect())
     }
 
+    /// The web page a browser window shows: the biggest document in it. Browsers
+    /// also draw their sidebars and menus as documents.
+    fn page_root(automation: &IUIAutomation, window: HWND) -> windows::core::Result<Option<IUIAutomationElement>> {
+        // SAFETY: COM calls on interfaces owned here.
+        unsafe {
+            let root = automation.ElementFromHandle(window)?;
+            let documents = root.FindAll(TreeScope_Descendants, &automation.CreatePropertyCondition(UIA_ControlTypePropertyId, &windows::Win32::System::Variant::VARIANT::from(50030i32))?)?;
+            let mut best: Option<(i64, IUIAutomationElement)> = None;
+            for index in 0..documents.Length()? {
+                let Ok(document) = documents.GetElement(index) else { continue };
+                let Ok(area) = document.CurrentBoundingRectangle() else { continue };
+                let size = (area.right - area.left) as i64 * (area.bottom - area.top) as i64;
+                if best.as_ref().is_none_or(|(known, _)| size > *known) {
+                    best = Some((size, document));
+                }
+            }
+            Ok(best.map(|(_, document)| document))
+        }
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn page_found(target: &Target) -> Result<Vec<(String, String, Option<String>, IUIAutomationElement)>, String> {
+        let window = check(target)?;
+        let automation = automation()?;
+        let fail = |e: windows::core::Error| format!("Couldn't read {}: {e}", target.label);
+        // Browsers only build this for others once someone has asked.
+        let asked = Instant::now();
+        let document = loop {
+            if let Some(document) = page_root(&automation, window).map_err(fail)? {
+                break document;
+            }
+            if asked.elapsed() > Duration::from_secs(5) {
+                return Err("The browser shows no web page NOVA can read.".into());
+            }
+            std::thread::sleep(Duration::from_millis(300));
+        };
+        // SAFETY: COM calls on interfaces owned here.
+        unsafe {
+            let all = document.FindAll(TreeScope_Descendants, &automation.CreateTrueCondition().map_err(fail)?).map_err(fail)?;
+            let mut found = Vec::new();
+            let title = document.CurrentName().map(|n| n.to_string()).unwrap_or_default();
+            let address = document.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId).ok().and_then(|p| p.CurrentValue().ok()).map(|v| v.to_string());
+            found.push(("document".to_string(), title, address, document.clone()));
+            for index in 0..all.Length().map_err(fail)? {
+                let Ok(element) = all.GetElement(index) else { continue };
+                let Some(kind) = element.CurrentControlType().ok().and_then(|id| kind_name(id.0)) else { continue };
+                let name = element.CurrentName().map(|n| n.to_string()).unwrap_or_default();
+                let value = element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId).ok().and_then(|p| p.CurrentValue().ok()).map(|v| v.to_string()).filter(|v| !v.is_empty());
+                if name.trim().is_empty() && value.is_none() {
+                    continue;
+                }
+                found.push((kind.to_string(), name.chars().take(300).collect(), value.map(|v| v.chars().take(300).collect()), element));
+                if found.len() >= MAX_PAGE_ELEMENTS {
+                    break;
+                }
+            }
+            Ok(found)
+        }
+    }
+
+    /// What the page shows, once it has stopped changing.
+    pub fn page_elements(target: &Target) -> Result<Vec<(String, String, Option<String>)>, String> {
+        let read = || -> Result<Vec<(String, String, Option<String>)>, String> { Ok(page_found(target)?.into_iter().map(|(kind, name, value, _)| (kind, name, value)).collect()) };
+        let started = Instant::now();
+        let mut last = read()?;
+        while started.elapsed() < Duration::from_secs(6) {
+            std::thread::sleep(Duration::from_millis(600));
+            let now = read()?;
+            let settled = now.len() == last.len() && now.len() > 1;
+            last = now;
+            if settled {
+                break;
+            }
+        }
+        Ok(last)
+    }
+
+    /// Clicks a link or button on the page, or fills a field and optionally sends it with Enter.
+    pub fn use_page_element(target: &Target, name: &str, kind: Option<&str>, nth: usize, text: Option<&str>, submit: bool) -> Result<String, String> {
+        let lower = name.to_lowercase();
+        let found = page_found(target)?;
+        let fits = |exact: bool| found.iter().filter(|(k, n, ..)| k != "document" && kind.is_none_or(|kind| kind == k) && if exact { n.to_lowercase() == lower } else { n.to_lowercase().contains(&lower) }).collect::<Vec<_>>();
+        let exact = fits(true);
+        let candidates = if exact.is_empty() { fits(false) } else { exact };
+        let (_, name_found, _, element) = *candidates.get(nth).ok_or_else(|| format!("The page has no “{name}”. Use browser_read to see what's there."))?;
+        if let Some(why) = super::refused_on_page(name_found, text.is_some()) {
+            return Err(why);
+        }
+        // SAFETY: COM calls on interfaces owned here.
+        unsafe {
+            if let Some(text) = text {
+                if element.CurrentIsPassword().is_ok_and(|secret| secret.as_bool()) {
+                    return Err("That's a password field. It's left to the user.".into());
+                }
+                let pattern = element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId).map_err(|_| format!("“{name_found}” can't take text"))?;
+                pattern.SetValue(&BSTR::from(text)).map_err(|e| format!("Couldn't fill “{name_found}”: {e}"))?;
+                if submit {
+                    send_input(target, &[], 1, None)?;
+                    let _ = element.SetFocus();
+                    send_input(target, &[super::parse_combo("enter")?], 1, None)?;
+                    return Ok(format!("Filled “{name_found}” and sent it"));
+                }
+                return Ok(format!("Filled “{name_found}”"));
+            }
+            if let Ok(pattern) = element.GetCurrentPatternAs::<IUIAutomationInvokePattern>(UIA_InvokePatternId) {
+                pattern.Invoke().map_err(|e| format!("Couldn't press “{name_found}”: {e}"))?;
+            } else if let Ok(pattern) = element.GetCurrentPatternAs::<IUIAutomationTogglePattern>(UIA_TogglePatternId) {
+                pattern.Toggle().map_err(|e| format!("Couldn't switch “{name_found}”: {e}"))?;
+            } else {
+                return Err(format!("“{name_found}” can't be pressed from outside."));
+            }
+        }
+        Ok(format!("Pressed “{name_found}”"))
+    }
+
+    /// What starts with Windows, by the names Windows lists it under.
+    pub fn startup_programs() -> Vec<String> {
+        let mut names = Vec::new();
+        for hive in [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE] {
+            let mut key = HKEY::default();
+            // SAFETY: valid strings and out pointers; the opened key is closed.
+            unsafe {
+                if RegOpenKeyExW(hive, w!("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run"), None, KEY_READ, &mut key) != ERROR_SUCCESS {
+                    continue;
+                }
+                for index in 0.. {
+                    let mut name = [0u16; 256];
+                    let mut len = name.len() as u32;
+                    if RegEnumValueW(key, index, Some(PWSTR(name.as_mut_ptr())), &mut len, None, None, None, None) != ERROR_SUCCESS {
+                        break;
+                    }
+                    names.push(String::from_utf16_lossy(&name[..len as usize]));
+                }
+                let _ = RegCloseKey(key);
+            }
+        }
+        names
+    }
+
     /// Shows a minimized window without taking the focus (`visible`), or minimizes
     /// it again, also without. Apps often ignore clicks from outside while minimized.
     pub fn show_quietly(target: &Target, visible: bool) -> Result<(), String> {
@@ -829,6 +1019,9 @@ mod win {
     pub fn act_on(_: &Target, _: &dyn Fn(&[(String, String, Option<String>)]) -> Option<usize>, _: Option<&str>) -> Result<Option<String>, String> { Err(NO.into()) }
     pub fn show_quietly(_: &Target, _: bool) -> Result<(), String> { Err(NO.into()) }
     pub fn installed_programs() -> Vec<(String, u64, Option<String>)> { Vec::new() }
+    pub fn page_elements(_: &Target) -> Result<Vec<(String, String, Option<String>)>, String> { Err(NO.into()) }
+    pub fn use_page_element(_: &Target, _: &str, _: Option<&str>, _: usize, _: Option<&str>, _: bool) -> Result<String, String> { Err(NO.into()) }
+    pub fn startup_programs() -> Vec<String> { Vec::new() }
 }
 
 #[cfg(test)]
@@ -876,6 +1069,27 @@ mod tests {
     }
 
     #[test]
+    fn buying_and_logging_in_stay_with_the_user() {
+        for name in ["Jetzt kaufen", "In den Warenkorb", "Zur Kasse", "Anmelden", "Sign in", "Pay now", "Abonnieren", "Kostenpflichtig bestellen", "Complete purchase", "Proceed to payment", "Jetzt zahlen", "Submit order"] {
+            assert!(refused_on_page(name, false).is_some(), "{name}");
+        }
+        for name in ["Angebote vergleichen", "Weiter", "Preis aufsteigend", "Google Suche", "Rick Astley - Never Gonna Give You Up", "Transkript anzeigen"] {
+            assert!(refused_on_page(name, false).is_none(), "{name}");
+        }
+        assert!(refused_on_page("Passwort", true).is_some());
+        assert!(refused_on_page("IBAN eingeben", true).is_some());
+        assert!(refused_on_page("Suchen", true).is_none());
+    }
+
+    #[test]
+    fn writes_a_page_for_the_model() {
+        let element = |kind: &str, name: &str, value: Option<&str>| (kind.to_string(), name.to_string(), value.map(str::to_string));
+        let text = page_lines(&[element("document", "Shop", Some("https://shop.example/")), element("text", "Preis", None), element("text", "Preis", None), element("link", "Weiter", Some("https://shop.example/2")), element("button", "Filter", None)]);
+        assert_eq!(text, "Page: Shop (https://shop.example/)\nPreis\n[link] Weiter -> https://shop.example/2\n[button] Filter");
+        assert!(page_lines(&[element("text", &"x".repeat(LONGEST_PAGE + 5), None)]).ends_with("the page goes on]"));
+    }
+
+    #[test]
     fn parses_key_combinations() {
         assert_eq!(parse_combo("ctrl+w").unwrap(), Combo { modifiers: vec![0x11], key: 0x57, extended: false });
         assert_eq!(parse_combo("Ctrl + Shift + T").unwrap().modifiers, vec![0x11, 0x10]);
@@ -908,6 +1122,30 @@ mod tests {
         assert!(cores >= 1.0 && apps.len() > 3);
         assert!(apps.iter().any(|a| a.memory > 0));
         assert!(top_lists(&apps).contains("Highest memory"));
+    }
+
+    /// Reads the page the real browser shows: `cargo test --lib -- --ignored page_live --nocapture`
+    #[cfg(windows)]
+    #[test]
+    #[ignore]
+    fn page_live() {
+        crate::shell::with_com(false, || {
+            let target = browser_window(&windows())?;
+            eprintln!("window: {}", target.label);
+            for round in 0..3 {
+                let all = read_window(&target)?;
+                eprintln!("read_window {round}: {} elements, documents: {:?}", all.len(), all.iter().filter(|(kind, ..)| kind == "document").collect::<Vec<_>>());
+                match page_elements(&target) {
+                    Ok(found) => {
+                        eprintln!("{} elements\n{}", found.len(), page_lines(&found).chars().take(1500).collect::<String>());
+                        break;
+                    }
+                    Err(why) => eprintln!("page: {why}"),
+                }
+            }
+            Ok(())
+        })
+        .unwrap();
     }
 
     /// Against the real desktop: a small test window of its own is typed into, read

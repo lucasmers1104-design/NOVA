@@ -56,7 +56,7 @@ export interface DotView {
 
 /** "Hey NOVA" or a double clap opened the panel; mirrors `WakeCall` in assistant.rs. */
 export interface WakeCall {
-  source: "phrase" | "clap";
+  source: "phrase" | "clap" | "schedule";
   /** Start listening for a spoken request. */
   listen: boolean;
   /** Play the wake sound. */
@@ -115,6 +115,16 @@ export interface SavedDocument {
   format: "pdf" | "md" | "txt" | "html";
 }
 
+/** Mirrors `Video` in src-tauri/src/agent/youtube.rs. */
+export interface VideoInfo {
+  id: string;
+  title: string;
+  channel: string;
+  length: string | null;
+  age: string | null;
+  live: boolean;
+}
+
 export type ToolCard =
   | { kind: "files"; hits: FileHit[]; source: "index" | "live" }
   | { kind: "document"; document: SavedDocument }
@@ -131,7 +141,9 @@ export type ToolCard =
   | { kind: "speed"; megabits: number; pingMs: number }
   | { kind: "system"; cpu: number | null; memoryUsed: number; memoryTotal: number; gpu: number | null; top: { name: string; cpu: number; memory: number }[] }
   | { kind: "power"; action: "shutdown" | "restart"; at: number }
-  | { kind: "finderHint" };
+  | { kind: "finderHint" }
+  | { kind: "videos"; videos: VideoInfo[]; playing: boolean }
+  | { kind: "facts"; icon: "volume" | "routine" | "watch" | "memory" | "tidy"; title: string; lines: string[] };
 
 /** Mirrors `AgentEvent` in src-tauri/src/agent/mod.rs. */
 export type AgentEvent =
@@ -173,6 +185,8 @@ export interface AgentPrefs {
   keepListening: boolean;
   /** Tools run without asking first, at the user's own risk. */
   autoMode: boolean;
+  /** NOVA keeps notes about the user between conversations. */
+  memory: boolean;
 }
 
 export interface UsageTotals {
@@ -232,6 +246,8 @@ export const ASSISTANT_EVENTS = {
   finder: "finder://progress",
   /** → panel: a timer has run out. */
   timer: "assistant://timer",
+  /** → panel: NOVA speaks up by itself, something it was keeping an eye on happened. */
+  notice: "assistant://notice",
   /** → panel (already open): "Hey NOVA" or a double clap. */
   wake: "assistant://wake",
   /** → everyone: wake listening status changed. */

@@ -10,6 +10,7 @@ import {
   Newspaper,
   Settings,
   Sparkles,
+  Workflow,
 } from "lucide-react";
 
 export type RouteId =
@@ -18,6 +19,7 @@ export type RouteId =
   | "apps"
   | "ai"
   | "productivity"
+  | "routines"
   | "media"
   | "files"
   | "live"
@@ -41,6 +43,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { id: "apps", label: "Apps", icon: AppWindow, group: "workspace", description: "Search, pin and launch applications" },
   { id: "ai", label: "NOVA AI", icon: Sparkles, group: "workspace", description: "Your multi-provider AI assistant" },
   { id: "productivity", label: "Productivity", icon: ListTodo, group: "workspace", description: "Tasks, projects, notes and calendar" },
+  { id: "routines", label: "Routines", icon: Workflow, group: "workspace", description: "What NOVA does by itself and remembers" },
   { id: "media", label: "Media", icon: AudioLines, group: "workspace", description: "Control what's playing on this PC" },
   { id: "files", label: "Files", icon: FolderOpen, group: "workspace", description: "Favorite folders and quick access" },
   { id: "live", label: "Live Information", icon: Newspaper, group: "workspace", description: "Weather, news and information cards" },

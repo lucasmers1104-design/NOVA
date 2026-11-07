@@ -112,6 +112,30 @@ pub struct Installed {
     pub link: String,
     /// Fully installed; otherwise the launcher still has to download or update it.
     pub ready: bool,
+    /// How far along a download is, in percent, when the launcher's files tell.
+    pub progress: Option<u8>,
+    /// Epic notes no progress: its folder and full size, to compare when asked.
+    pub to_measure: Option<(PathBuf, u64)>,
+}
+
+impl Installed {
+    /// `progress`, or else measured on disk. That can walk a whole game folder, so only when asked.
+    pub fn measured_progress(&self) -> Option<u8> {
+        self.progress.or_else(|| self.to_measure.as_ref().and_then(|(folder, size)| percent(folder_size(folder), *size)))
+    }
+}
+
+fn percent(done: u64, of: u64) -> Option<u8> {
+    (of > 0).then(|| (done.saturating_mul(100) / of).min(100) as u8)
+}
+
+fn folder_size(folder: &Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(folder) else { return 0 };
+    entries.flatten().map(|entry| match entry.metadata() {
+        Ok(meta) if meta.is_dir() => folder_size(&entry.path()),
+        Ok(meta) => meta.len(),
+        Err(_) => 0,
+    }).sum()
 }
 
 /// Steam's own parts that show up beside the games.
@@ -127,12 +151,10 @@ fn parse_epic_manifest(text: &str) -> Option<Installed> {
     if name.is_empty() || item["bIsApplication"].as_bool() == Some(false) || item["MainGameAppName"].as_str().is_some_and(|main| !main.is_empty() && main != item["AppName"].as_str().unwrap_or_default()) {
         return None;
     }
-    Some(Installed {
-        name: name.to_string(),
-        launcher: "Epic Games",
-        link: format!("com.epicgames.launcher://apps/{namespace}%3A{id}%3A{app}?action=launch&silent=true"),
-        ready: !item["bIsIncompleteInstall"].as_bool().unwrap_or(false),
-    })
+    let ready = !item["bIsIncompleteInstall"].as_bool().unwrap_or(false);
+    // Epic notes no progress. What's on disk against the full size comes close while it first downloads.
+    let to_measure = if ready { None } else { item["InstallLocation"].as_str().map(PathBuf::from).zip(item["InstallSize"].as_u64()) };
+    Some(Installed { name: name.to_string(), launcher: "Epic Games", link: format!("com.epicgames.launcher://apps/{namespace}%3A{id}%3A{app}?action=launch&silent=true"), ready, progress: None, to_measure })
 }
 
 /// The value of `"key" "value"` in one of Steam's text files, in the first place it appears.
@@ -153,7 +175,9 @@ fn parse_steam_manifest(text: &str) -> Option<Installed> {
     }
     // Bit 4 of StateFlags: fully installed, and nothing else (updating, downloading) going on.
     let ready = steam_value(text, "StateFlags") == Some("4");
-    Some(Installed { name: name.to_string(), launcher: "Steam", link: format!("steam://rungameid/{id}"), ready })
+    let number = |key: &str| steam_value(text, key).and_then(|value| value.parse::<u64>().ok());
+    let progress = if ready { None } else { number("BytesToDownload").and_then(|of| percent(number("BytesDownloaded")?, of)) };
+    Some(Installed { name: name.to_string(), launcher: "Steam", link: format!("steam://rungameid/{id}"), ready, progress, to_measure: None })
 }
 
 /// The folders of `libraryfolders.vdf`, where Steam keeps games on other drives.
@@ -439,8 +463,29 @@ mod tests {
     }
 
     #[test]
+    fn measures_an_epic_download_only_when_asked() {
+        let dir = std::env::temp_dir().join(format!("nova-epic-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("Sub")).unwrap();
+        std::fs::write(dir.join("Sub").join("a.bin"), [0u8; 50]).unwrap();
+        let text = serde_json::json!({ "DisplayName": "Fortnite", "CatalogNamespace": "a", "CatalogItemId": "b", "AppName": "c", "bIsIncompleteInstall": true, "InstallLocation": dir.to_string_lossy(), "InstallSize": 200 }).to_string();
+        let game = parse_epic_manifest(&text).unwrap();
+        assert_eq!(game.progress, None);
+        assert_eq!(game.measured_progress(), Some(25));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn says_how_far_a_steam_download_is() {
+        let acf = "\"AppState\"\n{\n\t\"appid\"\t\t\"730\"\n\t\"name\"\t\t\"Counter-Strike 2\"\n\t\"StateFlags\"\t\t\"1026\"\n\t\"BytesToDownload\"\t\t\"2000\"\n\t\"BytesDownloaded\"\t\t\"500\"\n}";
+        let game = parse_steam_manifest(acf).unwrap();
+        assert!(!game.ready);
+        assert_eq!(game.progress, Some(25));
+        assert_eq!(parse_steam_manifest(&acf.replace("1026", "4")).unwrap().progress, None, "nothing to tell once it's done");
+    }
+
+    #[test]
     fn picks_the_game_that_was_asked_for() {
-        let game = |name: &str| Installed { name: name.into(), launcher: "Steam", link: String::new(), ready: true };
+        let game = |name: &str| Installed { name: name.into(), launcher: "Steam", link: String::new(), ready: true, progress: None, to_measure: None };
         let games = [game("Fortnite"), game("Rocket League"), game("Dark Souls II"), game("Dark Souls III")];
         assert_eq!(pick_installed(&games, "fortnite").unwrap().name, "Fortnite");
         assert_eq!(pick_installed(&games, "rocket").unwrap().name, "Rocket League");

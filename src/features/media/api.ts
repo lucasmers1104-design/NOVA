@@ -1,10 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
 import { notifyError } from "@/features/notifications/store";
 import { callNative } from "@/lib/native";
-import { nativeStorage } from "@/lib/persistence";
 
 /** Mirrors `MediaState` in src-tauri/src/media.rs. */
 export interface MediaState {
@@ -16,6 +13,7 @@ export interface MediaState {
   canPlayPause: boolean;
   canNext: boolean;
   canPrevious: boolean;
+  canSeek: boolean;
   positionMs: number | null;
   durationMs: number | null;
   sampledAtMs: number;
@@ -27,12 +25,39 @@ export interface VolumeState {
   muted: boolean;
 }
 
+export interface AudioApp {
+  name: string;
+  level: number;
+  muted: boolean;
+}
+
+export interface OutputDevice {
+  id: string;
+  name: string;
+  default: boolean;
+}
+
+export interface LyricLine {
+  atMs: number | null;
+  text: string;
+}
+
+export interface SleepTimer {
+  id: number;
+  endsAt: number;
+}
+
 export type MediaAction = "toggle" | "next" | "previous";
 
 export const mediaKeys = {
   state: ["media", "state"] as const,
   artwork: (key: string | null) => ["media", "artwork", key] as const,
   volume: ["media", "volume"] as const,
+  mixer: ["media", "mixer"] as const,
+  outputs: ["media", "outputs"] as const,
+  played: ["media", "played"] as const,
+  sleep: ["media", "sleep"] as const,
+  lyrics: (title: string, artist: string) => ["media", "lyrics", title, artist] as const,
 };
 
 const KNOWN_SOURCES: [RegExp, string][] = [
@@ -60,11 +85,7 @@ export function sourceAppName(id: string): string {
 export function useMediaState(enabled = true) {
   return useQuery({
     queryKey: mediaKeys.state,
-    queryFn: async () => {
-      const state = await callNative<MediaState | null>("media_state");
-      if (state?.title) useMediaHistory.getState().record(state);
-      return state;
-    },
+    queryFn: () => callNative<MediaState | null>("media_state"),
     enabled,
     refetchInterval: 1500,
     refetchIntervalInBackground: false,
@@ -91,6 +112,15 @@ export function useMediaControl() {
   });
 }
 
+export function useSeek() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (positionMs: number) => callNative<void>("media_seek", { positionMs: Math.round(positionMs) }),
+    onSettled: () => setTimeout(() => void client.invalidateQueries({ queryKey: mediaKeys.state }), 250),
+    onError: (error) => notifyError("The player didn't jump there", error),
+  });
+}
+
 export function useVolume() {
   return useQuery({
     queryKey: mediaKeys.volume,
@@ -109,6 +139,102 @@ export function useSetVolume() {
     onMutate: (change) => client.setQueryData<VolumeState>(mediaKeys.volume, (state) => (state ? { ...state, ...change } : state)),
     onSuccess: (state) => client.setQueryData(mediaKeys.volume, state),
     onError: (error) => notifyError("Couldn't change the volume", error),
+  });
+}
+
+export function useMixer() {
+  return useQuery({
+    queryKey: mediaKeys.mixer,
+    queryFn: () => callNative<AudioApp[]>("media_mixer"),
+    refetchInterval: 4000,
+    refetchIntervalInBackground: false,
+  });
+}
+
+export function useSetMixer() {
+  const client = useQueryClient();
+  return useMutation({
+    scope: { id: "media-mixer" },
+    mutationFn: (change: { name: string; level?: number; muted?: boolean }) => callNative<void>("media_mixer_set", change),
+    onMutate: (change) => client.setQueryData<AudioApp[]>(mediaKeys.mixer, (apps) => apps?.map((app) => (app.name === change.name ? { ...app, ...change } : app))),
+    onError: (error) => notifyError("Couldn't change the volume", error),
+  });
+}
+
+export function useOutputs() {
+  return useQuery({ queryKey: mediaKeys.outputs, queryFn: () => callNative<OutputDevice[]>("media_outputs"), refetchInterval: 15_000, refetchIntervalInBackground: false });
+}
+
+export function useSetOutput() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => callNative<void>("media_output_set", { id }),
+    onSettled: () => void client.invalidateQueries({ queryKey: mediaKeys.outputs }),
+    onError: (error) => notifyError("Couldn't switch the output", error),
+  });
+}
+
+/** Asked only while the lyrics are open: the song's name goes to a public database. */
+export function useLyrics(state: MediaState | null | undefined, enabled: boolean) {
+  const title = state?.title ?? "";
+  const artist = state?.artist ?? "";
+  return useQuery({
+    queryKey: mediaKeys.lyrics(title, artist),
+    queryFn: () => callNative<LyricLine[]>("media_lyrics", { title, artist, durationMs: state?.durationMs ?? null }),
+    enabled: enabled && title !== "",
+    staleTime: Number.POSITIVE_INFINITY,
+    gcTime: 30 * 60_000,
+    retry: false,
+  });
+}
+
+/** The line being sung at `positionMs`; -1 before the first. */
+export function currentLine(lines: readonly LyricLine[], positionMs: number): number {
+  let current = -1;
+  for (const [index, line] of lines.entries()) {
+    if (line.atMs === null || line.atMs > positionMs) break;
+    current = index;
+  }
+  return current;
+}
+
+export function useSleepTimer() {
+  return useQuery({ queryKey: mediaKeys.sleep, queryFn: () => callNative<SleepTimer | null>("media_sleep", { minutes: null }), refetchInterval: 30_000, refetchIntervalInBackground: false });
+}
+
+export function useSetSleepTimer() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (minutes: number) => callNative<SleepTimer | null>("media_sleep", { minutes }),
+    onSuccess: (timer) => client.setQueryData(mediaKeys.sleep, timer),
+    onError: (error) => notifyError("Couldn't set the sleep timer", error),
+  });
+}
+
+export function usePlaySomething() {
+  return useMutation({
+    mutationFn: ({ service, query }: { service: "youtube" | "spotify"; query: string }) => callNative<string>("media_play", { service, query }),
+    onError: (error) => notifyError("That didn't start", error),
+  });
+}
+
+export interface PlayedEntry {
+  title: string;
+  artist: string;
+  source: string;
+  at: number;
+}
+
+export function usePlayed() {
+  return useQuery({ queryKey: mediaKeys.played, queryFn: () => callNative<PlayedEntry[]>("media_played"), refetchInterval: 20_000, refetchIntervalInBackground: false });
+}
+
+export function useClearPlayed() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: () => callNative<void>("media_played_clear"),
+    onSuccess: () => client.setQueryData(mediaKeys.played, []),
+    onError: (error) => notifyError("Couldn't clear the list", error),
   });
 }
 
@@ -134,45 +260,3 @@ export function formatTrackTime(ms: number): string {
   const s = String(total % 60).padStart(2, "0");
   return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
 }
-
-export interface HistoryEntry {
-  title: string;
-  artist: string;
-  source: string;
-  at: number;
-}
-
-interface MediaHistoryState {
-  entries: HistoryEntry[];
-  record: (state: MediaState) => void;
-  clear: () => void;
-}
-
-/** Tracks seen while NOVA was running (newest first). */
-export const useMediaHistory = create<MediaHistoryState>()(
-  persist(
-    (set) => ({
-      entries: [],
-      record: (state) =>
-        set((s) => {
-          const latest = s.entries[0];
-          if (latest && latest.title === state.title && latest.artist === state.artist) return s;
-          const entry: HistoryEntry = { title: state.title, artist: state.artist, source: sourceAppName(state.sourceAppId), at: Date.now() };
-          return { entries: [entry, ...s.entries].slice(0, 25) };
-        }),
-      clear: () => set({ entries: [] }),
-    }),
-    {
-      name: "nova.media",
-      storage: createJSONStorage(() => nativeStorage),
-      partialize: (s) => ({ entries: s.entries }),
-      merge: (persisted, current) => {
-        const raw = (persisted as { entries?: unknown } | null)?.entries;
-        const entries = Array.isArray(raw)
-          ? raw.filter((e): e is HistoryEntry => typeof e?.title === "string" && typeof e?.at === "number").slice(0, 25)
-          : [];
-        return { ...current, entries };
-      },
-    },
-  ),
-);

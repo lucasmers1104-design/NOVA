@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parseBlocks } from "@/components/ui/Markdown";
 import { searchApps, sanitizeAppPreferences } from "@/features/apps/api";
 import { describeWeather, mergeFeeds, parseFeedDate } from "@/features/live/api";
-import { formatTrackTime, sourceAppName } from "@/features/media/api";
+import { currentLine, formatTrackTime, sourceAppName } from "@/features/media/api";
 import { useNotifications } from "@/features/notifications/store";
 import { addDays, dueReminders, groupTasks, isOverdue, noteTitle, relativeDueLabel, reminderKey, searchTasks, type Task, toISODate } from "@/features/productivity/model";
 import { newTask } from "@/features/productivity/store";
@@ -115,6 +115,15 @@ describe("media", () => {
     expect(sourceAppName("Microsoft.ZuneMusic_8wekyb3d8bbwe!Microsoft.ZuneMusic")).toBe("Media Player");
     expect(sourceAppName("MSEdge")).toBe("Microsoft Edge");
     expect(sourceAppName("foobar2000.exe")).toBe("Foobar2000");
+  });
+
+  it("finds the line being sung", () => {
+    const lines = [{ atMs: 1000, text: "a" }, { atMs: 5000, text: "b" }, { atMs: 9000, text: "c" }];
+    expect(currentLine(lines, 500)).toBe(-1);
+    expect(currentLine(lines, 1000)).toBe(0);
+    expect(currentLine(lines, 8999)).toBe(1);
+    expect(currentLine(lines, 60_000)).toBe(2);
+    expect(currentLine([{ atMs: null, text: "ohne Zeit" }], 5000)).toBe(-1);
   });
 
   it("formats track times", () => {

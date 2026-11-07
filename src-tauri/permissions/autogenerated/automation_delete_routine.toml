@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-automation-delete-routine"
+description = "Enables the automation_delete_routine command without any pre-configured scope."
+commands.allow = ["automation_delete_routine"]
+
+[[permission]]
+identifier = "deny-automation-delete-routine"
+description = "Denies the automation_delete_routine command without any pre-configured scope."
+commands.deny = ["automation_delete_routine"]

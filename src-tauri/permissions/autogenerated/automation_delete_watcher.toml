@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-automation-delete-watcher"
+description = "Enables the automation_delete_watcher command without any pre-configured scope."
+commands.allow = ["automation_delete_watcher"]
+
+[[permission]]
+identifier = "deny-automation-delete-watcher"
+description = "Denies the automation_delete_watcher command without any pre-configured scope."
+commands.deny = ["automation_delete_watcher"]

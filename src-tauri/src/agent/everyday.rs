@@ -34,6 +34,8 @@ pub struct Timer {
     pub id: u64,
     pub label: String,
     pub ends_at: i64,
+    /// Instead of announcing anything, it stops what's playing ("music off in 30 minutes").
+    pub stops_music: bool,
 }
 
 static TIMERS: Mutex<Vec<Timer>> = Mutex::new(Vec::new());
@@ -54,9 +56,9 @@ pub fn duration_words(seconds: u64) -> String {
 }
 
 /// Starts a timer. They live as long as NOVA runs, and go off late after the PC slept.
-pub fn start_timer<R: Runtime>(app: &AppHandle<R>, seconds: u64, label: &str) -> Result<Timer, String> {
+pub fn start_timer<R: Runtime>(app: &AppHandle<R>, seconds: u64, label: &str, stops_music: bool) -> Result<Timer, String> {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-    let timer = Timer { id: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed), label: label.chars().take(60).collect(), ends_at: now_millis() + seconds as i64 * 1000 };
+    let timer = Timer { id: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed), label: label.chars().take(60).collect(), ends_at: now_millis() + seconds as i64 * 1000, stops_music };
     {
         let mut list = timers_list();
         if list.len() >= MOST_TIMERS {
@@ -73,6 +75,10 @@ pub fn start_timer<R: Runtime>(app: &AppHandle<R>, seconds: u64, label: &str) ->
             (list[index].ends_at <= now_millis()).then(|| list.remove(index))
         };
         if let Some(timer) = due {
+            if timer.stops_music {
+                let _ = crate::media::platform::pause_all(None);
+                return;
+            }
             let body = if timer.label.is_empty() { "Your timer has run out.".to_string() } else { timer.label.clone() };
             let _ = app.notification().builder().title("NOVA timer").body(body).show();
             // Also with the panel closed and a game in front: its page says it.
@@ -109,6 +115,19 @@ pub fn cancel_timers(wanted: Option<&str>) -> usize {
 pub async fn assistant_timer_cancel(id: u64) -> Result<(), String> {
     timers_list().retain(|t| t.id != id);
     Ok(())
+}
+
+/// The sleep timer on the Media page: sets it (replacing the last), 0 turns it off,
+/// nothing just asks. Returns the one running.
+#[tauri::command]
+pub async fn media_sleep<R: Runtime>(app: AppHandle<R>, minutes: Option<u64>) -> Result<Option<Timer>, String> {
+    if let Some(minutes) = minutes {
+        timers_list().retain(|t| !t.stops_music);
+        if minutes > 0 {
+            return start_timer(&app, minutes.min(LONGEST_TIMER / 60) * 60, "Sleep timer", true).map(Some);
+        }
+    }
+    Ok(timers().into_iter().find(|t| t.stops_music))
 }
 
 // ---------------------------------------------------------------------------
@@ -364,7 +383,7 @@ mod tests {
     fn timers_cancel_by_label_or_all() {
         let mut list = timers_list();
         list.clear();
-        list.extend([Timer { id: 1, label: "Pizza".into(), ends_at: 0 }, Timer { id: 2, label: "Wäsche".into(), ends_at: 0 }, Timer { id: 3, label: String::new(), ends_at: 0 }]);
+        list.extend([Timer { id: 1, label: "Pizza".into(), ends_at: 0, stops_music: false }, Timer { id: 2, label: "Wäsche".into(), ends_at: 0, stops_music: false }, Timer { id: 3, label: String::new(), ends_at: 0, stops_music: false }]);
         drop(list);
         assert_eq!(cancel_timers(Some("pizza")), 1);
         assert_eq!(cancel_timers(Some("nichts")), 0);

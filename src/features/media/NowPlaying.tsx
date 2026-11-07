@@ -1,6 +1,7 @@
 import { Disc3, Pause, Play, SkipBack, SkipForward, Volume1, Volume2, VolumeX } from "lucide-react";
+import { useState } from "react";
 import { cn } from "@/lib/cn";
-import { formatTrackTime, type MediaState, sourceAppName, useArtwork, useLivePosition, useMediaControl, useSetVolume, useVolume } from "./api";
+import { formatTrackTime, type MediaState, sourceAppName, useArtwork, useLivePosition, useMediaControl, useSeek, useSetVolume, useVolume } from "./api";
 
 export function Artwork({ state, size, className }: { state: MediaState; size: number; className?: string }) {
   const { data: artwork } = useArtwork(state.artworkKey);
@@ -57,18 +58,44 @@ export function TransportControls({ state, size = "md" }: { state: MediaState; s
 
 export function ProgressBar({ state }: { state: MediaState }) {
   const position = useLivePosition(state);
+  const seek = useSeek();
+  // While dragging, the handle follows the mouse rather than the song.
+  const [dragging, setDragging] = useState<number | null>(null);
   if (position === null || state.durationMs === null) {
     return <p className="text-[11px] text-fg-subtle">{sourceAppName(state.sourceAppId)} doesn't report playback position.</p>;
   }
-  const percent = state.durationMs > 0 ? (position / state.durationMs) * 100 : 0;
+  const shown = dragging ?? position;
+  const percent = state.durationMs > 0 ? (shown / state.durationMs) * 100 : 0;
   return (
     <div>
-      <div role="progressbar" aria-label="Playback position" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(percent)} className="h-1.5 overflow-hidden rounded-full bg-white/[0.1]">
-        <div className="h-full rounded-full bg-fg/90 transition-[width] duration-500 ease-linear" style={{ width: `${percent}%` }} />
-      </div>
+      {state.canSeek ? (
+        <input
+          type="range"
+          min={0}
+          max={state.durationMs}
+          step={1000}
+          value={shown}
+          aria-label="Playback position"
+          onChange={(e) => setDragging(Number(e.target.value))}
+          onPointerUp={() => {
+            if (dragging !== null) seek.mutate(dragging);
+            setDragging(null);
+          }}
+          onKeyUp={() => {
+            if (dragging !== null) seek.mutate(dragging);
+            setDragging(null);
+          }}
+          className="nova-range w-full"
+          style={{ "--range-fill": `${percent}%` } as React.CSSProperties}
+        />
+      ) : (
+        <div role="progressbar" aria-label="Playback position" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(percent)} className="h-1.5 overflow-hidden rounded-full bg-white/[0.1]">
+          <div className="h-full rounded-full bg-fg/90 transition-[width] duration-500 ease-linear" style={{ width: `${percent}%` }} />
+        </div>
+      )}
       <div className="mt-1.5 flex justify-between text-[11px] text-fg-subtle tabular-nums">
-        <span>{formatTrackTime(position)}</span>
-        <span>−{formatTrackTime(state.durationMs - position)}</span>
+        <span>{formatTrackTime(shown)}</span>
+        <span>−{formatTrackTime(state.durationMs - shown)}</span>
       </div>
     </div>
   );

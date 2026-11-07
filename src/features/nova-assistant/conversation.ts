@@ -54,10 +54,12 @@ export interface SendOptions {
   voice?: boolean;
   /** Said if the reply takes a moment ("one moment"). */
   ack?: string;
+  /** Nobody asked just now (a routine's time came): the microphone doesn't open afterwards. */
+  unasked?: boolean;
 }
 
 /** A reply as it streams in, for whoever reads it aloud. */
-export type ReplyEvent = { replyId: string; voice: boolean } & ({ type: "start"; ack: string | null } | { type: "stopped" } | AgentEvent);
+export type ReplyEvent = { replyId: string; voice: boolean } & ({ type: "start"; ack: string | null; unasked?: boolean } | { type: "stopped" } | AgentEvent);
 
 const replyListeners = new Set<(event: ReplyEvent) => void>();
 
@@ -164,7 +166,7 @@ export const useConversation = create<ConversationState>()((set, get) => ({
     mark("send");
     const current = { id: reply.id, voice };
     currentReply = current;
-    emitReply({ replyId: reply.id, voice, type: "start", ack: options.ack ?? null });
+    emitReply({ replyId: reply.id, voice, type: "start", ack: options.ack ?? null, unasked: options.unasked ?? false });
     try {
       const running = sendMessage(text, voice, (event) => {
         get().apply(event);
