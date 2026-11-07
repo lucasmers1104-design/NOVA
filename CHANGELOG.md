@@ -3,7 +3,7 @@
 ## 1.10.2 — 2026-11-07
 
 ### Added
-- **A hands-on tour**: NOVA now introduces itself once. Pick a name and a color, download its voice and hear it, connect an AI, try "Hey NOVA" and clapping, walk through every section in the real app and learn the shortcuts. Everything is optional. Start it again any time under Settings → About NOVA or with Ctrl+K.
+- **A hands-on tour**: on a new installation, NOVA introduces itself once. After an update it stays out of the way. Pick a name and a color, download its voice and hear it, connect an AI, try "Hey NOVA" and clapping, walk through every section in the real app and learn the shortcuts. Everything is optional. Start it again any time under Settings → About NOVA or with Ctrl+K.
 
 ## 1.10.1 — 2026-11-07
 

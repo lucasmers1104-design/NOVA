@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { defaultSettings, sanitizeSettings, SETTINGS_STORAGE_KEY, useSettings } from "./settings";
+import { defaultSettings, sanitizeSettings, SETTINGS_STORAGE_KEY, skipTourAfterUpdate, useSettings } from "./settings";
 
 describe("sanitizeSettings", () => {
   it("keeps valid fields", () => {
@@ -88,5 +88,35 @@ describe("settings store persistence", () => {
     useSettings.getState().setTransparency(false);
     useSettings.getState().resetSettings();
     expect(useSettings.getState().transparency).toBe(true);
+  });
+
+  it("skips the tour when starting after an update, and remembers that", async () => {
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({ version: 1, state: { lastSeenVersion: "0.0.1", tourSeen: false } }));
+    await useSettings.persist.rehydrate();
+    expect(useSettings.getState().tourSeen).toBe(true);
+
+    useSettings.getState().setLastSeenVersion(__NOVA_VERSION__);
+    expect(JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY) ?? "{}").state.tourSeen).toBe(true);
+  });
+
+  it("keeps the tour for a new installation, also on its second start", async () => {
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({ version: 1, state: { lastSeenVersion: "", tourSeen: false } }));
+    await useSettings.persist.rehydrate();
+    expect(useSettings.getState().tourSeen).toBe(false);
+
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({ version: 1, state: { lastSeenVersion: __NOVA_VERSION__, tourSeen: false } }));
+    await useSettings.persist.rehydrate();
+    expect(useSettings.getState().tourSeen).toBe(false);
+  });
+});
+
+describe("skipTourAfterUpdate", () => {
+  const settings = (lastSeenVersion: string, tourSeen = false) => ({ ...defaultSettings(), lastSeenVersion, tourSeen });
+
+  it("tells an update from a new installation", () => {
+    expect(skipTourAfterUpdate(settings("1.10.1"), "1.10.2").tourSeen).toBe(true);
+    expect(skipTourAfterUpdate(settings(""), "1.10.2").tourSeen).toBe(false);
+    expect(skipTourAfterUpdate(settings("1.10.2"), "1.10.2").tourSeen).toBe(false);
+    expect(skipTourAfterUpdate(settings("", true), "1.10.2").tourSeen).toBe(true);
   });
 });

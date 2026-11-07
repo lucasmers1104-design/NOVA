@@ -238,6 +238,14 @@ export function sanitizeSettings(input: unknown): Partial<Settings> {
   return out;
 }
 
+/**
+ * The tour is for new installations: whoever arrives from an older version knows NOVA.
+ * The same version again is someone who closed NOVA during their first start.
+ */
+export function skipTourAfterUpdate<T extends Settings>(settings: T, version: string): T {
+  return settings.lastSeenVersion && settings.lastSeenVersion !== version ? { ...settings, tourSeen: true } : settings;
+}
+
 export const SETTINGS_STORAGE_KEY = "nova.settings";
 
 export const useSettings = create<Settings & SettingsActions>()(
@@ -341,7 +349,8 @@ export const useSettings = create<Settings & SettingsActions>()(
         lastSeenVersion: s.lastSeenVersion,
         tourSeen: s.tourSeen,
       }),
-      merge: (persisted, current) => ({ ...current, ...sanitizeSettings(persisted) }),
+      // Here, because lastSeenVersion moves on right after the start.
+      merge: (persisted, current) => skipTourAfterUpdate({ ...current, ...sanitizeSettings(persisted) }, __NOVA_VERSION__),
     },
   ),
 );
