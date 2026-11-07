@@ -251,6 +251,7 @@ pub fn run_steps<R: Runtime>(app: &AppHandle<R>, routine: &Routine) -> Vec<(Stri
         let outcome = tools::prepare(app, &step.tool, &step.input).and_then(|prepared| {
             let done = tools::execute(app, &prepared.action).map(|outcome| outcome.summary);
             let _ = app.state::<Database>().with(|c| storage::actions::log(c, &step.tool, &prepared.title, prepared.risk.as_str(), if done.is_ok() { "done" } else { "failed" }, &format!("Routine “{}”", routine.name)));
+            crate::telemetry::track(app, crate::telemetry::Event::Tool { name: &step.tool, outcome: i64::from(done.is_ok()) });
             done
         });
         report.push((step.tool.clone(), outcome));

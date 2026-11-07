@@ -6,6 +6,7 @@ import { IconButton } from "@/components/ui/Button";
 import { useDashboard } from "@/features/dashboard/store";
 import { cn } from "@/lib/cn";
 import { resolveConfig, WidgetConfigContext } from "@/widgets/config";
+import { usePluginWidgets } from "@/widgets/pluginRegistry";
 import { getWidget } from "@/widgets/registry";
 import type { WidgetDefinition, WidgetInstance } from "@/widgets/types";
 import { WidgetBoundary } from "@/widgets/WidgetBoundary";
@@ -57,6 +58,8 @@ interface DashboardGridProps {
 export function DashboardGrid({ widgets, editing, onConfigure }: DashboardGridProps) {
   const gridRef = useRef<HTMLDivElement>(null);
   const columns = useGridColumns(gridRef);
+  // Plugin widgets arrive a moment after the layout; redraw when they do.
+  usePluginWidgets((s) => s.widgets);
   const [dragging, setDragging] = useState<{ instanceId: string; width: number; height: number } | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const ghostX = useMotionValue(0);

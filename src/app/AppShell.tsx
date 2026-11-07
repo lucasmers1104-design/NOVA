@@ -10,7 +10,9 @@ import { CommandPalette } from "@/features/command-palette/CommandPalette";
 import { useDesktopSync } from "@/features/desktop/useDesktopSync";
 import { useAssistantBridge } from "@/features/nova-assistant/useAssistantBridge";
 import { NotificationCenter, Toaster } from "@/features/notifications/NotificationUI";
+import { usePluginSync } from "@/features/plugins/usePluginSync";
 import { useReminders } from "@/features/productivity/reminders";
+import { ConsentDialog, usePageTracking } from "@/features/telemetry/ConsentDialog";
 import { UpdateBanner, useStartupUpdates } from "@/features/updates/UpdateUI";
 import { WhatsNewDialog } from "@/features/updates/WhatsNew";
 import { type MotionPreference, useSettings } from "@/stores/settings";
@@ -32,7 +34,10 @@ export function AppShell() {
   useDesktopSync();
   useAssistantBridge();
   useStartupUpdates();
+  usePageTracking();
+  usePluginSync();
   const route = useUi((s) => s.route);
+  const pluginPage = useUi((s) => s.pluginPage);
   const motionPreference = useSettings((s) => s.motion);
   const mainRef = useRef<HTMLElement>(null);
   const Page = ROUTES[route];
@@ -53,7 +58,7 @@ export function AppShell() {
           <main ref={mainRef} id="main" tabIndex={-1} className="relative min-h-0 flex-1 overflow-y-auto outline-none">
             <AnimatePresence mode="wait" initial={false}>
               <motion.div
-                key={route}
+                key={pluginPage ? `${route}:${pluginPage.pluginId}:${pluginPage.pageId}` : route}
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0, transition: { duration: 0.26, ease: [0.22, 1, 0.36, 1] } }}
                 exit={{ opacity: 0, y: -6, transition: { duration: 0.12 } }}
@@ -70,6 +75,7 @@ export function AppShell() {
         <Toaster />
         <UpdateBanner />
         <WhatsNewDialog />
+        <ConsentDialog />
       </div>
     </MotionConfig>
   );

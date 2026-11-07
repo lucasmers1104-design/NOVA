@@ -141,6 +141,20 @@ fn main() {
         "speech_remove",
         "speech_warm",
         "speech_benchmark",
+        "telemetry_status",
+        "telemetry_decide",
+        "telemetry_track",
+        "telemetry_recent",
+        "telemetry_set_name",
+        "plugins_list",
+        "plugins_pick",
+        "plugins_install_confirm",
+        "plugins_install_cancel",
+        "plugins_uninstall",
+        "plugins_set_enabled",
+        "plugins_set_permission",
+        "plugin_call",
+        "plugin_report_crash",
     ])))
     .expect("failed to run tauri-build");
 }

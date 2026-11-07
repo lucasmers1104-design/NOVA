@@ -128,6 +128,11 @@ impl Database {
             .map_err(|reason| StorageError::Unavailable(reason.clone()).to_string())?;
         f(conn).map_err(|e| e.to_string())
     }
+
+    #[cfg(test)]
+    pub(crate) fn in_memory_for_tests() -> Self {
+        Self { path: None, conn: Mutex::new(Ok(test_connection())) }
+    }
 }
 
 #[derive(Serialize)]
@@ -162,7 +167,7 @@ pub async fn settings_get(db: tauri::State<'_, Database>, key: String) -> Comman
 /// What only NOVA's own checked code writes: auto mode, what routines do and what
 /// NOVA remembers don't change through a page writing a setting directly.
 fn rust_owned(key: &str) -> bool {
-    key.starts_with("nova.assistant") || matches!(key, "nova.finder" | "nova.automation" | "nova.memory" | "nova.played" | "nova.tidy.last")
+    key.starts_with("nova.assistant") || matches!(key, "nova.finder" | "nova.automation" | "nova.memory" | "nova.played" | "nova.tidy.last" | "nova.telemetry")
 }
 
 #[tauri::command]

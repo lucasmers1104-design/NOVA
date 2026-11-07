@@ -10,8 +10,9 @@ import { cn } from "@/lib/cn";
 import { useUi } from "@/stores/ui";
 import { resolveConfig } from "@/widgets/config";
 import { RegisteredWidget } from "@/widgets/RegisteredWidget";
+import { usePluginWidgets } from "@/widgets/pluginRegistry";
 import { WIDGETS } from "@/widgets/registry";
-import { CATEGORY_LABELS, type WidgetCategory } from "@/widgets/types";
+import { CATEGORY_LABELS, type WidgetCategory, type WidgetDefinition } from "@/widgets/types";
 
 const SOURCE_LABEL = { local: "Local only", system: "System data", network: "Uses internet" } as const;
 const ROW = 96;
@@ -26,14 +27,16 @@ export default function WidgetStudioPage() {
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState(WIDGETS[0]!.id);
   const [configs, setConfigs] = useState<Record<string, Record<string, unknown>>>({});
+  const pluginWidgets = usePluginWidgets((s) => s.widgets);
+  const widgets = useMemo<readonly WidgetDefinition[]>(() => [...WIDGETS, ...pluginWidgets], [pluginWidgets]);
 
-  const categories = useMemo(() => [...new Set(WIDGETS.map((w) => w.category))], []);
-  const visible = WIDGETS.filter(
+  const categories = useMemo(() => [...new Set(widgets.map((w) => w.category))], [widgets]);
+  const visible = widgets.filter(
     (w) =>
       (category === "all" || w.category === category) &&
       (!query.trim() || `${w.name} ${w.description}`.toLowerCase().includes(query.trim().toLowerCase())),
   );
-  const selected = WIDGETS.find((w) => w.id === selectedId) ?? WIDGETS[0]!;
+  const selected = widgets.find((w) => w.id === selectedId) ?? widgets[0]!;
   const config = configs[selected.id] ?? {};
   const resolved = resolveConfig(selected.configSchema, config);
 
@@ -113,10 +116,9 @@ export default function WidgetStudioPage() {
           <aside className="glass mt-6 flex items-start gap-3.5 rounded-[18px] p-5">
             <Puzzle size={20} className="mt-0.5 shrink-0 text-accent-text" aria-hidden />
             <div>
-              <p className="text-[14px] font-semibold text-fg">Third-party widgets</p>
+              <p className="text-[14px] font-semibold text-fg">More widgets through plugins</p>
               <p className="mt-1 text-[12.5px] leading-relaxed text-fg-muted">
-                NOVA currently runs only its own trusted widgets. Community widgets will come through a plugin API with explicit permissions per widget
-                and isolation from the rest of the app — never as unrestricted scripts.
+                Installed plugins can add widgets here. Each one runs isolated from the rest of the app and only gets the permissions you allow on the Plugins page.
               </p>
             </div>
           </aside>

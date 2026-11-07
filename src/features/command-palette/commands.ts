@@ -6,7 +6,7 @@ import { useProductivity } from "@/features/productivity/store";
 import { PROFILE_ICONS, useProfiles } from "@/features/profiles/store";
 import { useUpdates } from "@/features/updates/store";
 import { callNative, isDesktop as isDesktopRuntime } from "@/lib/native";
-import { WIDGETS } from "@/widgets/registry";
+import { allWidgets } from "@/widgets/registry";
 import { NAV_ITEMS } from "@/app/navigation";
 import { shortcutKeys } from "@/app/shortcuts";
 import { ACCENT_PRESETS, resolveAccentColor } from "@/design/accent";
@@ -173,7 +173,7 @@ export function buildCommands(): Command[] {
       },
     }));
 
-  const widgets: Command[] = WIDGETS.map((widget) => ({
+  const widgets: Command[] = allWidgets().map((widget) => ({
     id: `widget.${widget.id}`,
     title: `Add widget: ${widget.name}`,
     subtitle: widget.description,

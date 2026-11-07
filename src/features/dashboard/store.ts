@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { trackEvent } from "@/features/telemetry/api";
 import { clampSize } from "@/widgets/config";
 import { getWidget } from "@/widgets/registry";
 import type { WidgetInstance, WidgetSize } from "@/widgets/types";
@@ -190,6 +191,7 @@ export const useDashboard = create<DashboardState>()((set, get) => {
       if (!definition || !active || active.widgets.length >= MAX_WIDGETS_PER_LAYOUT) return null;
       const instance: WidgetInstance = { instanceId: newId(), widgetId, ...definition.defaultSize, config: {} };
       mutateActive((widgets) => [...widgets, instance]);
+      trackEvent("widget_add", widgetId, 1);
       return instance.instanceId;
     },
 

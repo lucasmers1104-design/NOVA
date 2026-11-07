@@ -14,11 +14,12 @@ import { DeviceWidget } from "./builtin/DeviceWidget";
 import { MemoryWidget } from "./builtin/MemoryWidget";
 import { StorageWidget } from "./builtin/StorageWidget";
 import { WelcomeWidget } from "./builtin/WelcomeWidget";
+import { usePluginWidgets } from "./pluginRegistry";
 import type { WidgetDefinition } from "./types";
 
 /**
- * Trusted built-in widgets. Third-party widgets will arrive through a
- * permissioned, isolated plugin API — never as unrestricted scripts.
+ * Trusted built-in widgets. Plugin widgets arrive through the permissioned,
+ * isolated plugin API (`pluginRegistry.ts`) — never as unrestricted scripts.
  */
 export const WIDGETS: readonly WidgetDefinition[] = [
   {
@@ -275,6 +276,11 @@ export const WIDGETS: readonly WidgetDefinition[] = [
   },
 ];
 
+/** Built-in widgets, then those of enabled plugins. */
+export function allWidgets(): readonly WidgetDefinition[] {
+  return [...WIDGETS, ...usePluginWidgets.getState().widgets];
+}
+
 export function getWidget(id: string): WidgetDefinition | undefined {
-  return WIDGETS.find((widget) => widget.id === id);
+  return allWidgets().find((widget) => widget.id === id);
 }

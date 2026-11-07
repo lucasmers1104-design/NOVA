@@ -36,6 +36,16 @@ function fail(message) {
   process.exit(1);
 }
 
+// This repository is public and every push reaches every installation: stop before a
+// private plugin, its dashboard or a signing key can go along.
+function refuseWhatMustStayPrivate() {
+  const listed = (args) => spawnSync("git", args, { cwd: root, encoding: "utf8" }).stdout?.split("\n").filter(Boolean) ?? [];
+  const files = [...listed(["ls-files"]), ...listed(["ls-files", "--others", "--exclude-standard"])];
+  const secret = files.filter((file) => /\.(novaplugin|key)$/i.test(file) || /(^|\/)(nova-private|developer-analytics)(\/|$)/i.test(file));
+  if (secret.length > 0) fail(`These must not be in the public repository:\n  ${secret.join("\n  ")}`);
+}
+refuseWhatMustStayPrivate();
+
 const version = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
 const installerName = `NOVA_${version}_x64-setup.exe`;
 const bundleDir = join(root, "src-tauri", "target", "release", "bundle", "nsis");

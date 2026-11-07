@@ -1,9 +1,10 @@
-import { Check, Layers, PanelLeftClose, PanelLeftOpen, Settings } from "lucide-react";
+import { BarChart3, Check, Layers, PanelLeftClose, PanelLeftOpen, Puzzle, Settings } from "lucide-react";
 import { motion } from "motion/react";
 import { useMemo } from "react";
 import { NAV_GROUP_LABELS, type NavItem, resolveSidebar } from "@/app/navigation";
 import { NovaMark } from "@/components/brand/NovaMark";
 import { Menu, type MenuEntry } from "@/components/ui/Menu";
+import { runnable, usePlugins } from "@/features/plugins/api";
 import { useProfiles } from "@/features/profiles/store";
 import { useProfile } from "@/features/profile/useProfile";
 import { cn } from "@/lib/cn";
@@ -18,6 +19,7 @@ export function Sidebar() {
   const collapsed = useSettings((s) => s.sidebarCollapsed);
   const toggleSidebar = useSettings((s) => s.toggleSidebar);
   const route = useUi((s) => s.route);
+  const pluginPage = useUi((s) => s.pluginPage);
   const navigate = useUi((s) => s.navigate);
   const profile = useProfile();
   const navOrder = useSettings((s) => s.navOrder);
@@ -77,12 +79,13 @@ export function Sidebar() {
             <ul className="space-y-0.5">
               {groups[group].map((item) => (
                 <li key={item.id}>
-                  <NavButton item={item} active={route === item.id} collapsed={collapsed} onSelect={navigate} />
+                  <NavButton item={item} active={route === item.id && pluginPage === null} collapsed={collapsed} onSelect={navigate} />
                 </li>
               ))}
             </ul>
           </div>
         ))}
+        <PluginPages collapsed={collapsed} />
       </nav>
 
       <div className="shrink-0 space-y-1 border-t border-white/[0.06] px-3 pt-3 pb-3">
@@ -129,6 +132,35 @@ export function Sidebar() {
         </div>
       </div>
     </motion.aside>
+  );
+}
+
+/** The pages of enabled plugins, under their own heading. */
+function PluginPages({ collapsed }: { collapsed: boolean }) {
+  const { data: plugins } = usePlugins();
+  const route = useUi((s) => s.route);
+  const current = useUi((s) => s.pluginPage);
+  const openPage = useUi((s) => s.openPluginPage);
+  const pages = (plugins ?? []).filter(runnable).flatMap((plugin) => plugin.pages.map((page) => ({ plugin, page })));
+  if (pages.length === 0) return null;
+  return (
+    <div className="mb-3">
+      <div className="flex h-7 items-center px-[17px]">
+        {collapsed ? <span aria-hidden className="h-px w-[18px] bg-line" /> : <span className="text-[11px] font-semibold tracking-wider whitespace-nowrap text-fg-subtle uppercase">Extensions</span>}
+      </div>
+      <ul className="space-y-0.5">
+        {pages.map(({ plugin, page }) => (
+          <li key={`${plugin.id}:${page.id}`}>
+            <NavButton
+              item={{ id: "plugins", label: page.title, icon: plugin.channel === "private" ? BarChart3 : Puzzle, description: plugin.description, group: "customize" }}
+              active={route === "plugins" && current?.pluginId === plugin.id && current.pageId === page.id}
+              collapsed={collapsed}
+              onSelect={() => openPage({ pluginId: plugin.id, pageId: page.id })}
+            />
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

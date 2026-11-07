@@ -1,0 +1,17 @@
+{
+  "id": "dev.nova.aurora-themes",
+  "name": "Aurora accents",
+  "version": "1.0.0",
+  "description": "A few extra accent colors. A plugin made of data only: no code, no permissions.",
+  "author": "NOVA",
+  "apiVersion": 1,
+  "minNovaVersion": "1.10.1",
+  "contributes": {
+    "themes": [
+      { "id": "northern-green", "name": "Northern green", "accent": "#34d399" },
+      { "id": "deep-rose", "name": "Deep rose", "accent": "#f472b6" },
+      { "id": "glacier", "name": "Glacier", "accent": "#67e8f9" },
+      { "id": "ember", "name": "Ember", "accent": "#fb923c" }
+    ]
+  }
+}

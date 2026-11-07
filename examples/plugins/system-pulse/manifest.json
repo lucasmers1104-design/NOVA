@@ -1,0 +1,14 @@
+{
+  "id": "dev.nova.system-pulse",
+  "name": "System pulse",
+  "version": "1.0.0",
+  "description": "A small dashboard widget with the CPU and memory load. The example for the plugin API.",
+  "author": "NOVA",
+  "apiVersion": 1,
+  "minNovaVersion": "1.10.1",
+  "entry": "index.html",
+  "permissions": [{ "type": "system.metrics" }],
+  "contributes": {
+    "widgets": [{ "id": "pulse", "name": "System pulse", "description": "CPU and memory at a glance.", "w": 3, "h": 2 }]
+  }
+}

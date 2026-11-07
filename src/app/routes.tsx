@@ -12,6 +12,7 @@ const MediaPage = lazy(() => import("@/features/media/MediaPage"));
 const FilesPage = lazy(() => import("@/features/files/FilesPage"));
 const LivePage = lazy(() => import("@/features/live/LivePage"));
 const WidgetStudioPage = lazy(() => import("@/features/studio/WidgetStudioPage"));
+const PluginsPage = lazy(() => import("@/features/plugins/PluginsPage"));
 const SettingsPage = lazy(() => import("@/features/settings/SettingsPage"));
 
 /** Exhaustive by type: adding a RouteId without a page fails to compile. */
@@ -26,5 +27,6 @@ export const ROUTES: Record<RouteId, ComponentType> = {
   files: FilesPage,
   live: LivePage,
   studio: WidgetStudioPage,
+  plugins: PluginsPage,
   settings: SettingsPage,
 };

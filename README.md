@@ -4,7 +4,7 @@ _Everything. Connected._
 
 NOVA is a local-first Windows desktop command center with a macOS-inspired "liquid glass" interface. It combines a customizable widget dashboard, real-time system monitoring, an app launcher, media controls, tasks and notes, a multi-provider AI assistant, a file hub and live information in one app.
 
-**Status:** Version 1.7.1. All eight roadmap milestones and the eight NOVA AI assistant milestones are complete; see [docs/ROADMAP.md](docs/ROADMAP.md) and [CHANGELOG.md](CHANGELOG.md).
+**Status:** Version 1.10.1. All eight roadmap milestones and the eight NOVA AI assistant milestones are complete; see [docs/ROADMAP.md](docs/ROADMAP.md) and [CHANGELOG.md](CHANGELOG.md).
 
 ## Features
 
@@ -20,6 +20,7 @@ NOVA is a local-first Windows desktop command center with a macOS-inspired "liqu
 | **Files** | Standard folders, favorite folders, recent files, a scoped browser and search. Files open with their Windows associations. Read-only. |
 | **Live Information** | Weather (Open-Meteo, no account needed), RSS/Atom news from feeds you add, world clocks, progress and agenda cards. |
 | **Widget Studio** | Browse 15 widgets, preview them live with settings, and add them to any layout. |
+| **Plugins** | Install signed `.novaplugin` files that add pages, widgets and accent colors. Each runs isolated from the rest of the app and only gets the permissions you allow. See [docs/PLUGIN_API.md](docs/PLUGIN_API.md). |
 | **Profiles** | Gaming, Productivity, Creative, Minimal and custom profiles switch layout, accent and appearance together. |
 | **Everywhere** | Command palette (Ctrl+K) over pages, apps, tasks, widgets and profiles; notification center; adaptive accent (presets, custom, or matching your wallpaper); backgrounds (your wallpaper, gradient presets or your own gradient) behind adjustable glass; tray icon; opt-in start with Windows and close to tray. |
 
@@ -87,6 +88,9 @@ src-tauri/                   Rust / Tauri 2 host
 ├─ src/files.rs              Scoped folder listing, search, recent items
 ├─ src/desktop.rs            Tray, close to tray, start with Windows
 ├─ src/updates.rs            Signed self-updates (Tauri updater, configurable source)
+├─ src/telemetry.rs          Optional usage statistics: consent, closed event list, queue, upload
+├─ src/plugins.rs            Plugin packages, signature check, protocol, permission broker
+├─ src/developer.rs          Developer sign-in for the private analytics plugin
 ├─ src/assistant.rs          NOVA AI dot and panel windows, multi-monitor placement, global shortcut, fullscreen
 ├─ src/agent/                NOVA AI: provider streaming with tools and images, tool registry, local mode, the PC and other apps (pc.rs)
 ├─ src/finder.rs             NOVA Finder: incremental background index and search (SQLite FTS5)
@@ -101,8 +105,11 @@ scripts/release.mjs          Build, sign and publish a release
 scripts/build-helpers.mjs    Builds nova-phonemize before dev and release builds
 scripts/mock-anthropic.mjs   Scripted stand-in for the Anthropic API (end-to-end tests)
 scripts/cdp.mjs              Drives a dev build over the DevTools protocol
+scripts/package-plugin.mjs   Builds and signs a .novaplugin package
+scripts/e2e/                 Hostile test plugin and the check that it stays in its sandbox
+examples/plugins/            Example plugins
 tools/nova-phonemize/        eSpeak NG phonemizer for NOVA's voices (separate program, GPL-3.0)
-docs/                        Roadmap, release guide, plugin & agent API design
+docs/                        Roadmap, release guide, plugin API
 ```
 
 ## Architecture decisions
@@ -121,6 +128,8 @@ docs/                        Roadmap, release guide, plugin & agent API design
 ## Security & privacy
 
 - 106 app commands, each declared in `build.rs` and granted individually: `capabilities/default.json` for the main window, `capabilities/assistant.json` for the dot and panel (conversation, confirmations, screenshots and voice the user starts; no direct file, system or settings-write access — files are reached only through NOVA AI's validated tools in Rust). Plugin permissions are limited to `dialog:allow-open`, `notification:default` and window dragging for the dot. Strict CSP: no remote scripts, styles or connections from the webview.
-- No analytics or telemetry. Network connections happen only for what you set up: weather (Open-Meteo, coordinates only), news feeds you add, AI providers when you send a message (including screenshots and files you share with NOVA AI), Windows online speech recognition while you talk to NOVA (unless you choose the offline recognizer), downloads of NOVA's voices, speech runtime and offline recognizer from Hugging Face and NuGet when you choose them, or by itself and with a notice when Windows' recognition hears you but returns no words (each file pinned to a SHA-256 hash), public web pages and web searches when NOVA AI looks something up for your request (searches run at Anthropic, about 1 cent each; pages are fetched directly and never from your own network), and update checks against your release repository at startup (can be turned off). Settings → Privacy lists the active ones live.
+- Usage statistics are optional. NOVA asks once and sends nothing before you click “Akzeptieren”: a random id, version, online status, usage time, which of NOVA's pages, widgets and tools are used, and update results. Never chats, voice, files, screenshots, keystrokes, window or program names. They go to a statistics service at Cloudflare with its database in the EU. Settings → Privacy shows what was sent, and turning it off stops it at once and deletes this PC's data there. Declining changes nothing about how NOVA works.
+- Plugins run in sandboxed frames without access to NOVA, the file system or other plugins, and reach the network only for hosts you allowed. Release builds only install signed packages.
+- Other network connections happen only for what you set up: weather (Open-Meteo, coordinates only), news feeds you add, AI providers when you send a message (including screenshots and files you share with NOVA AI), Windows online speech recognition while you talk to NOVA (unless you choose the offline recognizer), downloads of NOVA's voices, speech runtime and offline recognizer from Hugging Face and NuGet when you choose them, or by itself and with a notice when Windows' recognition hears you but returns no words (each file pinned to a SHA-256 hash), public web pages and web searches when NOVA AI looks something up for your request (searches run at Anthropic, about 1 cent each; pages are fetched directly and never from your own network), and update checks against your release repository at startup (can be turned off). Settings → Privacy lists the active ones live.
 - Background behavior (tray on close, background assistant, start with Windows) is off until you enable it. NOVA AI uses the microphone only while you hold a conversation by voice — or, if you turn on “Hey NOVA” or the double clap, keeps it open and checks the sound on the PC without recording, storing or sending it — takes screenshots only when you share the screen or allow it, keeps conversations in memory only, and asks before creating, moving, renaming or deleting anything (deleting goes to the Recycle Bin). File actions are limited to your own folders. NOVA AI also asks before ending a program, closing a window, reading another app's window (its contents go to your AI provider) or using keys and clicks there; the list of running programs and window titles it reads without asking. Keys go only to the chosen window; terminals and the Windows key are refused, and Windows' own processes can't be ended.
 - Data: `%APPDATA%\dev.nova.commandcenter\nova.db`; keys: Windows Credential Manager (`NOVA:ai:*`).

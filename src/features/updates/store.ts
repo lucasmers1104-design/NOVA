@@ -2,6 +2,7 @@ import { Channel } from "@tauri-apps/api/core";
 import { create } from "zustand";
 import { flushDashboardSaves } from "@/features/dashboard/store";
 import { noteDraft } from "@/features/productivity/store";
+import { trackEvent } from "@/features/telemetry/api";
 import { callNative, isDesktop } from "@/lib/native";
 import { useSettings } from "@/stores/settings";
 
@@ -95,6 +96,8 @@ export const useUpdates = create<UpdateState>()((set, get) => ({
       // Windows: the process exits inside update_install and the installer restarts NOVA.
       set({ status: "installing" });
     } catch (error) {
+      const target = get().info?.version;
+      if (target) trackEvent("update", target, 0);
       set({ status: "error", installFailed: true, error: error instanceof Error ? error.message : String(error) });
     }
   },

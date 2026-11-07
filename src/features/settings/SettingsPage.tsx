@@ -14,6 +14,7 @@ import { SpeechSettings } from "@/features/nova-assistant/SpeechSettings";
 import { AssistantSettings } from "@/features/nova-assistant/AssistantSettings";
 import { WakeSettings } from "@/features/nova-assistant/WakeSettings";
 import { useSystemInfo } from "@/features/system/api";
+import { TelemetrySettings } from "@/features/telemetry/TelemetrySettings";
 import { showWhatsNew } from "@/features/updates/WhatsNew";
 import { cn } from "@/lib/cn";
 import { callNative, isDesktop } from "@/lib/native";
@@ -111,6 +112,7 @@ const SEARCHABLE: readonly { label: string; section: string; words?: string }[] 
   { label: "Refresh interval", section: "system", words: "aktualisieren cpu" },
   { label: "Keyboard shortcuts", section: "shortcuts", words: "tastenkürzel tasten" },
   { label: "Action history and usage", section: "privacy", words: "verlauf datenschutz löschen" },
+  { label: "Send usage statistics", section: "privacy", words: "statistik telemetrie zustimmung widerrufen datenschutz" },
   { label: "Version", section: "about", words: "what's new neu" },
   { label: "Reset settings", section: "about", words: "zurücksetzen" },
 ];
@@ -412,7 +414,7 @@ function StorageWarning() {
 
 const PRIVACY_FACTS = [
   "Settings, layouts, tasks, notes and chats are stored in a local database on this PC.",
-  "No analytics, telemetry or tracking of any kind.",
+  "Usage statistics are optional and off until you accept them. They never hold chats, voice, files, screenshots, keystrokes, window or program names.",
   "System metrics, apps, files and media are read locally and never leave your device.",
   "Asked for the weather or your internet speed, NOVA contacts Open-Meteo or downloads a test file from Hetzner. Only then.",
   "NOVA Finder only knows the folders you give it. Even with the whole PC added, Windows, installed programs and app data stay off limits.",
@@ -435,6 +437,7 @@ function PrivacySection() {
   const connections = useExternalConnections();
   return (
     <SettingsSection id="privacy" title="Privacy" description="NOVA is local-first by design." icon={ShieldCheck}>
+      <TelemetrySettings />
       <div className="mb-4 rounded-[14px] border border-line bg-black/20 p-4">
         <p className="flex items-center gap-2 text-[13px] font-medium text-fg">
           <Globe size={14} className="text-accent-text" aria-hidden /> External connections

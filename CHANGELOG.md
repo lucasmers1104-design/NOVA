@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.10.1 — 2026-11-07
+
+### Added
+- **Plugins**: a new Plugins page installs signed `.novaplugin` files that add pages, widgets and accent colors. Each plugin runs isolated from the rest of NOVA and only gets what you allow, and you can turn each permission off.
+- **Optional usage statistics**: NOVA asks once whether it may send usage statistics to help improve it. Nothing is sent before you click "Akzeptieren", and NOVA works exactly the same if you don't. Never included: chats, voice, files, screenshots, keystrokes, window or program names. Settings → Privacy shows what was sent; turning it off stops it at once and deletes this PC's data on the service.
+
 ## 1.10.0 — 2026-11-07
 
 ### Added

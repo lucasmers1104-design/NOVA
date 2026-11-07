@@ -160,6 +160,32 @@ pub const MIGRATIONS: &[Migration] = &[
         CREATE VIRTUAL TABLE file_index_fts USING fts5(name, folder, body, tokenize = 'unicode61 remove_diacritics 2');
     "#,
     },
+    Migration {
+        version: 4,
+        name: "plugins",
+        sql: r#"
+        CREATE TABLE plugins (
+            id           TEXT PRIMARY KEY NOT NULL,
+            version      TEXT NOT NULL,
+            manifest     TEXT NOT NULL,
+            signer       TEXT NOT NULL,
+            enabled      INTEGER NOT NULL DEFAULT 1,
+            -- JSON array of the permission keys the user allowed.
+            granted      TEXT NOT NULL DEFAULT '[]',
+            crashes      INTEGER NOT NULL DEFAULT 0,
+            last_error   TEXT,
+            installed_at INTEGER NOT NULL,
+            updated_at   INTEGER NOT NULL
+        );
+
+        CREATE TABLE plugin_storage (
+            plugin_id TEXT NOT NULL REFERENCES plugins(id) ON DELETE CASCADE,
+            key       TEXT NOT NULL,
+            value     TEXT NOT NULL,
+            PRIMARY KEY (plugin_id, key)
+        ) WITHOUT ROWID;
+    "#,
+    },
 ];
 
 #[cfg(test)]
@@ -228,6 +254,8 @@ mod tests {
             "assistant_actions",
             "file_index",
             "file_index_fts",
+            "plugins",
+            "plugin_storage",
         ] {
             assert!(table_exists(&conn, table), "missing table {table}");
         }

@@ -5,12 +5,14 @@ mod assistant;
 mod capture;
 mod credentials;
 mod desktop;
+mod developer;
 mod documents;
 mod files;
 mod finder;
 mod http;
 mod live;
 mod media;
+mod plugins;
 mod shell;
 pub mod speech;
 mod storage;
@@ -18,6 +20,7 @@ mod system;
 mod backdrop;
 mod online_voice;
 mod scan;
+mod telemetry;
 mod tts;
 mod turnlog;
 mod updates;
@@ -73,6 +76,13 @@ pub fn run() {
         .manage(ai::ChatRequests::default())
         .manage(desktop::DesktopState::default())
         .manage(updates::PendingUpdate::default())
+        .manage(telemetry::TelemetryState::default())
+        .manage(plugins::PluginState::default())
+        .manage(developer::DeveloperState::default())
+        .register_asynchronous_uri_scheme_protocol(plugins::SCHEME, |ctx, request, responder| {
+            let app = ctx.app_handle().clone();
+            tauri::async_runtime::spawn_blocking(move || responder.respond(plugins::serve(&app, &request)));
+        })
         .setup(|app| {
             let database = match app.path().app_data_dir() {
                 Ok(dir) => match std::fs::create_dir_all(&dir) {
@@ -107,6 +117,9 @@ pub fn run() {
             wake::init(app.handle(), wake_prefs);
             capture::watch_foreground();
             agent::auto::start(app.handle());
+            telemetry::init(app.handle());
+            #[cfg(debug_assertions)]
+            plugins::install_dev_plugins(app.handle());
             Ok(())
         })
         .on_window_event(|window, event| match (window.label(), event) {
@@ -280,6 +293,20 @@ pub fn run() {
             speech::speech_remove,
             speech::speech_warm,
             speech::speech_benchmark,
+            telemetry::telemetry_status,
+            telemetry::telemetry_decide,
+            telemetry::telemetry_track,
+            telemetry::telemetry_recent,
+            telemetry::telemetry_set_name,
+            plugins::plugins_list,
+            plugins::plugins_pick,
+            plugins::plugins_install_confirm,
+            plugins::plugins_install_cancel,
+            plugins::plugins_uninstall,
+            plugins::plugins_set_enabled,
+            plugins::plugins_set_permission,
+            plugins::plugin_call,
+            plugins::plugin_report_crash,
         ])
         .run(tauri::generate_context!())
         .expect("error while running NOVA");

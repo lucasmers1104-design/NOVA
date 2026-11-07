@@ -360,6 +360,13 @@ fn status(channel: &Channel<AgentEvent>, state: Status, detail: Option<&str>) {
 
 fn log_action<R: Runtime>(app: &AppHandle<R>, tool: &str, title: &str, risk: Risk, outcome: &str, detail: &str) {
     let _ = app.state::<Database>().with(|c| storage::actions::log(c, tool, title, risk.as_str(), outcome, detail));
+    // Only the tool's name and how it went; the title and detail name files and programs.
+    let outcome = match outcome {
+        "done" => 1,
+        "declined" => -1,
+        _ => 0,
+    };
+    crate::telemetry::track(app, crate::telemetry::Event::Tool { name: tool, outcome });
 }
 
 /// Runs a prepared action off the async runtime.
@@ -442,9 +449,12 @@ async fn run_turn<R: Runtime>(app: &AppHandle<R>, text: String, voice: bool, cha
     let attachments = std::mem::take(&mut lock(&state(app).session).attachments);
     let has_image = attachments.iter().any(|a| matches!(a.part, Part::Image { .. }));
 
+    crate::telemetry::note_activity(app);
     let Some((provider, model, key)) = resolve_provider(&app.state::<Database>(), &prefs) else {
+        crate::telemetry::track(app, crate::telemetry::Event::Assistant("local"));
         return run_local(app, &text, has_image, channel).await;
     };
+    crate::telemetry::track(app, crate::telemetry::Event::Assistant(if voice { "voice" } else { "text" }));
 
     let before = {
         let mut session = lock(&state(app).session);

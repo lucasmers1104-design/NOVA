@@ -1,0 +1,16 @@
+{
+  "id": "dev.nova.e2e-hostile",
+  "name": "Hostile test",
+  "version": "1.0.0",
+  "description": "Tries everything a malicious plugin might. Never ships; only for scripts/e2e/plugin-isolation.mjs.",
+  "apiVersion": 1,
+  "minNovaVersion": "1.10.1",
+  "entry": "index.html",
+  "permissions": [{ "type": "storage", "quotaKb": 256 }],
+  "contributes": {
+    "pages": [
+      { "id": "attack", "title": "Hostile attack" },
+      { "id": "hang", "title": "Hostile hang" }
+    ]
+  }
+}

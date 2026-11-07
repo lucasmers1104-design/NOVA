@@ -129,10 +129,15 @@ Legend: ✅ done · ⬜ planned
 - ⚠️ Windows' dictation returning nothing was seen on one PC with online recognition on and the language installed; why Windows stays silent there isn't known. NOVA works around it rather than fixing it
 - ⚠️ Per-program GPU use and sizes of programs that don't report one aren't available
 
+## 1.10.1 — Plugins and optional statistics ✅
+- ✅ Signed `.novaplugin` packages, a Plugins page, per-permission switches, pages, widgets and accent colors from plugins (see [PLUGIN_API.md](PLUGIN_API.md))
+- ✅ Plugins sandboxed in iframes, every call checked in Rust; a hostile test plugin and a counting address in `scripts/e2e`
+- ✅ Optional usage statistics: nothing leaves before "Akzeptieren", closed list of events, withdrawal with deletion, a view of what was sent
+- ⚠️ A plugin stuck in a loop can use a CPU core until it is turned off; NOVA's window stays responsive
+
 ## Next ideas
 - Calendar sync adapters (Outlook, Google) behind explicit opt-in
-- AI agent mode with permission-gated tools (see [PLUGIN_API.md](PLUGIN_API.md#agents))
-- Third-party widgets through the permissioned plugin API (design in [PLUGIN_API.md](PLUGIN_API.md))
+- A public plugin catalog and plugins contributing tools to NOVA AI (see [PLUGIN_API.md](PLUGIN_API.md#later))
 - Store (UWP) apps in the launcher via the `shell:AppsFolder` namespace
 - Split widget metadata from components to shrink the startup bundle
 

@@ -56,7 +56,7 @@ pub fn check_url(raw: &str) -> Result<Url, String> {
 }
 
 /// The addresses behind a URL, if every one of them is public.
-fn public_addresses(url: &Url) -> Option<Vec<SocketAddr>> {
+pub fn public_addresses(url: &Url) -> Option<Vec<SocketAddr>> {
     let (host, port) = (url.host_str()?, url.port_or_known_default()?);
     let host = host.trim_start_matches('[').trim_end_matches(']');
     let addresses: Vec<SocketAddr> = (host, port).to_socket_addrs().ok()?.collect();

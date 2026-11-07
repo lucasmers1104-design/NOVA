@@ -122,6 +122,20 @@
     "allow-speech-install",
     "allow-speech-remove",
     "allow-speech-warm",
-    "allow-speech-benchmark"
+    "allow-speech-benchmark",
+    "allow-telemetry-status",
+    "allow-telemetry-decide",
+    "allow-telemetry-track",
+    "allow-telemetry-recent",
+    "allow-telemetry-set-name",
+    "allow-plugins-list",
+    "allow-plugins-pick",
+    "allow-plugins-install-confirm",
+    "allow-plugins-install-cancel",
+    "allow-plugins-uninstall",
+    "allow-plugins-set-enabled",
+    "allow-plugins-set-permission",
+    "allow-plugin-call",
+    "allow-plugin-report-crash"
   ]
 }

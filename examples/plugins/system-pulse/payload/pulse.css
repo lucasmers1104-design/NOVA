@@ -1,0 +1,8 @@
+/* color-scheme must match NOVA's, or the browser paints the frame white instead of transparent. */
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; overflow: hidden; }
+body { display: grid; grid-template-columns: auto 1fr; align-content: center; gap: 4px 12px; padding: 16px; color: #f1f3f8; font: 13px system-ui, sans-serif; }
+p { margin: 0; }
+.label { color: #aab1c2; align-self: center; }
+.value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--accent, #f1f3f8); }

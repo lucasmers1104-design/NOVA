@@ -8,6 +8,7 @@ import {
   ListTodo,
   type LucideIcon,
   Newspaper,
+  Puzzle,
   Settings,
   Sparkles,
   Workflow,
@@ -24,6 +25,7 @@ export type RouteId =
   | "files"
   | "live"
   | "studio"
+  | "plugins"
   | "settings";
 
 export type NavGroup = "workspace" | "customize" | "footer";
@@ -48,6 +50,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { id: "files", label: "Files", icon: FolderOpen, group: "workspace", description: "Favorite folders and quick access" },
   { id: "live", label: "Live Information", icon: Newspaper, group: "workspace", description: "Weather, news and information cards" },
   { id: "studio", label: "Widget Studio", icon: Blocks, group: "customize", description: "Build and arrange your widgets" },
+  { id: "plugins", label: "Plugins", icon: Puzzle, group: "customize", description: "Install and manage extensions" },
   { id: "settings", label: "Settings", icon: Settings, group: "footer", description: "Appearance, privacy and preferences" },
 ];
 

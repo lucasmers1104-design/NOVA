@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-plugins-install-confirm"
+description = "Enables the plugins_install_confirm command without any pre-configured scope."
+commands.allow = ["plugins_install_confirm"]
+
+[[permission]]
+identifier = "deny-plugins-install-confirm"
+description = "Denies the plugins_install_confirm command without any pre-configured scope."
+commands.deny = ["plugins_install_confirm"]

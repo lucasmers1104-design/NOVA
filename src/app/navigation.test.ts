@@ -28,12 +28,13 @@ describe("navigation registry", () => {
       "Files",
       "Live Information",
       "Widget Studio",
+      "Plugins",
       "Settings",
     ]);
   });
 
   it("applies the user's sidebar order and visibility", () => {
-    const groups = resolveSidebar(["media", "system", "apps", "ai", "productivity", "routines", "files", "live"], ["apps", "studio"]);
+    const groups = resolveSidebar(["media", "system", "apps", "ai", "productivity", "routines", "files", "live"], ["apps", "studio", "plugins"]);
     expect(groups.workspace.map((i) => i.id)).toEqual(["home", "media", "system", "ai", "productivity", "routines", "files", "live"]);
     expect(groups.customize).toEqual([]);
     expect(groups.footer.map((i) => i.id)).toEqual(["settings"]);

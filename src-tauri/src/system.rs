@@ -64,6 +64,11 @@ impl SystemMonitor {
         let monitor = guard.as_mut().ok_or_else(|| UNSUPPORTED.to_string())?;
         Ok(f(monitor))
     }
+
+    /// For plugins with the `system.metrics` permission.
+    pub fn snapshot(&self) -> CommandResult<SystemSnapshot> {
+        self.with_monitor(collect_snapshot)
+    }
 }
 
 #[derive(Debug, Serialize)]

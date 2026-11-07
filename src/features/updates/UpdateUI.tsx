@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { useEffect } from "react";
 import { Button } from "@/components/ui/Button";
 import { notify } from "@/features/notifications/store";
+import { trackEvent, useConsentPrompt } from "@/features/telemetry/api";
 import { formatBytes } from "@/lib/format";
 import { isDesktop } from "@/lib/native";
 import { useSettings } from "@/stores/settings";
@@ -22,8 +23,11 @@ export function useStartupUpdates(): void {
     if (!isDesktop()) return;
     void getVersion().then((version) => {
       const settings = useSettings.getState();
-      if (settings.lastSeenVersion && settings.lastSeenVersion !== version && !announceUpdate(settings.lastSeenVersion, version)) {
-        notify(`NOVA was updated to ${version}`, { kind: "success", body: `You were on ${settings.lastSeenVersion}. Enjoy the new version!` });
+      if (settings.lastSeenVersion && settings.lastSeenVersion !== version) {
+        trackEvent("update", version, 1);
+        if (!announceUpdate(settings.lastSeenVersion, version)) {
+          notify(`NOVA was updated to ${version}`, { kind: "success", body: `You were on ${settings.lastSeenVersion}. Enjoy the new version!` });
+        }
       }
       if (settings.lastSeenVersion !== version) settings.setLastSeenVersion(version);
     });
@@ -36,13 +40,15 @@ export function useStartupUpdates(): void {
 
 export function UpdateBanner() {
   const { status, info, countdown, postponed, downloaded, total, error, installFailed, install, postpone, tick } = useUpdates();
-  const visible = !postponed && info !== null && (status === "available" || status === "downloading" || status === "installing" || (status === "error" && installFailed));
+  // The consent popup comes first: no restart while someone is still reading it.
+  const consentOpen = useConsentPrompt((s) => s.open);
+  const visible = !consentOpen && !postponed && info !== null && (status === "available" || status === "downloading" || status === "installing" || (status === "error" && installFailed));
 
   useEffect(() => {
-    if (countdown === null || status !== "available") return;
+    if (countdown === null || status !== "available" || consentOpen) return;
     const timer = window.setInterval(tick, 1000);
     return () => window.clearInterval(timer);
-  }, [countdown === null, status, tick]);
+  }, [countdown === null, status, tick, consentOpen]);
 
   const percent = total ? Math.min(100, (downloaded / total) * 100) : null;
 

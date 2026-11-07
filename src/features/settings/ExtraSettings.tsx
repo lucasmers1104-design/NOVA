@@ -10,6 +10,7 @@ import { useDashboard } from "@/features/dashboard/store";
 import { placeLabel } from "@/features/live/api";
 import { notifyError } from "@/features/notifications/store";
 import { PROFILE_ICONS, useProfiles } from "@/features/profiles/store";
+import { useTelemetryStatus } from "@/features/telemetry/api";
 import { DEFAULT_UPDATE_SOURCE, effectiveUpdateSource, useUpdates } from "@/features/updates/store";
 import { cn } from "@/lib/cn";
 import { callNative, isDesktop } from "@/lib/native";
@@ -334,7 +335,9 @@ export function useExternalConnections(): string[] {
   const place = useSettings((s) => s.weatherPlace);
   const feeds = useSettings((s) => s.newsFeeds);
   const { data: keys } = useKeyStatus();
+  const { data: statistics } = useTelemetryStatus();
   const list: string[] = [];
+  if (statistics?.accepted) list.push(`Usage statistics: ${statistics.host} — because you accepted them`);
   if (place) list.push("Weather: api.open-meteo.com (your chosen place's coordinates)");
   for (const feed of feeds) {
     try {

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-telemetry-track"
+description = "Enables the telemetry_track command without any pre-configured scope."
+commands.allow = ["telemetry_track"]
+
+[[permission]]
+identifier = "deny-telemetry-track"
+description = "Denies the telemetry_track command without any pre-configured scope."
+commands.deny = ["telemetry_track"]

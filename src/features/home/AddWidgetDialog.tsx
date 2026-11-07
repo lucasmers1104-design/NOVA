@@ -2,7 +2,7 @@ import { Plus } from "lucide-react";
 import { Dialog } from "@/components/ui/Dialog";
 import { useActiveLayout, useDashboard } from "@/features/dashboard/store";
 import { MAX_WIDGETS_PER_LAYOUT } from "@/features/dashboard/layouts";
-import { WIDGETS } from "@/widgets/registry";
+import { allWidgets } from "@/widgets/registry";
 import type { WidgetDataSource } from "@/widgets/types";
 
 const SOURCE_LABEL: Record<WidgetDataSource, string> = {
@@ -31,7 +31,7 @@ export function AddWidgetDialog({ open, onClose, onAdded }: AddWidgetDialogProps
       description={full ? `This layout has reached ${MAX_WIDGETS_PER_LAYOUT} widgets.` : "Widgets are added to the end of your layout."}
     >
       <ul className="grid grid-cols-2 gap-2.5">
-        {WIDGETS.map((widget) => {
+        {allWidgets().map((widget) => {
           const count = layout?.widgets.filter((w) => w.widgetId === widget.id).length ?? 0;
           const Icon = widget.icon;
           return (

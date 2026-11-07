@@ -4,6 +4,7 @@ import changelog from "../../../CHANGELOG.md?raw";
 import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 import { Markdown } from "@/components/ui/Markdown";
+import { useConsentPrompt } from "@/features/telemetry/api";
 
 export interface ChangelogSection {
   version: string;
@@ -59,10 +60,11 @@ export function showWhatsNew(): void {
 /** "What's new": appears by itself once, right after an update. */
 export function WhatsNewDialog() {
   const sections = useWhatsNew((s) => s.sections);
+  const consentOpen = useConsentPrompt((s) => s.open);
   const close = () => useWhatsNew.setState({ sections: [] });
   return (
     <Dialog
-      open={sections.length > 0}
+      open={sections.length > 0 && !consentOpen}
       onClose={close}
       size="lg"
       title={sections.length === 1 ? `What's new in NOVA ${sections[0]!.version}` : "What's new in NOVA"}

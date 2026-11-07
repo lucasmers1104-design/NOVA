@@ -2386,10 +2386,11 @@ dependencies = [
 
 [[package]]
 name = "nova"
-version = "1.10.0"
+version = "1.10.1"
 dependencies = [
  "base64 0.23.1",
  "flate2",
+ "minisign-verify",
  "ort",
  "png",
  "quick-xml",
@@ -2413,6 +2414,7 @@ dependencies = [
  "windows-collections",
  "windows-future",
  "windows-sys 0.61.2",
+ "zip",
 ]
 
 [[package]]
@@ -5797,6 +5799,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e408c6cc4699dd017d53dc080cd51c2cea2b5354af57a1479bd265ed42911487"
 dependencies = [
  "crc32fast",
+ "flate2",
  "getrandom 0.4.3",
  "indexmap 2.14.2",
  "libc",

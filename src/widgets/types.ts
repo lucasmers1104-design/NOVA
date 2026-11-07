@@ -1,7 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import type { ComponentType } from "react";
 
-export type WidgetCategory = "overview" | "system" | "time" | "productivity" | "media" | "information";
+export type WidgetCategory = "overview" | "system" | "time" | "productivity" | "media" | "information" | "plugin";
 
 export const CATEGORY_LABELS: Record<WidgetCategory, string> = {
   overview: "Overview",
@@ -10,6 +10,7 @@ export const CATEGORY_LABELS: Record<WidgetCategory, string> = {
   productivity: "Productivity",
   media: "Media",
   information: "Information",
+  plugin: "Plugins",
 };
 
 export interface WidgetSize {

@@ -21,6 +21,13 @@ NOVA updates itself from a public GitHub repository. Every release is a signed N
    It must be public: the app downloads `releases/` without logging in.
 3. **Update source.** `DEFAULT_UPDATE_SOURCE` in `src/features/updates/store.ts` is `"lucasmers1104-design/NOVA"`, so installations from 1.2.0 on update out of the box. Version 1.1.0 had no default: enter `lucasmers1104-design/NOVA` once in Settings → Updates there.
 
+## What stays out of this repository
+
+This repository is public and every push reaches every installation. The statistics service and the private Developer Analytics plugin live in the private repository `nova-private`; `*.novaplugin` and `*.key` are ignored here, and `npm run release` stops if it finds one or anything named like the private plugin.
+
+- **Plugin signing key:** `%USERPROFILE%\.nova\plugins\nova-plugins.key`, separate from the updater key. Back it up as well. Without it no new plugin can be signed; NOVA trusts the public key built into `src-tauri/src/plugins.rs`.
+- **Usage statistics:** raise `CONSENT_SCOPE` in `src-tauri/src/telemetry.rs` when what is collected changes materially. Everyone is then asked again, and sending pauses until they answer. Keep the list in the popup, `PRIVACY_FACTS`, the README and the service's privacy page in step.
+
 ## Publishing a new version (e.g. 1.0.0 → 1.1.0)
 
 1. Bump the version in `package.json` and `src-tauri/Cargo.toml`, and add a `## 1.1.0 — date` section to `CHANGELOG.md` (its bullets become the update notes).

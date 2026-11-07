@@ -24,6 +24,10 @@ Thumbs.db
 # Test coverage
 coverage/
 
+# Plugin packages never belong here: private ones live in nova-private, keys outside any repository.
+*.novaplugin
+*.key
+
 # Built by scripts/build-helpers.mjs
 src-tauri/binaries/
 tools/*/target/
