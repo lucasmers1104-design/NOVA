@@ -260,7 +260,11 @@ describe("StreamingSpeaker", () => {
     speaker.enqueue("Zwei.");
     speaker.enqueue("Drei.");
     for (let i = 0; i < 6; i++) await flush();
-    expect(unsaid).toEqual([["Zwei.", "Drei."]]);
+    // Not over "Eins.", which is still playing; only after it.
+    expect(unsaid).toEqual([]);
+    speaker.enqueue("Vier.");
+    audio.sources[0]!.onended?.();
+    expect(unsaid).toEqual([["Zwei.", "Drei.", "Vier."]]);
     expect(audio.started).toHaveLength(1);
   });
 

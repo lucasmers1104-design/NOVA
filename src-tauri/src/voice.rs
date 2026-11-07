@@ -557,7 +557,10 @@ mod win {
 }
 
 #[tauri::command]
-pub async fn voice_listen<R: Runtime>(app: AppHandle<R>, on_event: Channel<VoiceEvent>) -> CommandResult<()> {
+pub async fn voice_listen<R: Runtime>(app: AppHandle<R>, on_event: Channel<VoiceEvent>, quiet: Option<bool>) -> CommandResult<()> {
+    // The microphone opened by itself, or the user stopped it: a TV or a cough
+    // without words then says nothing about whether Windows' dictation works.
+    let quiet = quiet.unwrap_or(false);
     let state = app.state::<VoiceState>();
     if state.active.swap(true, Ordering::SeqCst) {
         return Err("NOVA is already listening".into());
@@ -589,7 +592,7 @@ pub async fn voice_listen<R: Runtime>(app: AppHandle<R>, on_event: Channel<Voice
                         other => other.err(),
                     }
                 } else {
-                    match win::listen(&language, &state, &send, &mut report, &|deaf| crate::speech::stt::note_windows_turn(&app2, deaf)) {
+                    match win::listen(&language, &state, &send, &mut report, &|deaf| if deaf && (quiet || state.stop.load(Ordering::SeqCst)) { false } else { crate::speech::stt::note_windows_turn(&app2, deaf) }) {
                         // Windows can't listen (online recognition off, offline, no recognizer): NOVA's own recognizer can.
                         Err(error) if offline_helps(&error) && crate::speech::stt::ready(&app2) => {
                             report = TurnReport { fell_back: true, ..TurnReport::default() };

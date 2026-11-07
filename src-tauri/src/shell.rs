@@ -72,7 +72,8 @@ pub fn open_path(path: &Path) -> Result<(), String> {
     use windows::Win32::UI::Shell::ShellExecuteW;
     use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
-    if !path.exists() {
+    // Store apps have no file to check: see `apps::packaged_apps`.
+    if !path.starts_with(crate::apps::PACKAGED_PREFIX) && !path.exists() {
         return Err(format!("{} no longer exists", path.display()));
     }
     if opens_explorer(path) && !explorer_allowed(path)? {
@@ -128,10 +129,10 @@ pub fn open_system_link(_link: &'static str) -> Result<(), String> {
     Err("This requires Windows".into())
 }
 
-/// A `spotify:` link NOVA built itself, with its query encoded by `encode_query`.
+/// A link to Spotify or a game launcher NOVA built itself, with its parts encoded by `encode_query`.
 pub fn open_system_link_owned(link: &str) -> Result<(), String> {
-    if !link.starts_with("spotify:") {
-        return Err("Only Spotify links can be opened this way".into());
+    if !["spotify:", "steam://rungameid/", "com.epicgames.launcher://apps/"].iter().any(|start| link.starts_with(start)) {
+        return Err("Only Spotify and game launcher links can be opened this way".into());
     }
     run_program(link, "")
 }

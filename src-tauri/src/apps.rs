@@ -74,7 +74,7 @@ fn start_menu_roots() -> Vec<PathBuf> {
 
 fn scan_dir(root: &Path, dir: &Path, depth: usize, out: &mut Vec<(AppEntry, PathBuf)>) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
-    for entry in entries.flatten() {
+    for entry in entries.map_while(Result::ok) {
         let path = entry.path();
         if path.is_dir() {
             if depth < MAX_DEPTH {
@@ -101,11 +101,63 @@ fn scan_dir(root: &Path, dir: &Path, depth: usize, out: &mut Vec<(AppEntry, Path
     }
 }
 
+/// Store apps (Microsoft Store, Calculator, Photos…) have no shortcut in the Start
+/// menu folders. Windows lists them in its Apps folder and starts them through this path.
+pub const PACKAGED_PREFIX: &str = "shell:AppsFolder\\";
+
+/// `Microsoft.WindowsStore_8wekyb3d8bbwe!App`: what a Store app is called in the Apps folder.
+/// Ordinary programs appear there too, under a path; those come from the Start menu already.
+fn is_package_id(id: &str) -> bool {
+    id.contains('!') && !id.contains('\\') && !id.contains('/') && !id.contains(':')
+}
+
+/// The Store apps Windows lists, with what starts them.
+#[cfg(windows)]
+fn packaged_apps() -> Vec<(AppEntry, PathBuf)> {
+    use windows::Win32::System::Com::CoTaskMemFree;
+    use windows::Win32::UI::Shell::{FOLDERID_AppsFolder, IEnumShellItems, IShellItem, SHGetKnownFolderItem, BHID_EnumItems, KF_FLAG_DEFAULT, SIGDN_DESKTOPABSOLUTEPARSING, SIGDN_NORMALDISPLAY};
+    let scanned = shell::with_com(true, || {
+        // SAFETY: COM is initialized for this closure; each string Windows hands out is
+        // copied and freed right away, and the out array holds the one item asked for.
+        unsafe {
+            let folder: IShellItem = SHGetKnownFolderItem(&FOLDERID_AppsFolder, KF_FLAG_DEFAULT, None).map_err(|e| e.message().to_string())?;
+            let items: IEnumShellItems = folder.BindToHandler(None, &BHID_EnumItems).map_err(|e| e.message().to_string())?;
+            let text = |item: &IShellItem, kind| -> Option<String> {
+                let raw = item.GetDisplayName(kind).ok()?;
+                let text = raw.to_string().ok();
+                CoTaskMemFree(Some(raw.0 as *const _));
+                text
+            };
+            let mut found = Vec::new();
+            let mut slot = [None];
+            while items.Next(&mut slot, None).is_ok() {
+                let Some(item) = slot[0].take() else { break };
+                let (Some(name), Some(id)) = (text(&item, SIGDN_NORMALDISPLAY), text(&item, SIGDN_DESKTOPABSOLUTEPARSING)) else { continue };
+                if is_package_id(&id) && !name.trim().is_empty() && !is_noise(&name) {
+                    let path = PathBuf::from(format!("{PACKAGED_PREFIX}{id}"));
+                    found.push((AppEntry { id: stable_id("pkg", &id), name: name.trim().to_string(), category: "Apps".into(), source: "store" }, path));
+                }
+            }
+            Ok(found)
+        }
+    });
+    scanned.unwrap_or_else(|error| {
+        eprintln!("[NOVA] couldn't list the Store apps: {error}");
+        Vec::new()
+    })
+}
+
+#[cfg(not(windows))]
+fn packaged_apps() -> Vec<(AppEntry, PathBuf)> {
+    Vec::new()
+}
+
 pub fn scan_start_menu() -> Catalog {
     let mut found = Vec::new();
     for root in start_menu_roots() {
         scan_dir(&root, &root, 0, &mut found);
     }
+    found.extend(packaged_apps());
     // The same app often has a shortcut in both roots; keep one per name.
     let mut seen = std::collections::HashSet::new();
     found.retain(|(entry, _)| seen.insert(entry.name.to_lowercase()));
@@ -197,6 +249,20 @@ mod tests {
     fn ids_are_stable_and_case_insensitive() {
         assert_eq!(stable_id("sm", "C:\\A\\b.lnk"), stable_id("sm", "c:\\a\\B.LNK"));
         assert_ne!(stable_id("sm", "a"), stable_id("sm", "b"));
+    }
+
+    #[test]
+    fn recognizes_store_apps() {
+        assert!(is_package_id("Microsoft.WindowsStore_8wekyb3d8bbwe!App"));
+        assert!(!is_package_id(r"C:\Program Files\Thing\thing.exe"));
+        assert!(!is_package_id("{6D809377-6AF0-444B-8957-A3773F02200E}\\Thing\\thing.exe"));
+        assert!(!is_package_id("Chrome"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn finds_the_store_apps_of_this_pc() {
+        assert!(packaged_apps().iter().all(|(entry, path)| entry.source == "store" && path.starts_with(PACKAGED_PREFIX)));
     }
 
     #[test]

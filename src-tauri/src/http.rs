@@ -1,7 +1,8 @@
 //! The single outbound HTTP client. Every network connection NOVA makes goes
 //! through here, and only for features the user explicitly configured
 //! (AI providers with a key, weather with a location, news feeds they added,
-//! NOVA's voice when spoken replies use it, web pages NOVA AI is asked to read).
+//! NOVA's voice when spoken replies use it, web pages NOVA AI is asked to read,
+//! a test file when asked how fast the internet is).
 
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -42,6 +43,24 @@ pub async fn read_limited(mut response: reqwest::Response, limit: usize) -> Resu
     Ok(body)
 }
 
+/// Bytes from outside as text: UTF-16 by its mark, UTF-8 (also cut off mid-letter),
+/// or else the Latin-1 family that older German pages and Excel's CSV files use.
+pub fn decode_text(bytes: &[u8]) -> String {
+    let wide = |pair: fn([u8; 2]) -> u16, rest: &[u8]| String::from_utf16_lossy(&rest.as_chunks::<2>().0.iter().map(|units| pair(*units)).collect::<Vec<u16>>());
+    if let Some(rest) = bytes.strip_prefix(&[0xFF, 0xFE]) {
+        return wide(u16::from_le_bytes, rest);
+    }
+    if let Some(rest) = bytes.strip_prefix(&[0xFE, 0xFF]) {
+        return wide(u16::from_be_bytes, rest);
+    }
+    let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
+    match std::str::from_utf8(bytes) {
+        Ok(text) => text.to_string(),
+        Err(error) if error.error_len().is_none() => String::from_utf8_lossy(&bytes[..error.valid_up_to()]).into_owned(),
+        Err(_) => bytes.iter().map(|&b| b as char).collect(),
+    }
+}
+
 /// A readable message for transport errors (offline, timeout, TLS).
 pub fn describe(error: reqwest::Error) -> String {
     if error.is_timeout() {
@@ -49,7 +68,14 @@ pub fn describe(error: reqwest::Error) -> String {
     } else if error.is_connect() {
         "Couldn't connect — check your internet connection".into()
     } else {
-        format!("Network error: {error}")
+        // reqwest's own text only says "error sending request"; the reason is further down.
+        let mut text = format!("Network error: {error}");
+        let mut cause = std::error::Error::source(&error);
+        while let Some(reason) = cause {
+            text.push_str(&format!(": {reason}"));
+            cause = reason.source();
+        }
+        text
     }
 }
 
@@ -70,6 +96,15 @@ pub fn api_error_message(status: reqwest::StatusCode, body: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_text_in_every_encoding_people_have() {
+        assert_eq!(decode_text("Größe".as_bytes()), "Größe");
+        assert_eq!(decode_text(&[0x47, 0x72, 0xF6, 0xDF, 0x65]), "Größe", "Windows-1252");
+        assert_eq!(decode_text(&[0xFF, 0xFE, 0xD6, 0x00, 0x6C, 0x00]), "Öl");
+        assert_eq!(decode_text(&[0xEF, 0xBB, 0xBF, 0x4F, 0x4B]), "OK");
+        assert_eq!(decode_text(&[0x4F, 0x4B, 0xC3]), "OK", "cut off in the middle of ö");
+    }
 
     #[test]
     fn extracts_provider_error_messages() {

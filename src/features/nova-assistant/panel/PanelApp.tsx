@@ -3,14 +3,15 @@ import { AnimatePresence, MotionConfig } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { callNative } from "@/lib/native";
 import type { MotionPreference } from "@/stores/settings";
-import { agentStatus, collapseAssistant, configureAgent, finderAddStandardFolders, finderStatus, openNova, panelHidden, panelReady } from "../api";
+import { agentStatus, assistantStatus, collapseAssistant, configureAgent, finderAddStandardFolders, finderStatus, openNova, panelHidden, panelReady, pinPanel, unmovePanel } from "../api";
 import { useAssistantAppearance } from "../appearance";
 import { NovaPanel } from "../components/NovaPanel";
 import { onReply, useConversation } from "../conversation";
 import { ReplyDirector } from "../speech/director";
 import { watchScan } from "../scan";
-import { ASSISTANT_EVENTS, type AgentStatus, type AssistantState, type DotCorner, type FinderStatus, type WakeCall } from "../types";
-import { installNovaVoice, isOnlineVoice, listen as listenOnce, prepareNovaLines, speak, speaksGerman, speechActive, stopListening, stopSpeaking, useVoice, voiceLine, watchNovaVoice } from "../voice";
+import { ASSISTANT_EVENTS, type AgentPrefs, type AgentStatus, type AssistantState, type AssistantStatus, type DotCorner, type FinderStatus, type WakeCall } from "../types";
+import { installNovaVoice, isOnlineVoice, listen as listenOnce, prepareNovaLines, speak, speaksGerman, speechActive, speechAudible, stopListening, stopSpeaking, useVoice, voiceLine, watchNovaVoice } from "../voice";
+import { playChime } from "../wake";
 import { HeadlessVoice } from "./HeadlessVoice";
 
 // Dev builds: a handle for end-to-end checks over the DevTools protocol (scripts/cdp.mjs).
@@ -45,6 +46,7 @@ export function PanelApp() {
   const [session, setSession] = useState(0);
   const [agent, setAgent] = useState<AgentStatus | null>(null);
   const [finder, setFinder] = useState<FinderStatus | null>(null);
+  const [pinned, setPinned] = useState(false);
   const [wake, setWake] = useState<{ id: number; call: WakeCall } | null>(null);
   // Woken in a game: a voice turn without the panel.
   const [headless, setHeadless] = useState<{ id: number; call: WakeCall } | null>(null);
@@ -53,6 +55,8 @@ export function PanelApp() {
     void callNative("assistant_headless_done").catch(() => {});
   }, []);
   const wakes = useRef(0);
+  const agentRef = useRef(agent);
+  agentRef.current = agent;
   const openRef = useRef(open);
   openRef.current = open;
   const pendingHide = useRef<number | null>(null);
@@ -85,16 +89,30 @@ export function PanelApp() {
       finderStatus().then((s) => alive && setFinder(s), () => {});
     };
     const woken = (call: WakeCall | null) => {
-      if (call?.headless) {
-        refresh();
-        setHeadless({ id: ++wakes.current, call });
-      } else {
-        setWake(call && { id: ++wakes.current, call });
+      const start = () => {
+        if (!alive) return;
+        if (call?.headless) setHeadless({ id: ++wakes.current, call });
+        else setWake(call && { id: ++wakes.current, call });
+      };
+      if (call?.headless) refresh();
+      // The first wake after starting: without the settings the reply wouldn't be read aloud.
+      if (!call || agentRef.current) {
+        start();
+        return;
       }
+      agentStatus().then(
+        (status) => {
+          if (alive) setAgent(status);
+          start();
+        },
+        start,
+      );
     };
     const show = (from: DotCorner, call: WakeCall | null) => {
       pendingHide.current = null;
-      woken(call);
+      // Opened during a voice turn in a game: the panel takes over, and it must not start again on closing.
+      setHeadless(null);
+      woken(call && { ...call, headless: false });
       setOrigin(from);
       setSession((n) => n + 1);
       setOpen(true);
@@ -114,8 +132,10 @@ export function PanelApp() {
         setOpen(false);
       }),
       listen<AgentStatus>(ASSISTANT_EVENTS.agent, (event) => setAgent(event.payload)),
+      listen<AssistantStatus>(ASSISTANT_EVENTS.prefs, (event) => setPinned(event.payload.panelPinned)),
       listen<FinderStatus["progress"]>(ASSISTANT_EVENTS.finder, () => finderStatus().then((s) => alive && setFinder(s), () => {})),
     ];
+    assistantStatus().then((status) => alive && setPinned(status.panelPinned), () => {});
     panelReady().then(
       (view) => {
         if (alive && view.open) show(view.origin, view.wake);
@@ -129,17 +149,17 @@ export function PanelApp() {
     };
   }, []);
 
-  // Esc stops speech first, then closes.
+  // Esc stops speech first, then closes; pinned, only the ✕ closes.
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented) return;
-      if (speechActive()) stopSpeaking();
-      else void collapseAssistant();
+      if (speechAudible()) stopSpeaking();
+      else if (!pinned) void collapseAssistant();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open]);
+  }, [open, pinned]);
 
   // Tell the dot what NOVA is doing (only while it changes).
   useEffect(() => {
@@ -154,8 +174,6 @@ export function PanelApp() {
   }, [conversationState]);
 
   // Replies are read aloud while they stream in: spoken requests always, typed ones when spoken replies are on.
-  const agentRef = useRef(agent);
-  agentRef.current = agent;
   useEffect(() => {
     const director = new ReplyDirector();
     const stop = onReply((event) => director.handle(event, agentRef.current?.prefs));
@@ -163,6 +181,24 @@ export function PanelApp() {
       stop();
       director.cancel();
     };
+  }, []);
+
+  // A timer has run out: a sound always, and what it was for unless NOVA is talking right now.
+  useEffect(() => {
+    const stop = listen<{ label: string }>(ASSISTANT_EVENTS.timer, ({ payload }) => {
+      void (async () => {
+        await playChime();
+        const prefs = agentRef.current?.prefs;
+        if (prefs && !speechActive() && useVoice.getState().mode === "idle") {
+          const german = speaksGerman(prefs.language);
+          const said = german ? `Dein Timer ist um${payload.label ? `: ${payload.label}` : "."}` : `Your timer is up${payload.label ? `: ${payload.label}` : "."}`;
+          await speak(said, prefs, "timer", german);
+        }
+        // Rust kept the page awake for this; with the panel closed it can rest again.
+        if (!openRef.current) void callNative("assistant_headless_done").catch(() => {});
+      })();
+    });
+    return () => void stop.then((unlisten) => unlisten());
   }, []);
 
   // A virus scan asked for out loud also ends out loud, when nothing else is being said.
@@ -206,9 +242,12 @@ export function PanelApp() {
             onOpenSettings={() => void openNova("assistant")}
             onOpenProviders={() => void openNova(agent?.activeProvider ? "assistant" : "ai")}
             onIndexFolders={() => void finderAddStandardFolders().then(setFinder, () => {})}
-            onToggleSpeech={() => {
+            pinned={pinned}
+            onPin={(next) => void pinPanel(next).then((status) => setPinned(status.panelPinned), () => {})}
+            onUnmove={() => void unmovePanel().then((status) => setPinned(status.panelPinned), () => {})}
+            onPrefs={(patch: Partial<AgentPrefs>) => {
               if (!agent) return;
-              void configureAgent({ ...agent.prefs, speakReplies: !agent.prefs.speakReplies }).then(setAgent, () => {});
+              void configureAgent({ ...agent.prefs, ...patch }).then(setAgent, () => {});
             }}
           />
         )}

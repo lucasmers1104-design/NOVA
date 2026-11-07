@@ -29,7 +29,7 @@ export function NotesView({ projectId }: { projectId: string | null }) {
   };
 
   return (
-    <div className="grid h-[calc(100vh-13rem)] min-h-[460px] grid-cols-[280px_minmax(0,1fr)] gap-4">
+    <div className="grid h-[calc(100vh-13rem)] min-h-[460px] grid-cols-[190px_minmax(0,1fr)] gap-3 xl:grid-cols-[280px_minmax(0,1fr)] xl:gap-4">
       <div className="glass flex flex-col rounded-widget p-3">
         <div className="mb-2 flex gap-2">
           <label className="flex h-9 flex-1 items-center gap-2 rounded-control border border-line bg-black/20 px-2.5 focus-within:border-line-strong">

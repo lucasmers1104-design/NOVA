@@ -1,3 +1,4 @@
+import { useIsPresent } from "motion/react";
 import { type RefObject, useEffect, useRef } from "react";
 import { prewarmAssistant } from "./api";
 import { useConversation } from "./conversation";
@@ -28,6 +29,10 @@ export function useVoiceTurns({ agent, wake, typing, onStart, onSend }: VoiceTur
   const send = useConversation((s) => s.send);
   const followUps = useVoice((s) => s.followUps);
   const discard = useRef(false);
+  // The panel plays its exit animation: nothing may open the microphone anymore.
+  const present = useIsPresent();
+  const presentRef = useRef(present);
+  presentRef.current = present;
 
   /** Shows and speaks a short line; resolves when it has been said. */
   const say = (text: string, label?: string) => {
@@ -87,7 +92,8 @@ export function useVoiceTurns({ agent, wake, typing, onStart, onSend }: VoiceTur
       const greeted = sayRef.current(voiceLine("greet", language), "greet");
       const late = new Promise<"late">((resolve) => setTimeout(() => resolve("late"), 15_000));
       if ((await Promise.race([greeted, late])) === "late") stopSpeaking();
-      if (!cancelled && wake.call.listen && !useConversation.getState().busy && useVoice.getState().mode === "idle") void startVoiceRef.current();
+      // Typing instead of talking: the input stays, with what is in it.
+      if (!cancelled && presentRef.current && !typing?.current && wake.call.listen && !useConversation.getState().busy && useVoice.getState().mode === "idle") void startVoiceRef.current();
     })();
     return () => {
       cancelled = true;
@@ -101,7 +107,7 @@ export function useVoiceTurns({ agent, wake, typing, onStart, onSend }: VoiceTur
     followUpsSeen.current = followUps;
     // A moment later, so the end of the reply doesn't reach the microphone.
     const timer = setTimeout(() => {
-      if (!typing?.current && !useConversation.getState().busy && useVoice.getState().mode === "idle") void startVoiceRef.current(true);
+      if (presentRef.current && !typing?.current && !useConversation.getState().busy && useVoice.getState().mode === "idle") void startVoiceRef.current(true);
     }, 300);
     return () => clearTimeout(timer);
   }, [followUps, typing]);

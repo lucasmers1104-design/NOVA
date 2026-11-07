@@ -73,6 +73,8 @@ function emitReply(event: ReplyEvent) {
 
 /** The reply streaming in now. */
 let currentReply: { id: string; voice: boolean } | null = null;
+/** Settles when the backend has let go of the reply being sent. */
+let sending: Promise<unknown> = Promise.resolve();
 
 let nextId = 1;
 const id = () => `m${nextId++}`;
@@ -164,10 +166,12 @@ export const useConversation = create<ConversationState>()((set, get) => ({
     currentReply = current;
     emitReply({ replyId: reply.id, voice, type: "start", ack: options.ack ?? null });
     try {
-      await sendMessage(text, voice, (event) => {
+      const running = sendMessage(text, voice, (event) => {
         get().apply(event);
         if (currentReply === current) emitReply({ replyId: reply.id, voice, ...event });
       });
+      sending = running.catch(() => {});
+      await running;
     } catch (error) {
       const failed: AgentEvent = { type: "failed", error: error instanceof Error ? error.message : String(error) };
       // Refused before it began: the chips are gone, so the attachments must not ride along with the next message.
@@ -232,7 +236,11 @@ export const useConversation = create<ConversationState>()((set, get) => ({
   },
 
   reset: async () => {
-    if (get().busy) await get().cancel();
+    if (get().busy) {
+      await get().cancel();
+      // The backend refuses a reset until the stopped reply has unwound.
+      await sending;
+    }
     await resetConversation();
     set({ items: [], attachments: [], state: "idle", detail: null, lastPrompt: null });
   },

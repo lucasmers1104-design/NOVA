@@ -202,10 +202,7 @@ fn decode_entities(text: &str) -> String {
 
 /// A feed's bytes as text: UTF-8, or else Latin-1 as older feeds declare it.
 fn feed_text(bytes: &[u8]) -> String {
-    match std::str::from_utf8(bytes) {
-        Ok(text) => text.to_string(),
-        Err(_) => bytes.iter().map(|&b| b as char).collect(),
-    }
+    http::decode_text(bytes)
 }
 
 /// Parses RSS 2.0, RSS 1.0 (RDF) and Atom feeds into a common shape.

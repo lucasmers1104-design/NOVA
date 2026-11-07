@@ -137,6 +137,7 @@ pub fn run() {
             // Nothing would bring the dot back; it goes away through its settings.
             (assistant::DOT_LABEL, WindowEvent::CloseRequested { api, .. }) => api.prevent_close(),
             (assistant::DOT_LABEL, WindowEvent::Moved(position)) => assistant::on_dot_moved(window.app_handle(), *position),
+            (assistant::PANEL_LABEL, WindowEvent::Moved(position)) => assistant::on_panel_moved(window.app_handle(), *position),
             _ => {}
         })
         .invoke_handler(tauri::generate_handler![
@@ -223,6 +224,11 @@ pub fn run() {
             finder::finder_status,
             finder::finder_pick_folder,
             finder::finder_add_standard_folders,
+            finder::finder_add_all_drives,
+            assistant::assistant_panel_pin,
+            assistant::assistant_panel_unmove,
+            agent::everyday::assistant_timer_cancel,
+            agent::everyday::assistant_power_cancel,
             finder::finder_remove_folder,
             finder::finder_set_content,
             finder::finder_reindex,

@@ -83,6 +83,7 @@ describe("updates", () => {
   it("keeps the last seen version when settings are reset", () => {
     useSettings.setState({ lastSeenVersion: "1.0.0", autoUpdate: false });
     useSettings.getState().resetSettings();
-    expect(useSettings.getState()).toMatchObject({ lastSeenVersion: "1.0.0", autoUpdate: true });
+    // A choice about updates isn't a look: it stays too.
+    expect(useSettings.getState()).toMatchObject({ lastSeenVersion: "1.0.0", autoUpdate: false });
   });
 });

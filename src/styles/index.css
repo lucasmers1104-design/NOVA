@@ -288,6 +288,32 @@
   }
 }
 
+@keyframes nova-eq {
+  0%,
+  100% {
+    transform: scaleY(0.3);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+/* A setting the search in Settings led to. */
+@keyframes nova-setting-found {
+  0%,
+  100% {
+    background: transparent;
+  }
+  25% {
+    background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  }
+}
+
+.setting-found {
+  animation: nova-setting-found 1.7s ease-out;
+  border-radius: 12px;
+}
+
 @keyframes nova-pulse {
   0%,
   100% {

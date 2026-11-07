@@ -8,12 +8,13 @@ import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { Switch } from "@/components/ui/Switch";
 import { PROVIDERS, providerInfo, useModels } from "@/features/ai/api";
 import { notifyError, notify } from "@/features/notifications/store";
-import { SettingRow, SettingsSection } from "@/features/settings/SettingsLayout";
+import { MoreOptions, SettingRow, SettingsSection } from "@/features/settings/SettingsLayout";
 import { isDesktop } from "@/lib/native";
 import {
   agentStatus,
   clearHistory,
   configureAgent,
+  finderAddAllDrives,
   finderAddStandardFolders,
   finderPickFolder,
   finderReindex,
@@ -46,7 +47,7 @@ const LANGUAGES = [
 
 const selectClass = "h-9 max-w-64 rounded-control border border-line bg-black/25 px-2.5 text-[13px] text-fg outline-none focus:border-line-strong disabled:opacity-50";
 
-function useAgent() {
+export function useAgent() {
   const client = useQueryClient();
   const query = useQuery({ queryKey: AGENT_KEY, queryFn: agentStatus, enabled: isDesktop() });
   useEffect(() => {
@@ -131,56 +132,6 @@ export function AgentSettings() {
             </option>
           ))}
         </select>
-      </SettingRow>
-      {PROVIDERS.filter((p) => status?.keys[p.id] || p.id === "anthropic").map((p) => (
-        <ModelRow
-          key={p.id}
-          provider={p.id}
-          name={p.name}
-          hasKey={status?.keys[p.id] ?? false}
-          value={prefs?.models[p.id] ?? ""}
-          disabled={!prefs || saving}
-          onChange={(model) => {
-            const models = { ...prefs?.models };
-            if (model) models[p.id] = model;
-            else delete models[p.id];
-            update({ models });
-          }}
-        />
-      ))}
-      <SettingRow label="Thoroughness" description="Fast answers sooner; Thorough thinks longer on hard requests (Claude models).">
-        <SegmentedControl label="Thoroughness" value={prefs?.effort ?? "medium"} options={EFFORTS} onChange={(effort) => update({ effort })} />
-      </SettingRow>
-      <SettingRow
-        label="Monthly limit"
-        htmlFor={limitId}
-        description={
-          <>
-            This month: {usage?.requests ?? 0} requests · {((usage?.inputTokens ?? 0) / 1000).toFixed(1)}k in · {((usage?.outputTokens ?? 0) / 1000).toFixed(1)}k out
-            {spent > 0 && ` · ≈ $${spent.toFixed(2)}`}
-            {(usage?.unpricedRequests ?? 0) > 0 && ` · ${usage?.unpricedRequests} without a price estimate (these don't count toward the limit)`}. Costs are estimates for Claude models, so the limit only covers those; your provider's bill is authoritative.
-          </>
-        }
-      >
-        <div className="flex items-center gap-1.5">
-          <span className="text-[13px] text-fg-muted">$</span>
-          <input
-            id={limitId}
-            inputMode="decimal"
-            placeholder="No limit"
-            value={limitDraft ?? (prefs?.monthlyLimitUsd != null ? String(prefs.monthlyLimitUsd) : "")}
-            onChange={(e) => setLimitDraft(e.target.value)}
-            onBlur={() => {
-              if (limitDraft === null) return;
-              const value = limitDraft.trim().replace(",", ".");
-              const limit = value === "" ? null : Number(value);
-              setLimitDraft(null);
-              if (limit === null || (Number.isFinite(limit) && limit >= 0)) update({ monthlyLimitUsd: limit });
-              else notify("Enter a positive amount, or leave it empty for no limit", { kind: "warning" });
-            }}
-            className="h-9 w-24 rounded-control border border-line bg-black/25 px-2.5 text-[13px] text-fg outline-none select-text focus:border-line-strong"
-          />
-        </div>
       </SettingRow>
       <SettingRow label="Spoken replies" description="NOVA reads its answers aloud. Replies to spoken questions are always read aloud.">
         <Switch label="Spoken replies" checked={prefs?.speakReplies ?? false} disabled={!prefs} onChange={(speakReplies) => update({ speakReplies })} />
@@ -295,6 +246,57 @@ export function AgentSettings() {
           </label>
         </div>
       </SettingRow>
+      <MoreOptions label="Models, cost limit and language">
+      {PROVIDERS.filter((p) => status?.keys[p.id] || p.id === "anthropic").map((p) => (
+        <ModelRow
+          key={p.id}
+          provider={p.id}
+          name={p.name}
+          hasKey={status?.keys[p.id] ?? false}
+          value={prefs?.models[p.id] ?? ""}
+          disabled={!prefs || saving}
+          onChange={(model) => {
+            const models = { ...prefs?.models };
+            if (model) models[p.id] = model;
+            else delete models[p.id];
+            update({ models });
+          }}
+        />
+      ))}
+      <SettingRow label="Thoroughness" description="Fast answers sooner; Thorough thinks longer on hard requests (Claude models).">
+        <SegmentedControl label="Thoroughness" value={prefs?.effort ?? "medium"} options={EFFORTS} onChange={(effort) => update({ effort })} />
+      </SettingRow>
+      <SettingRow
+        label="Monthly limit"
+        htmlFor={limitId}
+        description={
+          <>
+            This month: {usage?.requests ?? 0} requests · {((usage?.inputTokens ?? 0) / 1000).toFixed(1)}k in · {((usage?.outputTokens ?? 0) / 1000).toFixed(1)}k out
+            {spent > 0 && ` · ≈ $${spent.toFixed(2)}`}
+            {(usage?.unpricedRequests ?? 0) > 0 && ` · ${usage?.unpricedRequests} without a price estimate (these don't count toward the limit)`}. Costs are estimates for Claude models, so the limit only covers those; your provider's bill is authoritative.
+          </>
+        }
+      >
+        <div className="flex items-center gap-1.5">
+          <span className="text-[13px] text-fg-muted">$</span>
+          <input
+            id={limitId}
+            inputMode="decimal"
+            placeholder="No limit"
+            value={limitDraft ?? (prefs?.monthlyLimitUsd != null ? String(prefs.monthlyLimitUsd) : "")}
+            onChange={(e) => setLimitDraft(e.target.value)}
+            onBlur={() => {
+              if (limitDraft === null) return;
+              const value = limitDraft.trim().replace(",", ".");
+              const limit = value === "" ? null : Number(value);
+              setLimitDraft(null);
+              if (limit === null || (Number.isFinite(limit) && limit >= 0)) update({ monthlyLimitUsd: limit });
+              else notify("Enter a positive amount, or leave it empty for no limit", { kind: "warning" });
+            }}
+            className="h-9 w-24 rounded-control border border-line bg-black/25 px-2.5 text-[13px] text-fg outline-none select-text focus:border-line-strong"
+          />
+        </div>
+      </SettingRow>
       <SettingRow label="Speech recognition language" description="Windows speech recognition may need “Online speech recognition” in Windows Settings → Privacy → Speech. NOVA's offline recognizer (Local AI & performance) understands German and English by itself.">
         <select aria-label="Speech recognition language" className={selectClass} disabled={!prefs} value={prefs?.language ?? "auto"} onChange={(e) => update({ language: e.target.value })}>
           {LANGUAGES.map((l) => (
@@ -304,6 +306,7 @@ export function AgentSettings() {
           ))}
         </select>
       </SettingRow>
+      </MoreOptions>
     </SettingsSection>
   );
 }
@@ -361,6 +364,7 @@ export function FinderSettings() {
     return () => void unlisten.then((stop) => stop());
   }, [client, desktop]);
 
+  const [confirmingPc, setConfirmingPc] = useState(false);
   const progress = status?.progress;
   const total = status?.folders.reduce((s, f) => s + f.files, 0) ?? 0;
   return (
@@ -391,6 +395,9 @@ export function FinderSettings() {
               <Button size="sm" variant="ghost" onClick={() => run(finderAddStandardFolders, "Couldn't add the folders")}>
                 Add Documents, Desktop, Downloads & more
               </Button>
+              <Button size="sm" variant="ghost" onClick={() => setConfirmingPc(true)}>
+                Add the whole PC
+              </Button>
               {(status?.folders.length ?? 0) > 0 && (
                 <Button size="sm" variant="ghost" icon={<RefreshCw size={13} aria-hidden />} disabled={progress?.running} onClick={() => run(finderReindex, "Couldn't start indexing")}>
                   Refresh index
@@ -407,6 +414,17 @@ export function FinderSettings() {
                     : null}
             </p>
           </div>
+          <ConfirmDialog
+            open={confirmingPc}
+            title="Add the whole PC to NOVA Finder?"
+            description="NOVA indexes the file names on all your drives in the background and can then work with the files there, still asking before it changes anything. Windows, installed programs and app data stay off limits. The index stays on this PC."
+            confirmLabel="Add the whole PC"
+            onClose={() => setConfirmingPc(false)}
+            onConfirm={() => {
+              setConfirmingPc(false);
+              run(finderAddAllDrives, "Couldn't add the drives");
+            }}
+          />
           <SettingRow label="Search inside text files" description="Also indexes the beginning of text files (.txt, .md, .csv, code…) so NOVA can find them by content. Turning it off deletes the stored text.">
             <Switch label="Search inside text files" checked={status?.content ?? true} disabled={!status} onChange={(enabled) => run(() => finderSetContent(enabled), "Couldn't change the setting")} />
           </SettingRow>

@@ -118,7 +118,7 @@ export async function listen(german = false, onTranscript?: (text: string) => vo
     }
   };
   try {
-    await callNative("voice_listen", { onEvent: channel });
+    await callNative("voice_listen", { onEvent: channel, quiet });
   } catch (error) {
     useVoice.setState({ error: error instanceof Error ? error.message : String(error) });
   }
@@ -228,6 +228,7 @@ type SpeechPrefs = Pick<AgentPrefs, "voice" | "speechRate" | "speechVolume">;
 /** Faster than this, a line came from the disk and not from the online service. */
 const ONLINE_CACHE_MS = 300;
 const ONLINE_LINE_PAUSE_MS = 20_000;
+let preparing = 0;
 
 /** NOVA's fixed lines (greetings, "one moment") made ahead, so they play at once. */
 const madeAhead = new Map<string, ArrayBuffer>();
@@ -268,6 +269,10 @@ async function synthesizeOnline(text: string, rate: number, voice: string, germa
  * keeps its voice warm. `busy`: a reply is on its way; it goes first.
  */
 export async function prepareNovaLines(language: string, rate: number, preferred = "", busy: () => boolean = () => false): Promise<void> {
+  // Only the latest settings count: dragging the speed slider mustn't spend a request per step.
+  const mine = ++preparing;
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  if (mine !== preparing) return;
   const online = isOnlineVoice(preferred);
   const voice = online ? preferred : novaVoiceId(preferred);
   const german = speaksGerman(language);
@@ -278,6 +283,7 @@ export async function prepareNovaLines(language: string, rate: number, preferred
       const key = aheadKey(voice, chunk, rate);
       if (madeAhead.has(key)) continue;
       while (speechActive() || busy()) await new Promise((resolve) => setTimeout(resolve, 500));
+      if (mine !== preparing) return;
       try {
         const started = Date.now();
         // Kept on disk for online voices, so each line costs one request ever.
@@ -491,6 +497,11 @@ export function lineReady(text: string, prefs: SpeechPrefs): boolean {
 /** Something is being said, or a reply is still being spoken as it arrives. */
 export function speechActive(): boolean {
   return activeReply !== null || (active?.busy ?? false) || useVoice.getState().mode === "speaking";
+}
+
+/** Whether NOVA can be heard right now (a reply that is only on its way can't). */
+export function speechAudible(): boolean {
+  return (active?.busy ?? false) || useVoice.getState().mode === "speaking";
 }
 
 /** A new turn number; work for older turns is dropped. */

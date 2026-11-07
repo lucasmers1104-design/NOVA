@@ -3,18 +3,17 @@ import {
   ArrowUpRight,
   Ellipsis,
   FolderSearch,
-  History,
+  LocateFixed,
   Mic,
+  Pin,
+  PinOff,
   PlugZap,
   Settings,
   SquarePen,
-  Volume2,
-  VolumeX,
   X,
 } from "lucide-react";
 import { motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Badge } from "@/components/ui/Badge";
 import { IconButton } from "@/components/ui/Button";
 import { Menu } from "@/components/ui/Menu";
 import { cn } from "@/lib/cn";
@@ -27,6 +26,7 @@ import {
 } from "../api";
 import { replyText, useConversation } from "../conversation";
 import type {
+  AgentPrefs,
   AgentStatus,
   AssistantState,
   DotCorner,
@@ -37,7 +37,7 @@ import { useVoiceTurns } from "../useVoiceTurns";
 import {
   isOnlineVoice,
   openVoiceSettings,
-  speechActive,
+  speechAudible,
   stopListening,
   stopSpeaking,
   useVoice,
@@ -47,6 +47,7 @@ import { NovaConversation } from "./NovaConversation";
 import { NovaHistory } from "./NovaHistory";
 import { NovaInput } from "./NovaInput";
 import { NovaStatusOrb, NovaVoiceVisualizer, statusLabel } from "./NovaStatus";
+import { NovaToolbar } from "./NovaToolbar";
 import { NovaVoiceLine } from "./NovaVoiceLine";
 import { Sparkle } from "./Sparkle";
 
@@ -78,7 +79,12 @@ interface NovaPanelProps {
   onOpenSettings: () => void;
   onOpenProviders: () => void;
   onIndexFolders: () => void;
-  onToggleSpeech: () => void;
+  /** It stays where it is, and stays open when NOVA's main window comes up. */
+  pinned: boolean;
+  onPin: (pinned: boolean) => void;
+  /** Back beside the dot. */
+  onUnmove: () => void;
+  onPrefs: (patch: Partial<AgentPrefs>) => void;
 }
 
 /** The expanded NOVA AI panel: a quiet header, the conversation and one input. */
@@ -91,7 +97,10 @@ export function NovaPanel(props: NovaPanelProps) {
     onCollapse,
     onOpenSettings,
     onOpenProviders,
-    onToggleSpeech,
+    pinned,
+    onPin,
+    onUnmove,
+    onPrefs,
   } = props;
   const {
     items,
@@ -110,7 +119,6 @@ export function NovaPanel(props: NovaPanelProps) {
   const [actionError, setActionError] = useState<string | null>(null);
   const opensUpward = origin.startsWith("bottom");
   const listening = voice.mode === "listening" || voice.mode === "processing";
-  const speakReplies = agent?.prefs.speakReplies ?? false;
   const working = state !== "idle" && state !== "completed";
   // What NOVA just said around a spoken turn (a greeting, "one moment").
   const line = voice.line;
@@ -127,6 +135,15 @@ export function NovaPanel(props: NovaPanelProps) {
     onSend: () => setView("chat"),
   });
   const stopLabel = german ? "Aufhören zu sprechen" : "Stop speaking";
+  const pinLabel = pinned
+    ? german
+      ? "Loslösen: wieder verschiebbar"
+      : "Unpin: can be moved again"
+    : german
+      ? "Hier anpinnen: bleibt an dieser Stelle und offen"
+      : "Pin here: stays in this spot and open";
+  // Dragging the header moves the window, unless it is pinned.
+  const drag = pinned ? {} : { "data-tauri-drag-region": true };
 
   const report = (error: unknown) =>
     setActionError(error instanceof Error ? error.message : String(error));
@@ -195,7 +212,7 @@ export function NovaPanel(props: NovaPanelProps) {
         transition: { duration: 0.15, ease: [0.4, 0, 1, 1] },
       }}
     >
-      <header className="flex h-12 shrink-0 items-center gap-2.5 pr-2 pl-4">
+      <header {...drag} className={cn("flex h-12 shrink-0 items-center gap-2.5 pr-2 pl-4", !pinned && "cursor-grab active:cursor-grabbing")}>
         {view === "history" ? (
           <IconButton
             label="Back to the conversation"
@@ -208,10 +225,11 @@ export function NovaPanel(props: NovaPanelProps) {
         ) : (
           <NovaStatusOrb state={state} level={voice.level} size={20} />
         )}
-        <h1 className="text-[13.5px] font-semibold text-fg">
+        <h1 {...drag} className="text-[13.5px] font-semibold text-fg">
           {view === "history" ? "What NOVA did" : "NOVA"}
         </h1>
         <p
+          {...drag}
           className={cn(
             "min-w-0 flex-1 truncate text-[12px] text-fg-muted transition-opacity",
             !working && "opacity-0",
@@ -220,21 +238,26 @@ export function NovaPanel(props: NovaPanelProps) {
         >
           {statusLabel(state, detail)}
         </p>
-        {agent?.prefs.autoMode && (
-          <span title="Auto mode is on: NOVA acts without asking first">
-            <Badge tone="warning">Auto</Badge>
-          </span>
-        )}
         {view === "chat" && items.length > 0 && (
           <IconButton
             label="New conversation"
             title="New conversation (Ctrl+N)"
             size="sm"
-            onClick={() => void reset()}
+            onClick={() => void reset().catch(report)}
           >
             <SquarePen size={15} aria-hidden />
           </IconButton>
         )}
+        <IconButton
+          label={pinLabel}
+          title={pinLabel}
+          size="sm"
+          aria-pressed={pinned}
+          className={pinned ? "text-accent-text" : undefined}
+          onClick={() => onPin(!pinned)}
+        >
+          {pinned ? <PinOff size={15} aria-hidden /> : <Pin size={15} aria-hidden />}
+        </IconButton>
         <Menu
           label="More"
           align="end"
@@ -246,25 +269,10 @@ export function NovaPanel(props: NovaPanelProps) {
           entries={[
             {
               kind: "item",
-              id: "speech",
-              label: "Read replies aloud",
-              checked: speakReplies,
-              icon: speakReplies ? (
-                <Volume2 size={14} aria-hidden />
-              ) : (
-                <VolumeX size={14} aria-hidden />
-              ),
-              onSelect: () => {
-                if (speakReplies) stopSpeaking();
-                onToggleSpeech();
-              },
-            },
-            {
-              kind: "item",
-              id: "history",
-              label: "Action history",
-              icon: <History size={14} aria-hidden />,
-              onSelect: () => setView("history"),
+              id: "unmove",
+              label: german ? "Zurück zum Punkt" : "Back beside the dot",
+              icon: <LocateFixed size={14} aria-hidden />,
+              onSelect: onUnmove,
             },
             { kind: "separator", id: "line" },
             {
@@ -288,13 +296,23 @@ export function NovaPanel(props: NovaPanelProps) {
           label={voice.mode === "speaking" ? stopLabel : "Close"}
           size="sm"
           onClick={() => {
-            if (speechActive()) stopSpeaking();
+            if (speechAudible()) stopSpeaking();
             else onCollapse();
           }}
         >
           <X size={16} aria-hidden />
         </IconButton>
       </header>
+
+      <NovaToolbar
+        prefs={agent?.prefs ?? null}
+        german={german}
+        onHistory={() => setView((now) => (now === "history" ? "chat" : "history"))}
+        onPrefs={(patch) => {
+          if (patch.speakReplies === false) stopSpeaking();
+          onPrefs(patch);
+        }}
+      />
 
       {view === "history" ? (
         <NovaHistory />

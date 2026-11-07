@@ -79,6 +79,7 @@
     "allow-finder-status",
     "allow-finder-pick-folder",
     "allow-finder-add-standard-folders",
+    "allow-finder-add-all-drives",
     "allow-finder-remove-folder",
     "allow-finder-set-content",
     "allow-finder-reindex",

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Markdown } from "@/components/ui/Markdown";
@@ -184,8 +184,10 @@ function renderPanel(overrides: Partial<Parameters<typeof NovaPanel>[0]> = {}) {
     onOpenSettings: vi.fn(),
     onOpenProviders: vi.fn(),
     onIndexFolders: vi.fn(),
-    onToggleSpeech: vi.fn(),
-    onVoiceTurn: vi.fn(),
+    pinned: false,
+    onPin: vi.fn(),
+    onUnmove: vi.fn(),
+    onPrefs: vi.fn(),
     ...overrides,
   };
   render(<NovaPanel {...props} />);
@@ -319,7 +321,7 @@ describe("NovaPanel", () => {
 
   it("shows when auto mode is on", () => {
     renderPanel({ agent: { ...AGENT, prefs: { ...AGENT.prefs, autoMode: true } } });
-    expect(screen.getByText("Auto")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Auto mode" })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("greets quietly and keeps everything else in one menu", async () => {
@@ -328,10 +330,10 @@ describe("NovaPanel", () => {
     expect(screen.getByRole("dialog", { name: "NOVA AI" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(/, Luca$/);
     expect(screen.getByText("How can I help?")).toBeInTheDocument();
-    // No footer, no row of header buttons.
+    // No footer, and in the header only pin, menu and close.
     expect(screen.queryByText("Microphone off")).toBeNull();
     expect(screen.queryByRole("button", { name: "New conversation" })).toBeNull();
-    expect(screen.getAllByRole("button").filter((b) => b.closest("header"))).toHaveLength(2);
+    expect(screen.getAllByRole("button").filter((b) => b.closest("header"))).toHaveLength(3);
 
     await user.click(screen.getByRole("button", { name: "Index my folders for smarter file search" }));
     expect(props.onIndexFolders).toHaveBeenCalledOnce();
@@ -339,15 +341,26 @@ describe("NovaPanel", () => {
     expect(props.onCollapse).toHaveBeenCalledOnce();
 
     await user.click(screen.getByRole("button", { name: "More" }));
-    expect(screen.getByRole("menuitemradio", { name: "Read replies aloud" })).toHaveAttribute("aria-checked", "false");
     await user.click(screen.getByRole("menuitem", { name: "Assistant settings" }));
     expect(props.onOpenSettings).toHaveBeenCalledOnce();
     await user.click(screen.getByRole("button", { name: "More" }));
     await user.click(screen.getByRole("menuitem", { name: "Anthropic · claude-opus-5-5" }));
     expect(props.onOpenProviders).toHaveBeenCalledOnce();
+    await user.click(screen.getByRole("button", { name: "Read aloud" }));
+    expect(props.onPrefs).toHaveBeenCalledWith({ speakReplies: true });
+    await user.click(screen.getByRole("button", { name: /^Pin here/ }));
+    expect(props.onPin).toHaveBeenCalledWith(true);
     await user.click(screen.getByRole("button", { name: "More" }));
-    await user.click(screen.getByRole("menuitemradio", { name: "Read replies aloud" }));
-    expect(props.onToggleSpeech).toHaveBeenCalledOnce();
+    await user.click(screen.getByRole("menuitem", { name: "Back beside the dot" }));
+    expect(props.onUnmove).toHaveBeenCalledOnce();
+  });
+
+  it("only moves by its header while it isn't pinned", () => {
+    renderPanel();
+    expect(screen.getByRole("heading", { level: 1 })).toHaveAttribute("data-tauri-drag-region");
+    cleanup();
+    renderPanel({ pinned: true });
+    expect(screen.getByRole("heading", { level: 1 })).not.toHaveAttribute("data-tauri-drag-region");
   });
 
   it("explains local mode without a provider", async () => {
@@ -484,8 +497,7 @@ describe("NovaPanel", () => {
     const user = userEvent.setup();
     const history = vi.spyOn(api, "actionHistory").mockResolvedValue([]);
     renderPanel();
-    await user.click(screen.getByRole("button", { name: "More" }));
-    await user.click(screen.getByRole("menuitem", { name: "Action history" }));
+    await user.click(screen.getByRole("button", { name: "History" }));
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("What NOVA did");
     expect(screen.queryByRole("heading", { level: 2 })).toBeNull();
     expect(await screen.findByText(/Nothing yet/)).toBeInTheDocument();
@@ -611,6 +623,7 @@ describe("AssistantSettings", () => {
     shortcutError: null,
     defaultShortcut: "Ctrl+Alt+Space",
     panelOpen: false,
+    panelPinned: false,
   };
   let status: AssistantStatus;
   let autostart: boolean;

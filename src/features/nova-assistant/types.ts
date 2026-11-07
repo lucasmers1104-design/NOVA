@@ -39,6 +39,8 @@ export interface AssistantStatus {
   hideInFullscreen: boolean;
   /** The dot sits where the user dragged it instead of in `corner`. */
   customPosition: boolean;
+  /** The panel stays where it is, and stays open when NOVA's main window comes up. */
+  panelPinned: boolean;
   /** Why the saved shortcut couldn't be registered (e.g. taken by another app). */
   shortcutError: string | null;
   defaultShortcut: string;
@@ -87,6 +89,13 @@ export type AssistantState =
 
 export type Risk = "safe" | "confirm" | "high";
 
+/** Mirrors `Forecast` in src-tauri/src/live.rs, as far as NOVA's card shows it. */
+export interface Forecast {
+  current: { temperature: number; weatherCode: number; isDay: boolean };
+  daily: { date: string; weatherCode: number; max: number; min: number }[];
+  temperatureUnit: string;
+}
+
 export interface FileHit {
   path: string;
   name: string;
@@ -114,7 +123,15 @@ export type ToolCard =
   | { kind: "path"; path: string }
   | { kind: "link"; url: string; title: string }
   | { kind: "productivity"; label: string; detail: string }
-  | { kind: "freed"; bytes: number; items: { label: string; bytes: number }[]; freeNow: number };
+  | { kind: "freed"; bytes: number; items: { label: string; bytes: number }[]; freeNow: number }
+  | { kind: "music"; title: string }
+  | { kind: "game"; name: string; launcher: string; ready: boolean }
+  | { kind: "timer"; id: number; label: string; endsAt: number; seconds: number }
+  | { kind: "weather"; place: string; forecast: Forecast }
+  | { kind: "speed"; megabits: number; pingMs: number }
+  | { kind: "system"; cpu: number | null; memoryUsed: number; memoryTotal: number; gpu: number | null; top: { name: string; cpu: number; memory: number }[] }
+  | { kind: "power"; action: "shutdown" | "restart"; at: number }
+  | { kind: "finderHint" };
 
 /** Mirrors `AgentEvent` in src-tauri/src/agent/mod.rs. */
 export type AgentEvent =
@@ -213,6 +230,8 @@ export const ASSISTANT_EVENTS = {
   agent: "assistant://agent",
   /** → everyone: NOVA Finder indexing progress. */
   finder: "finder://progress",
+  /** → panel: a timer has run out. */
+  timer: "assistant://timer",
   /** → panel (already open): "Hey NOVA" or a double clap. */
   wake: "assistant://wake",
   /** → everyone: wake listening status changed. */

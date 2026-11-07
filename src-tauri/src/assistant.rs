@@ -177,6 +177,10 @@ pub struct AssistantPrefs {
     pub hide_in_fullscreen: bool,
     /// Where the user dragged the dot (physical top-left of its window). Overrides `corner`.
     pub position: Option<Point>,
+    /// Where the user dragged the panel (physical top-left of its window); beside the dot without one.
+    pub panel_position: Option<Point>,
+    /// The panel stays where it is, and stays open when NOVA's main window comes up.
+    pub panel_pinned: bool,
 }
 
 impl Default for AssistantPrefs {
@@ -190,6 +194,8 @@ impl Default for AssistantPrefs {
             background: false,
             hide_in_fullscreen: false,
             position: None,
+            panel_position: None,
+            panel_pinned: false,
         }
     }
 }
@@ -257,6 +263,10 @@ struct Inner {
     panel_origin: Corner,
     /// "Hey NOVA" or a double clap opened the panel; handed to it when it shows.
     pending_wake: Option<WakeCall>,
+    /// Where NOVA last put the panel; a move to anywhere else is a user drag.
+    panel_placed_at: Option<PhysicalPosition<i32>>,
+    /// Latest dragged position of the panel, saved once the drag settles.
+    panel_dragged_to: Option<PhysicalPosition<i32>>,
 }
 
 #[derive(Default)]
@@ -264,6 +274,8 @@ pub struct AssistantState {
     inner: Mutex<Inner>,
     settling: AtomicBool,
     drag_generation: AtomicU64,
+    panel_settling: AtomicBool,
+    panel_drag_generation: AtomicU64,
     collapse_generation: AtomicU64,
     watching_fullscreen: AtomicBool,
     watching_taskbar: AtomicBool,
@@ -535,6 +547,26 @@ pub fn panel_placement(screen: Screen, dot_window: Rect, room: f64) -> PanelPlac
     PanelPlacement { window: Rect { x: x - pad, y: y - pad, w: width + 2 * pad, h: height + 2 * pad }, origin }
 }
 
+/// The panel where the user put it, fully on `screen`. It grows out of the corner
+/// nearest the screen's edge, like beside the dot.
+pub fn panel_at(screen: Screen, (x, y): (i32, i32)) -> PanelPlacement {
+    let s = screen.scale;
+    let work = screen.work;
+    let pad = px(PANEL_PAD, s);
+    let width = px(PANEL_WIDTH, s).min(work.w - 2 * pad) + 2 * pad;
+    let height = px(PANEL_MAX_HEIGHT, s).min(work.h - 2 * pad) + 2 * pad;
+    let window = Rect { x: fit(x, work.x, work.right() - width), y: fit(y, work.y, work.bottom() - height), w: width, h: height };
+    let (mid_x, mid_y) = work.center();
+    let (x, y) = window.center();
+    let origin = match (y < mid_y, x < mid_x) {
+        (true, true) => Corner::TopLeft,
+        (true, false) => Corner::TopRight,
+        (false, true) => Corner::BottomLeft,
+        (false, false) => Corner::BottomRight,
+    };
+    PanelPlacement { window, origin }
+}
+
 fn screen_of(monitor: &Monitor) -> Screen {
     let area = monitor.work_area();
     Screen {
@@ -672,16 +704,78 @@ fn create_panel<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<WebviewWindow<R
 }
 
 fn position_panel<R: Runtime>(app: &AppHandle<R>, panel: &WebviewWindow<R>) -> Corner {
-    let Some((screen, dot)) = dot_rect(app) else { return Corner::default() };
-    let room = state(app).lock().prefs.look.room();
-    let placement = panel_placement(screen, dot, room);
+    let (room, moved) = {
+        let inner = state(app).lock();
+        (inner.prefs.look.room(), inner.prefs.panel_position)
+    };
+    // Where the user put it, while that screen is still connected.
+    let all = screens(app);
+    let placement = match moved.and_then(|p| screen_containing(&all, (p.x + 40, p.y + 40)).map(|screen| panel_at(screen, (p.x, p.y)))) {
+        Some(placement) => placement,
+        None => {
+            let Some((screen, dot)) = dot_rect(app) else { return Corner::default() };
+            panel_placement(screen, dot, room)
+        }
+    };
     let rect = placement.window;
     let pos = PhysicalPosition::new(rect.x, rect.y);
+    state(app).lock().panel_placed_at = Some(pos);
     let _ = panel.set_position(pos);
     let _ = panel.set_size(PhysicalSize::new(rect.w as u32, rect.h as u32));
     let _ = panel.set_position(pos);
     state(app).lock().panel_origin = placement.origin;
     placement.origin
+}
+
+/// Called for every move of the panel window: a drag is remembered once the mouse
+/// button is up. NOVA's own moves and Windows' don't count.
+pub fn on_panel_moved<R: Runtime>(app: &AppHandle<R>, pos: PhysicalPosition<i32>) {
+    if is_parked(pos) || !mouse_button_down() {
+        return;
+    }
+    let state = state(app);
+    {
+        let mut inner = state.lock();
+        if !inner.panel_open || inner.panel_placed_at.is_some_and(|placed| (placed.x - pos.x).abs() <= 2 && (placed.y - pos.y).abs() <= 2) {
+            return;
+        }
+        inner.panel_dragged_to = Some(pos);
+    }
+    state.panel_drag_generation.fetch_add(1, Ordering::SeqCst);
+    if state.panel_settling.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let state = self::state(&app);
+        loop {
+            let seen = state.panel_drag_generation.load(Ordering::SeqCst);
+            std::thread::sleep(DRAG_SETTLE);
+            if state.panel_drag_generation.load(Ordering::SeqCst) == seen && !mouse_button_down() {
+                break;
+            }
+        }
+        state.panel_settling.store(false, Ordering::SeqCst);
+        let prefs = {
+            let mut inner = state.lock();
+            let Some(pos) = inner.panel_dragged_to.take() else { return };
+            inner.panel_placed_at = Some(pos);
+            inner.prefs.panel_position = Some(Point { x: pos.x, y: pos.y });
+            inner.prefs.clone()
+        };
+        save_prefs(&app, &prefs);
+    });
+}
+
+/// A request needs the user's OK: the panel has to be up for them to give it.
+pub fn ensure_open<R: Runtime>(app: &AppHandle<R>) {
+    let open = {
+        let inner = state(app).lock();
+        inner.panel_open && !inner.collapsing
+    };
+    if !open {
+        expand(app);
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -1258,8 +1352,10 @@ struct NavigateEvent {
 }
 
 fn open_main<R: Runtime>(app: &AppHandle<R>, section: Option<&'static str>) {
-    // The always-on-top panel would cover the window it opens.
-    request_collapse(app);
+    // The always-on-top panel would cover the window it opens; a pinned one stays on purpose.
+    if !state(app).lock().prefs.panel_pinned {
+        request_collapse(app);
+    }
     crate::desktop::show_main_window(app);
     if let Some(section) = section {
         let _ = app.emit_to("main", EVENT_NAVIGATE, NavigateEvent { route: "settings", section });
@@ -1288,6 +1384,7 @@ pub struct AssistantStatus {
     shortcut_error: Option<String>,
     default_shortcut: &'static str,
     panel_open: bool,
+    panel_pinned: bool,
 }
 
 fn status<R: Runtime>(app: &AppHandle<R>) -> AssistantStatus {
@@ -1305,6 +1402,7 @@ fn status<R: Runtime>(app: &AppHandle<R>) -> AssistantStatus {
         shortcut_error: inner.shortcut_error.clone(),
         default_shortcut: DEFAULT_SHORTCUT,
         panel_open: inner.panel_open,
+        panel_pinned: inner.prefs.panel_pinned,
     }
 }
 
@@ -1376,6 +1474,39 @@ pub async fn assistant_reset_position<R: Runtime>(app: AppHandle<R>) -> CommandR
     };
     save_prefs(&app, &prefs);
     apply(&app, &prefs, &prefs);
+    let status = status(&app);
+    let _ = app.emit(EVENT_PREFS, status.clone());
+    Ok(status)
+}
+
+/// Pins the panel where it is, or lets it be moved again.
+#[tauri::command]
+pub async fn assistant_panel_pin<R: Runtime>(app: AppHandle<R>, pinned: bool) -> CommandResult<AssistantStatus> {
+    let prefs = {
+        let mut inner = state(&app).lock();
+        inner.prefs.panel_pinned = pinned;
+        inner.prefs.clone()
+    };
+    save_prefs(&app, &prefs);
+    let status = status(&app);
+    let _ = app.emit(EVENT_PREFS, status.clone());
+    Ok(status)
+}
+
+/// Puts the panel back beside the dot.
+#[tauri::command]
+pub async fn assistant_panel_unmove<R: Runtime>(app: AppHandle<R>) -> CommandResult<AssistantStatus> {
+    let prefs = {
+        let mut inner = state(&app).lock();
+        inner.prefs.panel_position = None;
+        inner.prefs.panel_pinned = false;
+        inner.prefs.clone()
+    };
+    save_prefs(&app, &prefs);
+    if let Some(panel) = app.get_webview_window(PANEL_LABEL) {
+        let origin = position_panel(&app, &panel);
+        state(&app).lock().panel_origin = origin;
+    }
     let status = status(&app);
     let _ = app.emit(EVENT_PREFS, status.clone());
     Ok(status)
@@ -1653,6 +1784,20 @@ mod tests {
         assert_eq!(placement.origin, Corner::BottomRight);
         assert!(panel.bottom() - 16 <= HD.work.bottom() - 16, "stays inside the work area");
         assert_eq!(panel.right() - 16, dot.right() - 8);
+    }
+
+    #[test]
+    fn a_dragged_panel_stays_fully_on_screen() {
+        let inside = panel_at(HD, (300, 100));
+        assert_eq!((inside.window.x, inside.window.y), (300, 100));
+        assert_eq!(inside.origin, Corner::TopLeft);
+        let over = panel_at(HD, (5000, -300));
+        assert_eq!(over.window.right(), HD.work.right());
+        assert_eq!(over.window.y, 0);
+        assert_eq!(over.origin, Corner::TopRight);
+        // On a laptop the panel is as tall as the screen allows.
+        let small = panel_at(LAPTOP, (100, 900));
+        assert!(small.window.y >= 0 && small.window.bottom() <= LAPTOP.work.bottom());
     }
 
     #[test]

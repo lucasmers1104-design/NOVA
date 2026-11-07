@@ -2,8 +2,8 @@ import { ArrowDown, Check, Copy, RotateCcw, TriangleAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { InlineCodeRenderer, Markdown } from "@/components/ui/Markdown";
 import { cn } from "@/lib/cn";
-import { type AssistantItem, type Item, replyText, type UsageInfo } from "../conversation";
-import { NovaToolCard, renderPathCode } from "./NovaToolCard";
+import { type AssistantItem, type Item, replyText, type Segment, type ToolItem, type UsageInfo } from "../conversation";
+import { NovaToolSteps, renderPathCode } from "./NovaToolCard";
 
 function formatTokens(n: number): string {
   return n >= 10_000 ? `${Math.round(n / 1000)}k` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
@@ -19,6 +19,18 @@ export function usageLine(usage: UsageInfo[]): string | null {
   const parts = [usage.at(-1)!.model, `${formatTokens(input)} in`, `${formatTokens(output)} out`];
   if (priced) parts.push(`≈ $${cost.toFixed(cost < 1 ? 4 : 2)}`);
   return parts.join(" · ");
+}
+
+/** A reply's segments with consecutive actions together, as steps of one task. */
+export function groupSegments(segments: Segment[]): ({ type: "text"; text: string; key: string } | { type: "tools"; tools: ToolItem[]; key: string })[] {
+  const groups: ReturnType<typeof groupSegments> = [];
+  segments.forEach((segment, index) => {
+    const last = groups.at(-1);
+    if (segment.type === "text") groups.push({ type: "text", text: segment.text, key: `t${index}` });
+    else if (last?.type === "tools") last.tools.push(segment.tool);
+    else groups.push({ type: "tools", tools: [segment.tool], key: segment.tool.id });
+  });
+  return groups;
 }
 
 function UserMessage({ item }: { item: Extract<Item, { kind: "user" }> }) {
@@ -50,15 +62,15 @@ function AssistantMessage({ item, onConfirm, onRetry, last }: { item: AssistantI
   }, [copied]);
   return (
     <div className="group text-[13.5px] leading-relaxed text-fg" aria-busy={item.streaming}>
-      {item.segments.map((segment, index) =>
-        segment.type === "text" ? (
-          <div key={index} className="select-text">
+      {groupSegments(item.segments).map((group) =>
+        group.type === "text" ? (
+          <div key={group.key} className="select-text">
             <InlineCodeRenderer.Provider value={renderPathCode}>
-              <Markdown source={segment.text} className="nova-markdown" />
+              <Markdown source={group.text} className="nova-markdown" />
             </InlineCodeRenderer.Provider>
           </div>
         ) : (
-          <NovaToolCard key={segment.tool.id} tool={segment.tool} onConfirm={(approved) => onConfirm(segment.tool.id, approved)} />
+          <NovaToolSteps key={group.key} tools={group.tools} onConfirm={onConfirm} />
         ),
       )}
       {item.streaming && empty && (

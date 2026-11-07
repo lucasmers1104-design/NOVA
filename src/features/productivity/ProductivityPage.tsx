@@ -40,7 +40,7 @@ export default function ProductivityPage() {
       ) : status !== "ready" ? (
         <Skeleton className="h-96 rounded-widget" />
       ) : (
-        <div className="grid grid-cols-[220px_minmax(0,1fr)] items-start gap-6">
+        <div className="grid grid-cols-[176px_minmax(0,1fr)] items-start gap-4 xl:grid-cols-[220px_minmax(0,1fr)] xl:gap-6">
           <Sidebar view={view} onView={setView} />
           <div className="min-w-0">
             <ViewContent view={view} onOpen={setEditing} />
@@ -383,14 +383,21 @@ function CalendarView({ onOpen }: { onOpen: (task: Task) => void }) {
   const selectedTasks = byDay.get(selected) ?? [];
 
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_300px] gap-4">
+    <div className="grid grid-cols-1 gap-4 2xl:grid-cols-[minmax(0,1fr)_300px]">
       <section aria-label="Month" className="glass rounded-widget p-5">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-[18px] font-semibold text-fg">
             {new Intl.DateTimeFormat(locale, { month: "long", year: "numeric" }).format(new Date(cursor.year, cursor.month, 1))}
           </h2>
           <div className="flex gap-1">
-            <Button size="sm" variant="ghost" onClick={() => setChosenMonth(null)}>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setChosenMonth(null);
+                setSelected(null);
+              }}
+            >
               Today
             </Button>
             <IconButton size="sm" label="Previous month" onClick={() => shift(-1)}>

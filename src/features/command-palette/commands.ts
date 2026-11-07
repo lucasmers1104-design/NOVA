@@ -208,7 +208,8 @@ export function buildCommands(): Command[] {
           icon: RefreshCw,
           keywords: ["update", "version", "upgrade", "release"],
           run: () => {
-            useUi.getState().navigate("settings");
+            // Where the answer shows up.
+            useUi.getState().openSettings("updates");
             void useUpdates.getState().check({ automatic: false });
           },
         },

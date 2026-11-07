@@ -68,6 +68,8 @@ export class StreamingSpeaker implements ReplySpeaker {
   private analyser: AnalyserNode;
   private meter: ReturnType<typeof setInterval> | null = null;
   private budgetTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The voice failed: this waits until what was already scheduled has played. */
+  private unsaid: string[] | null = null;
 
   constructor(
     private readonly backend: SynthBackend,
@@ -92,6 +94,11 @@ export class StreamingSpeaker implements ReplySpeaker {
 
   enqueue(text: string, options: { first?: boolean; tag?: string } = {}): void {
     if (this.cancelled || this.finished || !text.trim()) return;
+    if (this.unsaid) {
+      if (options.first) this.unsaid.unshift(text);
+      else this.unsaid.push(text);
+      return;
+    }
     const item: Item = { text, tag: options.tag ?? "reply", state: "waiting", buffer: null };
     // "first": before everything that hasn't started playing yet (the ack line).
     if (options.first) this.items.splice(this.next, 0, item);
@@ -190,7 +197,7 @@ export class StreamingSpeaker implements ReplySpeaker {
     for (const item of this.items.slice(index)) if (item.state !== "scheduled") item.state = "failed";
     this.items = this.items.filter((i) => i.state !== "failed");
     this.next = Math.min(this.next, this.items.length);
-    this.hooks.onFailed?.(unsaid);
+    this.unsaid = unsaid;
     this.settle();
   }
 
@@ -235,6 +242,12 @@ export class StreamingSpeaker implements ReplySpeaker {
       this.idle = true;
       this.stopMeter();
       this.hooks.onAudio?.(false);
+    }
+    // After the pieces already playing: another voice mustn't talk over them.
+    if (this.unsaid && this.playingSources.size === 0) {
+      const unsaid = this.unsaid;
+      this.unsaid = null;
+      this.hooks.onFailed?.(unsaid);
     }
     if (this.finished && this.playingSources.size === 0 && this.next >= this.items.length) this.close();
   }

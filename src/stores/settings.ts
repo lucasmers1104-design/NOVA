@@ -281,7 +281,20 @@ export const useSettings = create<Settings & SettingsActions>()(
       setAutoUpdate: (autoUpdate) => set({ autoUpdate }),
       setLastSeenVersion: (lastSeenVersion) => set({ lastSeenVersion }),
       // Reset keeps lastSeenVersion so it doesn't trigger a false "updated" notice.
-      resetSettings: () => set((s) => ({ ...defaultSettings(), lastSeenVersion: s.lastSeenVersion })),
+      // Only how NOVA looks and behaves: who you are and what you set up yourself stays.
+      resetSettings: () =>
+        set((s) => ({
+          ...defaultSettings(),
+          lastSeenVersion: s.lastSeenVersion,
+          displayName: s.displayName,
+          weatherPlace: s.weatherPlace,
+          weatherFahrenheit: s.weatherFahrenheit,
+          newsFeeds: s.newsFeeds,
+          updateSource: s.updateSource,
+          autoUpdate: s.autoUpdate,
+          closeToTray: s.closeToTray,
+          systemNotifications: s.systemNotifications,
+        })),
     }),
     {
       name: SETTINGS_STORAGE_KEY,

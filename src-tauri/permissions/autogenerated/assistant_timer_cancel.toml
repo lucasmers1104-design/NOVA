@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-assistant-timer-cancel"
+description = "Enables the assistant_timer_cancel command without any pre-configured scope."
+commands.allow = ["assistant_timer_cancel"]
+
+[[permission]]
+identifier = "deny-assistant-timer-cancel"
+description = "Denies the assistant_timer_cancel command without any pre-configured scope."
+commands.deny = ["assistant_timer_cancel"]

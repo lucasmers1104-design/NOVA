@@ -44,11 +44,18 @@ export const finderPickFolder = () => callNative<FinderStatus>("finder_pick_fold
 export const finderAddStandardFolders = () => callNative<FinderStatus>("finder_add_standard_folders");
 export const finderRemoveFolder = (path: string) => callNative<FinderStatus>("finder_remove_folder", { path });
 export const finderSetContent = (enabled: boolean) => callNative<FinderStatus>("finder_set_content", { enabled });
+export const finderAddAllDrives = () => callNative<FinderStatus>("finder_add_all_drives");
 export const finderReindex = () => callNative<FinderStatus>("finder_reindex");
 
 export const assistantStatus = () => callNative<AssistantStatus>("assistant_status");
 export const configureAssistant = (update: AssistantPrefsUpdate) => callNative<AssistantStatus>("assistant_configure", { update });
 export const resetDotPosition = () => callNative<AssistantStatus>("assistant_reset_position");
+
+export const pinPanel = (pinned: boolean) => callNative<AssistantStatus>("assistant_panel_pin", { pinned });
+/** Puts the panel back beside the dot. */
+export const unmovePanel = () => callNative<AssistantStatus>("assistant_panel_unmove");
+export const cancelTimer = (id: number) => callNative<void>("assistant_timer_cancel", { id });
+export const cancelPower = () => callNative<boolean>("assistant_power_cancel");
 
 /** Opens or closes the panel. */
 export const toggleAssistant = () => callNative<void>("assistant_toggle");

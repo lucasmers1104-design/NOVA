@@ -1,5 +1,38 @@
 # Changelog
 
+## 1.9.3 — 2026-11-07
+
+### Added
+- **NOVA's window can be moved and pinned**: drag it by its header anywhere, on any screen, and it opens there again. The pin keeps it in that spot and open, also when NOVA's main window comes up. "Back beside the dot" is in the ⋯ menu.
+- **A bar in NOVA's window**: auto mode, read aloud, keep listening and the history are one click away, with a warning before auto mode turns on.
+- **You see what NOVA did**: each step has its own icon and a mark when it's done, several steps show how far along they are, and results come as cards: the song playing, the game starting, the weather, a timer running down, your PC's load with the programs behind it.
+- **NOVA starts your games**: "Starte Fortnite" goes through the Epic Games Launcher or Steam, and NOVA knows which games you have there.
+- **Timers**: "Stell einen Timer auf 10 Minuten". NOVA says when it's over and shows a notification, also during a game.
+- **Weather**: "Wie wird das Wetter morgen in Berlin?" with a forecast card.
+- **Internet speed**: "Wie schnell ist mein Internet?" measures download and ping. It uses up to 100 MB, so only when you ask, and a very fast line can be faster than one download shows.
+- **Shut down later**: "Fahr den PC in einer Stunde runter", also restart, sleep and lock. A countdown with a button calls it off, and NOVA asks first.
+- **Clipboard**: "Übersetz, was ich kopiert habe", or NOVA copies a text for you to paste. Reading it asks first, because it goes to your AI provider.
+- **Add folders right where it matters**: when NOVA finds nothing or isn't allowed somewhere, it offers to add a folder or the whole PC. Windows, installed programs and app data stay off limits even then.
+
+### Changed
+- **Settings are much easier to find your way around**: one section at a time in clear groups, a search that also knows German words ("Stimme", "klatschen") and leads you to the exact setting, and a new overview where you can try the voice, turn on Hey NOVA, change the color and more without going anywhere. Rarely used options are folded away.
+- **Store apps count now**: NOVA can open the Microsoft Store, Calculator, Photos and other Store apps, and they appear under Apps.
+
+### Fixed
+- **"Close the Microsoft Store" failed** because a Store app's process and window have other names than the app. NOVA now recognizes them, and closes them properly instead of killing them.
+- NOVA could close the wrong program when another window's title contained the name, such as a browser tab about it. Now it asks.
+- Deleting from a USB stick or a network folder could destroy files for good while saying they were in the Recycle Bin. Windows now asks first there.
+- The microphone could open with the window already closed, or by itself over what you were typing.
+- Opening the window during a voice turn in a game could repeat that request on closing.
+- The first "Hey NOVA, …" after starting NOVA could stay silent.
+- A failing online voice no longer talks over itself, and a request needing your OK now opens the window.
+- Dragging the speed slider no longer uses up the free online voice requests.
+- "New conversation" works while NOVA is busy, and "Close" no longer cuts a reply that's still on its way.
+- A cough or TV without words no longer makes NOVA give up on Windows' speech recognition and download its own.
+- NOVA Finder: removed folders stay gone, a drive that disappears no longer empties the index, network drives work, German text files in older encodings are found, and turning text search back on works.
+- Renaming "Rechnung.pdf" to "Bericht 12.03.2026" no longer loses the .pdf. VS Code no longer counts as a game with anti-cheat. Rocket League's settings are found with Documents on OneDrive. Paint.NET can be uninstalled. "Free now" means your Windows drive.
+- Large folders show their subfolders again, a new key updates the assistant right away, "Reset settings" keeps your name and what you set up, and Calendar and Notes fit a small window. Slow connections can finish downloading updates.
+
 ## 1.9.2 — 2026-11-06
 
 ### Added

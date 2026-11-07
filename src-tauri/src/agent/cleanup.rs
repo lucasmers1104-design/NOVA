@@ -14,7 +14,7 @@ const SETUP_EXTENSIONS: &[&str] = &["exe", "msi", "msix", "msixbundle", "appx", 
 const BIG_DOWNLOAD: u64 = 200 * 1024 * 1024;
 const OLD_DOWNLOAD: Duration = Duration::from_secs(90 * 24 * 60 * 60);
 /// Other programs need these, so they don't go even though they take space.
-const ESSENTIAL: &[&str] = &["visual c++", ".net", "directx", "webview2", "microsoft windows", "windows sdk", "driver", "microsoft edge", "microsoft update", "nvidia graphics", "amd software", "intel(r)", "realtek"];
+const ESSENTIAL: &[&str] = &["visual c++", "microsoft .net", "microsoft asp.net", ".net runtime", ".net framework", ".net desktop", "directx", "webview2", "microsoft windows", "windows sdk", "microsoft edge", "microsoft update", "nvidia graphics", "nvidia hd audio", "amd software", "intel(r)", "realtek"];
 const UNINSTALL_LIMIT: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -214,8 +214,15 @@ pub fn delete_setup(file: &DownloadFile) -> Result<u64, String> {
 }
 
 /// Free space on all drives together.
-pub fn free_space() -> u64 {
+fn free_everywhere() -> u64 {
     Disks::new_with_refreshed_list().map_or(0, |disks| (&disks).into_iter().map(|disk| disk.available_space()).sum())
+}
+
+/// Free space on the Windows drive: that's the one people run out of.
+pub fn free_space() -> u64 {
+    let system = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into());
+    let on_system = Disks::new_with_refreshed_list().ok().and_then(|disks| (&disks).into_iter().find(|disk| disk.mount_point().to_string_lossy().to_lowercase().starts_with(&system.to_lowercase())).map(|disk| disk.available_space()));
+    on_system.unwrap_or_else(free_everywhere)
 }
 
 /// Why a program shouldn't be uninstalled to save space, if so.
@@ -252,7 +259,8 @@ pub fn split_command(command: &str) -> (String, String) {
 /// it. Returns the bytes freed, measured on the drives (or the size it reported,
 /// where the uninstaller is still tidying up). `stop`: the user pressed stop.
 pub fn uninstall(name: &str, estimated: u64, command: &str, stop: &dyn Fn() -> bool, still_listed: &dyn Fn() -> bool) -> Result<u64, String> {
-    let before = free_space();
+    // On all drives: a game may well sit on another one.
+    let before = free_everywhere();
     let (program, arguments) = split_command(command);
     crate::shell::run_program(&program, &arguments)?;
     let started = std::time::Instant::now();
@@ -265,7 +273,7 @@ pub fn uninstall(name: &str, estimated: u64, command: &str, stop: &dyn Fn() -> b
         }
         std::thread::sleep(Duration::from_secs(2));
     }
-    let measured = free_space().saturating_sub(before);
+    let measured = free_everywhere().saturating_sub(before);
     Ok(if measured < estimated / 2 { estimated } else { measured })
 }
 

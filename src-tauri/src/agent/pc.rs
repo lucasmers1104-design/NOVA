@@ -22,10 +22,10 @@ pub const MAX_TEXT: usize = 2000;
 /// crashes the session or NOVA instead of helping.
 const PROTECTED: &[&str] = &[
     "system", "registry", "secure system", "memory compression", "smss", "csrss", "wininit", "winlogon", "services", "lsass", "lsaiso", "svchost", "dwm", "fontdrvhost", "sihost", "ctfmon",
-    "msmpeng", "nissrv", "securityhealthservice", "mssense", "nova", "nova-phonemize", "msedgewebview2",
+    "msmpeng", "nissrv", "securityhealthservice", "mssense", "nova", "nova-phonemize", "msedgewebview2", "applicationframehost",
 ];
 /// Typing into these runs commands, which NOVA AI must not do.
-const NO_INPUT: &[&str] = &["cmd", "powershell", "pwsh", "windowsterminal", "wt", "conhost", "openconsole", "regedit", "mmc", "bash", "wsl", "wslhost", "mintty"];
+const NO_INPUT: &[&str] = &["cmd", "powershell", "powershell_ise", "pwsh", "windowsterminal", "wt", "conhost", "openconsole", "regedit", "mmc", "bash", "wsl", "wslhost", "mintty", "python", "pythonw", "py", "node", "ssh"];
 
 /// "Opera.EXE" → "opera".
 pub fn stem(process: &str) -> String {
@@ -90,7 +90,7 @@ pub fn top_lists(apps: &[AppUsage]) -> String {
 }
 
 /// What the Task Manager would show right now. Blocks for about a second.
-pub fn task_manager(overview: &serde_json::Value, volumes: &[String]) -> Result<(String, String), String> {
+pub fn task_manager(overview: &serde_json::Value, volumes: &[String]) -> Result<(String, String, serde_json::Value), String> {
     let (apps, cores) = sample()?;
     let now = &overview["now"];
     let gib = |v: &serde_json::Value| v.as_f64().unwrap_or(0.0) / 1_073_741_824.0;
@@ -119,7 +119,16 @@ pub fn task_manager(overview: &serde_json::Value, volumes: &[String]) -> Result<
     lines.push(top_lists(&apps));
     lines.push("\nPer-program GPU use isn't available. Sizes on disk: use installed_programs.".into());
     let busiest = apps.iter().max_by(|a, b| a.cpu.total_cmp(&b.cpu)).map_or_else(String::new, |a| format!(" · most CPU: {} ({:.0} %)", a.name, a.cpu));
-    Ok((lines.join("\n"), format!("{} programs running{busiest}", apps.len())))
+    Ok((lines.join("\n"), format!("{} programs running{busiest}", apps.len()), system_card(overview, &apps)))
+}
+
+/// What the panel draws for a look at the PC: its load, and the programs behind it.
+pub fn system_card(overview: &serde_json::Value, apps: &[AppUsage]) -> serde_json::Value {
+    let now = &overview["now"];
+    let mut heaviest: Vec<&AppUsage> = apps.iter().collect();
+    heaviest.sort_by(|a, b| (b.cpu as f64 * 1e9 + b.memory as f64).total_cmp(&(a.cpu as f64 * 1e9 + a.memory as f64)));
+    let top: Vec<serde_json::Value> = heaviest.iter().take(4).map(|app| serde_json::json!({ "name": app.name, "cpu": app.cpu, "memory": app.memory })).collect();
+    serde_json::json!({ "kind": "system", "cpu": now["cpuUsage"], "memoryUsed": now["memoryUsed"], "memoryTotal": now["memoryTotal"], "gpu": now["gpus"][0]["usage"], "top": top })
 }
 
 /// The processes `wanted` means, by process id or program name.
@@ -175,7 +184,7 @@ pub fn end_processes(name: &str, pids: &[u32], force: bool) -> Result<String, St
         let left = alive(&targets)?;
         return Ok(if left.is_empty() {
             format!("{name} closed.")
-        } else if win::windows().iter().any(|w| left.contains(&w.pid)) {
+        } else if win::windows().iter().any(|w| left.contains(&w.pid) || left.contains(&w.app_pid)) {
             format!("{name} was asked to close but is still open; it may be asking about unsaved work. Tell the user, and offer to force it only if they want that.")
         } else {
             format!("{name}'s windows are closed; {} background process(es) keep running. Forcing would end them too.", left.len())
@@ -207,7 +216,10 @@ pub struct WindowInfo {
     pub title: String,
     /// Program name without ".exe", lower case.
     pub process: String,
+    /// The window's own process; a Store app's frame belongs to Windows' frame host.
     pub pid: u32,
+    /// The program behind the window: `pid`, or the Store app inside the frame.
+    pub app_pid: u32,
     pub hung: bool,
     pub minimized: bool,
     pub foreground: bool,
@@ -231,11 +243,34 @@ pub fn pick_window(windows: &[WindowInfo], wanted: &str) -> Result<Target, Strin
         .iter()
         .find(|w| Some(w.hwnd) == id)
         .or_else(|| windows.iter().find(|w| w.process == program))
-        .or_else(|| windows.iter().find(|w| w.title.to_lowercase().contains(&wanted)))
+        // "Word" is winword, even with a "WordPress" tab open above it.
         .or_else(|| windows.iter().find(|w| w.process.contains(&program)));
+    let found = match found {
+        Some(window) => Some(window),
+        None => window_by_title(windows, &wanted)?,
+    };
     let window = found.ok_or_else(|| format!("No open window matches “{wanted}”. Check list_windows; if the app isn't running, start it with open_app."))?;
     let name: String = window.title.chars().take(60).collect();
     Ok(Target { hwnd: window.hwnd, pid: window.pid, label: format!("{name} ({})", window.process) })
+}
+
+/// By title: the exact one, one starting with it, or one containing it, as long
+/// as that can't be two programs (a browser tab about the app, beside the app).
+fn window_by_title<'a>(windows: &'a [WindowInfo], wanted: &str) -> Result<Option<&'a WindowInfo>, String> {
+    let titled = |fits: &dyn Fn(&str) -> bool| windows.iter().filter(|w| fits(&w.title.to_lowercase())).collect::<Vec<_>>();
+    let mut found = titled(&|title| title == wanted);
+    if found.is_empty() {
+        found = titled(&|title| title.starts_with(wanted));
+    }
+    if found.is_empty() {
+        found = titled(&|title| title.contains(wanted));
+    }
+    let Some(first) = found.first() else { return Ok(None) };
+    if found.iter().any(|w| w.process != first.process) {
+        let names = found.iter().take(4).map(|w| format!("#{} {} ({})", w.hwnd, w.title.chars().take(50).collect::<String>(), w.process)).collect::<Vec<_>>().join("; ");
+        return Err(format!("Several windows fit “{wanted}”: {names}. Use the id of the right one, or ask which."));
+    }
+    Ok(Some(first))
 }
 
 pub fn accepts_input(process_label: &str) -> bool {
@@ -248,13 +283,14 @@ const NO_GAME_INPUT: &[&str] = &["fortniteclient", "valorant", "rocketleague", "
 pub fn is_guarded_game(process_label: &str) -> bool {
     let Some((_, process)) = process_label.rsplit_once('(') else { return false };
     let process = process.trim_end_matches(')');
-    NO_GAME_INPUT.iter().any(|game| process.starts_with(game))
+    // Short names exactly: "cod" isn't VS Code's "code".
+    NO_GAME_INPUT.iter().any(|game| process == *game || (game.len() > 3 && process.starts_with(game)))
 }
 
 /// Keys that open a new window or tab each time: fine once, a disaster repeated.
 pub fn opens_something(key: &str) -> bool {
-    let key = key.to_lowercase().replace(' ', "");
-    ["ctrl+n", "ctrl+t", "ctrl+shift+n", "ctrl+shift+t"].contains(&key.as_str())
+    // Parsed, so "strg+t" and "shift+ctrl+t" count too.
+    parse_combo(key).is_ok_and(|combo| matches!(combo.key, 0x4E | 0x54) && combo.modifiers.contains(&0x11) && !combo.modifiers.contains(&0x12))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -345,7 +381,7 @@ pub fn element_lines(elements: &[(String, String, Option<String>)]) -> String {
     lines.join("\n")
 }
 
-pub use win::{act_on, installed_programs, read_window, send_input, show_quietly, use_element, window_action, windows};
+pub use win::{act_on, installed_programs, read_window, send_input, show_quietly, steam_folder, use_element, window_action, windows};
 
 #[cfg(windows)]
 mod win {
@@ -363,7 +399,7 @@ mod win {
     };
     use windows::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, VIRTUAL_KEY};
     use windows::Win32::UI::WindowsAndMessaging::{
-        BringWindowToTop, EnumWindows, GetAncestor, GetForegroundWindow, GetWindow, GetWindowLongPtrW, GetWindowTextW, GetWindowThreadProcessId, IsHungAppWindow, IsIconic, IsWindow, IsWindowVisible, PostMessageW,
+        BringWindowToTop, EnumChildWindows, EnumWindows, GetAncestor, GetForegroundWindow, GetWindow, GetWindowLongPtrW, GetWindowTextW, GetWindowThreadProcessId, IsHungAppWindow, IsIconic, IsWindow, IsWindowVisible, PostMessageW,
         SetForegroundWindow, ShowWindow, GA_ROOT, GWL_EXSTYLE, GW_OWNER, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, WM_CLOSE, WS_EX_TOOLWINDOW,
     };
 
@@ -387,6 +423,30 @@ mod win {
             let path = String::from_utf16_lossy(&buffer[..len as usize]);
             super::stem(path.rsplit('\\').next().unwrap_or_default())
         }
+    }
+
+    /// A Store app's window belongs to Windows' frame host; the app itself owns a
+    /// window inside it. The frame's own process when it isn't such a frame.
+    unsafe fn app_inside_frame(window: HWND, pid: u32) -> u32 {
+        unsafe extern "system" fn other_process(child: HWND, found: LPARAM) -> BOOL {
+            // SAFETY: `found` is the pair below, alive for the whole EnumChildWindows call.
+            let (frame, app) = unsafe { &mut *(found.0 as *mut (u32, u32)) };
+            let mut pid = 0u32;
+            // SAFETY: a plain query on a handle Windows just gave us.
+            unsafe { GetWindowThreadProcessId(child, Some(&mut pid)) };
+            if pid != 0 && pid != *frame {
+                *app = pid;
+                return BOOL(0);
+            }
+            BOOL(1)
+        }
+        if process_name(pid) != "applicationframehost" {
+            return pid;
+        }
+        let mut found = (pid, pid);
+        // SAFETY: the callback only writes into `found`, which outlives the call.
+        let _ = unsafe { EnumChildWindows(Some(window), Some(other_process), LPARAM(&mut found as *mut (u32, u32) as isize)) };
+        found.1
     }
 
     /// The windows a person sees (top of the screen first), without NOVA's own.
@@ -423,14 +483,15 @@ mod win {
                 if pid == std::process::id() {
                     return None;
                 }
-                Some(WindowInfo { hwnd: id, title, process: process_name(pid), pid, hung: IsHungAppWindow(window).as_bool(), minimized: IsIconic(window).as_bool(), foreground: id == foreground })
+                let app_pid = app_inside_frame(window, pid);
+                Some(WindowInfo { hwnd: id, title, process: process_name(app_pid), pid, app_pid, hung: IsHungAppWindow(window).as_bool(), minimized: IsIconic(window).as_bool(), foreground: id == foreground })
             })
             .collect()
     }
 
     /// Asks every window of these processes to close; how many were asked.
     pub fn close_windows_of(pids: &[u32]) -> usize {
-        let targets: Vec<WindowInfo> = windows().into_iter().filter(|w| pids.contains(&w.pid)).collect();
+        let targets: Vec<WindowInfo> = windows().into_iter().filter(|w| pids.contains(&w.pid) || pids.contains(&w.app_pid)).collect();
         for window in &targets {
             // SAFETY: posting a message to a handle is safe even if it has just gone away.
             let _ = unsafe { PostMessageW(Some(handle(window.hwnd)), WM_CLOSE, WPARAM(0), LPARAM(0)) };
@@ -694,6 +755,20 @@ mod win {
         (result == ERROR_SUCCESS).then(|| String::from_utf16_lossy(&buffer[..(size as usize / 2).saturating_sub(1)]))
     }
 
+    /// Where Steam is installed, as Steam itself notes it.
+    pub fn steam_folder() -> Option<std::path::PathBuf> {
+        let mut key = HKEY::default();
+        // SAFETY: valid strings and out pointer; the opened key is closed.
+        unsafe {
+            if RegOpenKeyExW(HKEY_CURRENT_USER, w!("SOFTWARE\\Valve\\Steam"), None, KEY_READ, &mut key) != ERROR_SUCCESS {
+                return None;
+            }
+            let path = read_string(key, w!("SteamPath"));
+            let _ = RegCloseKey(key);
+            path.map(std::path::PathBuf::from)
+        }
+    }
+
     /// Programs from the Windows uninstall list with the size they report and
     /// their uninstall command, biggest first.
     pub fn installed_programs() -> Vec<(String, u64, Option<String>)> {
@@ -745,6 +820,7 @@ mod win {
     use super::{Combo, Target, WindowInfo, WindowVerb};
     const NO: &str = "This requires Windows";
     pub fn windows() -> Vec<WindowInfo> { Vec::new() }
+    pub fn steam_folder() -> Option<std::path::PathBuf> { None }
     pub fn close_windows_of(_: &[u32]) -> usize { 0 }
     pub fn window_action(_: &Target, _: WindowVerb) -> Result<(), String> { Err(NO.into()) }
     pub fn send_input(_: &Target, _: &[Combo], _: u32, _: Option<&str>) -> Result<u32, String> { Err(NO.into()) }
@@ -760,7 +836,7 @@ mod tests {
     use super::*;
 
     fn window(hwnd: isize, title: &str, process: &str) -> WindowInfo {
-        WindowInfo { hwnd, title: title.into(), process: process.into(), pid: hwnd as u32, hung: false, minimized: false, foreground: false }
+        WindowInfo { hwnd, title: title.into(), process: process.into(), pid: hwnd as u32, app_pid: hwnd as u32, hung: false, minimized: false, foreground: false }
     }
 
     #[test]

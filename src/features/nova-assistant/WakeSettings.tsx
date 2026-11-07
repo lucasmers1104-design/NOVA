@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { Switch } from "@/components/ui/Switch";
-import { SettingRow, SettingsSection } from "@/features/settings/SettingsLayout";
+import { MoreOptions, SettingRow, SettingsSection } from "@/features/settings/SettingsLayout";
 import { cn } from "@/lib/cn";
 import { isDesktop } from "@/lib/native";
 import { ASSISTANT_EVENTS } from "./types";
@@ -98,12 +98,14 @@ export function WakeSettings() {
       >
         <SegmentedControl label="After waking" value={prefs?.afterWake ?? "listen"} options={AFTER_WAKE} onChange={(afterWake) => update({ afterWake })} />
       </SettingRow>
+      <MoreOptions label="Sound and games">
       <SettingRow label="Play a sound when NOVA wakes">
         <Switch label="Play a sound when NOVA wakes" checked={prefs?.chime ?? true} disabled={busy} onChange={(chime) => update({ chime })} />
       </SettingRow>
       <SettingRow label="Also in games" description="NOVA also reacts while a game or another fullscreen app runs. It answers by voice, without its window. With a game's sound on loudspeakers it can wake by mistake, and it costs a little performance. Presentations always pause it.">
         <Switch label="Also in games" checked={prefs?.inGames ?? true} disabled={busy} onChange={(inGames) => update({ inGames })} />
       </SettingRow>
+      </MoreOptions>
       <WakeTest testing={status?.testing ?? false} clap={prefs?.clap ?? false} />
       <p className="flex items-start gap-2 pt-4 text-[12.5px] leading-relaxed text-fg-muted">
         <ShieldCheck size={14} className="mt-0.5 shrink-0 text-success" aria-hidden />

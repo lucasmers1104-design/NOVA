@@ -133,10 +133,20 @@ pub(crate) fn is_hidden(meta: &std::fs::Metadata, name: &str) -> bool {
     name.starts_with('.') || name.eq_ignore_ascii_case("desktop.ini")
 }
 
+/// A resolved path the way everyone else writes it: `canonicalize` adds `\\\\?\\`,
+/// which Explorer and the shell don't take, and a share becomes `\\\\?\\UNC\\…`.
+pub fn plain_path(path: &Path) -> String {
+    let text = path.to_string_lossy();
+    match text.strip_prefix(r"\\?\UNC\") {
+        Some(share) => format!(r"\\{share}"),
+        None => text.strip_prefix(r"\\?\").unwrap_or(&text).to_string(),
+    }
+}
+
 fn entry(path: PathBuf, meta: &std::fs::Metadata) -> FileEntry {
     FileEntry {
         name: path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
-        path: path.to_string_lossy().into_owned(),
+        path: plain_path(&path),
         is_dir: meta.is_dir(),
         size: if meta.is_dir() { 0 } else { meta.len() },
         modified_ms: meta.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_millis() as u64),
@@ -146,15 +156,16 @@ fn entry(path: PathBuf, meta: &std::fs::Metadata) -> FileEntry {
 pub fn list_dir(dir: &Path) -> CommandResult<Vec<FileEntry>> {
     let read = std::fs::read_dir(dir).map_err(|e| format!("Can't open this folder: {e}"))?;
     let mut entries: Vec<FileEntry> = read
-        .flatten()
+        .map_while(Result::ok)
         .filter_map(|e| {
             let meta = e.metadata().ok()?;
             let name = e.file_name().to_string_lossy().into_owned();
             (!is_hidden(&meta, &name)).then(|| entry(e.path(), &meta))
         })
-        .take(MAX_LIST)
         .collect();
     entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then(a.name.to_lowercase().cmp(&b.name.to_lowercase())));
+    // After sorting, so a full folder keeps its subfolders and its first names.
+    entries.truncate(MAX_LIST);
     Ok(entries)
 }
 
@@ -170,7 +181,7 @@ pub fn search(roots: &[PathBuf], query: &str) -> Vec<FileEntry> {
             break;
         }
         let Ok(read) = std::fs::read_dir(&dir) else { continue };
-        for e in read.flatten() {
+        for e in read.map_while(Result::ok) {
             let Ok(meta) = e.metadata() else { continue };
             let name = e.file_name().to_string_lossy().into_owned();
             if is_hidden(&meta, &name) {

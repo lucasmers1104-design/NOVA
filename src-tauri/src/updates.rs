@@ -103,12 +103,14 @@ pub async fn update_check(app: AppHandle, pending: tauri::State<'_, PendingUpdat
 /// exits while the installer runs, and the installer starts NOVA again.
 #[tauri::command]
 pub async fn update_install(pending: tauri::State<'_, PendingUpdate>, on_event: Channel<InstallEvent>) -> CommandResult<()> {
-    let update = pending
+    let mut update = pending
         .0
         .lock()
         .map_err(|_| "update state lock poisoned")?
         .take()
         .ok_or("Check for updates first")?;
+    // The check's 30 seconds are too short for a whole download on a slow line.
+    update.timeout = None;
     let progress = on_event.clone();
     let mut downloaded = 0u64;
     update

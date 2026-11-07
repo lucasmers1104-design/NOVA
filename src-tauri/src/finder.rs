@@ -5,7 +5,6 @@
 //! background thread at low CPU and disk priority, skips hidden and system
 //! items, and only re-reads files whose size or modification time changed.
 
-use std::collections::HashSet;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -160,6 +159,15 @@ fn millis(time: std::io::Result<std::time::SystemTime>) -> i64 {
     time.ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_millis() as i64)
 }
 
+/// Drops what the search has stored of files' text.
+fn forget_text(db: &Database) -> CommandResult<()> {
+    db.with(|conn| {
+        conn.execute("UPDATE file_index_fts SET body = '' WHERE body <> ''", [])?;
+        conn.execute("UPDATE file_index SET has_text = 0, size = -1 WHERE has_text = 1", [])?;
+        Ok(())
+    })
+}
+
 fn read_text_start(path: &Path, size: u64) -> Option<String> {
     if size == 0 || size > MAX_TEXT_FILE {
         return None;
@@ -167,10 +175,10 @@ fn read_text_start(path: &Path, size: u64) -> Option<String> {
     let mut file = std::fs::File::open(path).ok()?;
     let mut buffer = Vec::with_capacity((MAX_TEXT_CHARS * 2).min(size as usize));
     file.by_ref().take((MAX_TEXT_CHARS * 4) as u64).read_to_end(&mut buffer).ok()?;
-    if buffer.contains(&0) {
+    if !buffer.starts_with(&[0xFF, 0xFE]) && !buffer.starts_with(&[0xFE, 0xFF]) && buffer.contains(&0) {
         return None; // binary despite the extension
     }
-    let text = String::from_utf8_lossy(&buffer);
+    let text = crate::http::decode_text(&buffer);
     let text: String = text.chars().take(MAX_TEXT_CHARS).collect();
     (!text.trim().is_empty()).then_some(text)
 }
@@ -238,13 +246,18 @@ fn index_all<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
         lock(&state(app).progress).current = Some(root.clone());
         emit_progress(app);
         if Path::new(root).is_dir() {
-            index_root(app, &db, root, prefs.content, seen)?;
+            index_root(app, &db, root, seen)?;
         }
+    }
+    // Turned off during this pass: what it stored before noticing goes too.
+    if !lock(&state(app).prefs).content {
+        forget_text(&db)?;
     }
     Ok(())
 }
 
-fn index_root<R: Runtime>(app: &AppHandle<R>, db: &Database, root: &str, content: bool, seen: i64) -> Result<(), String> {
+fn index_root<R: Runtime>(app: &AppHandle<R>, db: &Database, root: &str, seen: i64) -> Result<(), String> {
+    let still_wanted = || lock(&state(app).prefs).folders.iter().any(|folder| folder == root);
     let known = db.with(|conn| file_index::known(conn, root))?;
     let mut unchanged: Vec<i64> = Vec::new();
     let mut changed: Vec<IndexedFile> = Vec::new();
@@ -268,8 +281,12 @@ fn index_root<R: Runtime>(app: &AppHandle<R>, db: &Database, root: &str, content
     };
 
     while let Some((dir, depth)) = queue.pop_front() {
+        // Removed in Settings during this pass: nothing of it may stay searchable.
+        if !still_wanted() {
+            return db.with(|conn| file_index::remove_root(conn, root));
+        }
         let Ok(entries) = std::fs::read_dir(&dir) else { continue };
-        for entry in entries.flatten() {
+        for entry in entries.map_while(Result::ok) {
             let Ok(meta) = entry.metadata() else { continue };
             let name = entry.file_name().to_string_lossy().into_owned();
             if crate::files::is_hidden(&meta, &name) {
@@ -291,7 +308,7 @@ fn index_root<R: Runtime>(app: &AppHandle<R>, db: &Database, root: &str, content
                 Some(&(id, old_size, old_modified)) if old_size == size && old_modified == modified => unchanged.push(id),
                 _ => {
                     let ext = if is_dir { String::new() } else { path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default() };
-                    let body = (content && !is_dir && TEXT_EXTENSIONS.contains(&ext.as_str()))
+                    let body = (lock(&state(app).prefs).content && !is_dir && TEXT_EXTENSIONS.contains(&ext.as_str()))
                         .then(|| read_text_start(&path, meta.len()))
                         .flatten();
                     changed.push(IndexedFile {
@@ -334,7 +351,13 @@ fn index_root<R: Runtime>(app: &AppHandle<R>, db: &Database, root: &str, content
         progress.indexed += indexed;
         progress.scanned = progress.scanned.max(count as u64);
     }
-    db.with(|conn| file_index::sweep(conn, root, seen))?;
+    if !still_wanted() {
+        return db.with(|conn| file_index::remove_root(conn, root));
+    }
+    // A drive that went away during the pass isn't a drive whose files were all deleted.
+    if std::fs::read_dir(root).is_ok() {
+        db.with(|conn| file_index::sweep(conn, root, seen))?;
+    }
     Ok(())
 }
 
@@ -467,28 +490,41 @@ fn status<R: Runtime>(app: &AppHandle<R>) -> CommandResult<FinderStatus> {
 }
 
 fn add_folders<R: Runtime>(app: &AppHandle<R>, paths: Vec<PathBuf>) -> CommandResult<FinderStatus> {
+    let mut covered = Vec::new();
     let prefs = {
         let mut prefs = lock(&state(app).prefs);
-        let mut existing: HashSet<String> = prefs.folders.iter().map(|f| f.to_lowercase()).collect();
         for path in paths {
             let Ok(canonical) = path.canonicalize() else { continue };
-            // `canonicalize` adds the \\?\ prefix on Windows; keep the familiar form.
-            let text = canonical.to_string_lossy().trim_start_matches(r"\\?\").to_string();
-            let lower = text.to_lowercase();
-            // A folder inside an indexed one is already covered.
-            if prefs.folders.iter().any(|f| lower.starts_with(&format!("{}\\", f.to_lowercase()))) || !existing.insert(lower) {
-                continue;
-            }
-            if prefs.folders.len() >= MAX_FOLDERS {
+            let text = crate::files::plain_path(&canonical);
+            let (kept, inside) = merge_folder(std::mem::take(&mut prefs.folders), &text);
+            prefs.folders = kept;
+            covered.extend(inside);
+            if prefs.folders.len() > MAX_FOLDERS {
+                prefs.folders.pop();
                 return Err(format!("NOVA Finder indexes up to {MAX_FOLDERS} folders"));
             }
-            prefs.folders.push(text);
         }
         prefs.clone()
     };
     save_prefs(app, &prefs)?;
+    for folder in &covered {
+        // The new, wider folder indexes these files again under its own name.
+        app.state::<Database>().with(|conn| file_index::remove_root(conn, folder))?;
+    }
     start_indexing(app);
     status(app)
+}
+
+/// `folders` with `new` added: not when an indexed folder already covers it, and
+/// without the folders inside it. Also returns those.
+fn merge_folder(folders: Vec<String>, new: &str) -> (Vec<String>, Vec<String>) {
+    let lower = |folder: &str| folder.to_lowercase();
+    if folders.iter().any(|folder| Path::new(&lower(new)).starts_with(lower(folder))) {
+        return (folders, Vec::new());
+    }
+    let (inside, mut kept): (Vec<String>, Vec<String>) = folders.into_iter().partition(|folder| Path::new(&lower(folder)).starts_with(lower(new)));
+    kept.push(new.to_string());
+    (kept, inside)
 }
 
 #[tauri::command]
@@ -512,6 +548,14 @@ pub async fn finder_pick_folder<R: Runtime>(app: AppHandle<R>) -> CommandResult<
 pub async fn finder_add_standard_folders<R: Runtime>(app: AppHandle<R>) -> CommandResult<FinderStatus> {
     let folders = crate::files::known_folders().into_iter().map(|f| PathBuf::from(f.path)).collect();
     add_folders(&app, folders)
+}
+
+/// Every fixed drive of this PC. Windows, programs and app data stay out: see `SKIPPED_DIRS`.
+#[tauri::command]
+pub async fn finder_add_all_drives<R: Runtime>(app: AppHandle<R>) -> CommandResult<FinderStatus> {
+    let drives = sysinfo::Disks::new_with_refreshed_list().map_err(|e| e.to_string())?;
+    let fixed = (&drives).into_iter().filter(|disk| !disk.is_removable()).map(|disk| disk.mount_point().to_path_buf()).collect();
+    add_folders(&app, fixed)
 }
 
 #[tauri::command]
@@ -538,13 +582,15 @@ pub async fn finder_set_content<R: Runtime>(app: AppHandle<R>, enabled: bool) ->
         prefs.clone()
     };
     save_prefs(&app, &prefs)?;
-    if !enabled {
-        // Forget stored text right away instead of on the next change.
+    if enabled {
+        // Unchanged files have no text stored yet: the next pass reads them again.
         app.state::<Database>().with(|conn| {
-            conn.execute("UPDATE file_index_fts SET body = '' WHERE body <> ''", [])?;
-            conn.execute("UPDATE file_index SET has_text = 0, size = -1 WHERE has_text = 1", [])?;
+            conn.execute("UPDATE file_index SET size = -1 WHERE has_text = 0", [])?;
             Ok(())
         })?;
+    } else {
+        // Forget stored text right away instead of on the next change.
+        forget_text(&app.state::<Database>())?;
     }
     start_indexing(&app);
     status(&app)
@@ -565,6 +611,21 @@ pub async fn finder_search<R: Runtime>(app: AppHandle<R>, query: FinderQuery) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn folders_cover_each_other_in_both_directions() {
+        let list = |folders: &[&str]| folders.iter().map(|f| f.to_string()).collect::<Vec<_>>();
+        assert_eq!(merge_folder(list(&[r"D:\Fotos"]), r"D:\Musik").0, list(&[r"D:\Fotos", r"D:\Musik"]));
+        // Already inside one, also a whole drive.
+        assert_eq!(merge_folder(list(&["D:\\"]), r"d:\Fotos").0, list(&["D:\\"]));
+        assert_eq!(merge_folder(list(&[r"D:\Fotos"]), r"D:\Fotos").0, list(&[r"D:\Fotos"]));
+        // "Fotos2" isn't inside "Fotos".
+        assert_eq!(merge_folder(list(&[r"D:\Fotos"]), r"D:\Fotos2").0.len(), 2);
+        // A drive swallows what was added from it.
+        let (kept, inside) = merge_folder(list(&[r"C:\Users\me\Fotos", r"D:\Spiele"]), "C:\\");
+        assert_eq!(kept, list(&[r"D:\Spiele", "C:\\"]));
+        assert_eq!(inside, list(&[r"C:\Users\me\Fotos"]));
+    }
 
     #[test]
     fn classifies_extensions() {

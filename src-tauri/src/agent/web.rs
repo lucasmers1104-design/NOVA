@@ -100,7 +100,7 @@ pub fn read(url: &Url) -> Result<Page, String> {
                     None => break,
                 }
             }
-            let raw = String::from_utf8_lossy(&body);
+            let raw = crate::http::decode_text(&body);
             let (title, text) = if html { html_to_text(&raw) } else { (None, tidy(&raw)) };
             return Ok(Page { url: current.to_string(), title, text: shorten(text) });
         }

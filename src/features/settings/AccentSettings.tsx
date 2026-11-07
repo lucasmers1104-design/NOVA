@@ -35,7 +35,10 @@ export function AccentSettings() {
   const hexId = useId();
 
   // Follow changes made elsewhere (e.g. from the command palette).
-  useEffect(() => setDraft(applied), [applied]);
+  useEffect(() => {
+    setDraft(applied);
+    if (applied.kind === "custom") setHexInput(applied.color);
+  }, [applied]);
 
   const tokens = useMemo(() => deriveAccentTokens(resolveAccentColor(draft)), [draft]);
   const dirty = !sameAccent(draft, applied);

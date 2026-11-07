@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { getTauriVersion, getVersion } from "@tauri-apps/api/app";
-import { Activity, AudioLines, Check, CloudDownload, Cpu, Ear, FolderSearch, Globe, Info, Keyboard, KeyRound, LayoutDashboard, Layers, type LucideIcon, Palette, PanelLeft, Plug, Power, RotateCcw, ShieldCheck, Sparkles, TriangleAlert, UserRound } from "lucide-react";
+import { Activity, AudioLines, Check, CloudDownload, Cpu, Ear, FolderSearch, Gauge, Globe, Info, Keyboard, KeyRound, LayoutDashboard, Layers, type LucideIcon, Palette, PanelLeft, Plug, Power, RotateCcw, Search, ShieldCheck, Sparkles, TriangleAlert, UserRound } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { SHORTCUTS } from "@/app/shortcuts";
 import { NovaMark } from "@/components/brand/NovaMark";
@@ -24,28 +24,107 @@ import { AccentSettings } from "./AccentSettings";
 import { BackdropSettings } from "./BackdropSettings";
 import { AiProviderSettings, IntegrationsSettings, ProfilesSettings, StartupSettings, UpdatesSettings, useExternalConnections } from "./ExtraSettings";
 import { NavigationSettings } from "./NavigationSettings";
-import { SettingRow, SettingsSection } from "./SettingsLayout";
+import { REVEAL_SETTINGS_EVENT, SettingRow, SettingsSection } from "./SettingsLayout";
+import { SettingsOverview } from "./SettingsOverview";
 
-const SECTIONS: readonly { id: string; label: string; icon: LucideIcon }[] = [
-  { id: "you", label: "Your name", icon: UserRound },
-  { id: "appearance", label: "Appearance", icon: Palette },
-  { id: "profiles", label: "Profiles", icon: Layers },
-  { id: "navigation", label: "Navigation", icon: PanelLeft },
-  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { id: "assistant", label: "NOVA AI assistant", icon: Sparkles },
-  { id: "wake", label: "Hey NOVA & claps", icon: Ear },
-  { id: "assistant-brain", label: "Assistant model & voice", icon: AudioLines },
-  { id: "local-ai", label: "Local AI & performance", icon: Cpu },
-  { id: "finder", label: "NOVA Finder", icon: FolderSearch },
-  { id: "ai", label: "AI providers", icon: KeyRound },
-  { id: "integrations", label: "Integrations", icon: Plug },
-  { id: "startup", label: "Startup", icon: Power },
-  { id: "updates", label: "Updates", icon: CloudDownload },
-  { id: "system", label: "System", icon: Activity },
-  { id: "shortcuts", label: "Keyboard shortcuts", icon: Keyboard },
-  { id: "privacy", label: "Privacy", icon: ShieldCheck },
-  { id: "about", label: "About NOVA", icon: Info },
+const GROUPS: readonly { label: string; sections: readonly { id: string; label: string; icon: LucideIcon }[] }[] = [
+  {
+    label: "You",
+    sections: [
+      { id: "you", label: "Your name", icon: UserRound },
+      { id: "appearance", label: "Appearance", icon: Palette },
+      { id: "profiles", label: "Profiles", icon: Layers },
+      { id: "navigation", label: "Navigation", icon: PanelLeft },
+      { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+    ],
+  },
+  {
+    label: "NOVA AI",
+    sections: [
+      { id: "assistant-brain", label: "Model & voice", icon: AudioLines },
+      { id: "wake", label: "Hey NOVA & claps", icon: Ear },
+      { id: "assistant", label: "The NOVA dot", icon: Sparkles },
+      { id: "finder", label: "NOVA Finder", icon: FolderSearch },
+      { id: "ai", label: "AI providers", icon: KeyRound },
+      { id: "local-ai", label: "Local AI & performance", icon: Cpu },
+    ],
+  },
+  {
+    label: "This PC",
+    sections: [
+      { id: "startup", label: "Startup", icon: Power },
+      { id: "updates", label: "Updates", icon: CloudDownload },
+      { id: "integrations", label: "Integrations", icon: Plug },
+      { id: "system", label: "System", icon: Activity },
+      { id: "shortcuts", label: "Keyboard shortcuts", icon: Keyboard },
+    ],
+  },
+  {
+    label: "NOVA",
+    sections: [
+      { id: "privacy", label: "Privacy", icon: ShieldCheck },
+      { id: "about", label: "About NOVA", icon: Info },
+    ],
+  },
 ];
+
+/** What the search finds: the settings by the name their row shows, with the words people may use instead. */
+const SEARCHABLE: readonly { label: string; section: string; words?: string }[] = [
+  { label: "Your name", section: "you", words: "name heißen nennen anrede" },
+  { label: "Accent color", section: "appearance", words: "farbe akzent color" },
+  { label: "Background", section: "appearance", words: "hintergrund verlauf gradient bild picture png wallpaper" },
+  { label: "Transparency effects", section: "appearance", words: "glas glass transparenz" },
+  { label: "Wallpaper backdrop", section: "appearance", words: "hintergrundbild" },
+  { label: "Motion", section: "appearance", words: "animation bewegung" },
+  { label: "Workspace profiles", section: "profiles", words: "profil" },
+  { label: "Sidebar sections", section: "navigation", words: "seitenleiste menü" },
+  { label: "24-hour clock", section: "dashboard", words: "uhr zeit" },
+  { label: "Title bar clock", section: "dashboard", words: "uhr zeit" },
+  { label: "AI provider", section: "assistant-brain", words: "ki anbieter claude gemini openai" },
+  { label: "Thoroughness", section: "assistant-brain", words: "gründlichkeit effort schnell" },
+  { label: "Monthly limit", section: "assistant-brain", words: "kosten geld budget limit" },
+  { label: "Spoken replies", section: "assistant-brain", words: "vorlesen sprechen" },
+  { label: "Keep listening", section: "assistant-brain", words: "mikrofon mikro weiterhören" },
+  { label: "Auto mode", section: "assistant-brain", words: "auto modus automatisch ohne fragen" },
+  { label: "Voice", section: "assistant-brain", words: "stimme thorsten gemini elevenlabs" },
+  { label: "Speed and volume", section: "assistant-brain", words: "tempo lautstärke geschwindigkeit" },
+  { label: "Speech recognition language", section: "assistant-brain", words: "sprache deutsch englisch" },
+  { label: "Wake with “Hey NOVA”", section: "wake", words: "hey nova aufwecken wake mikrofon" },
+  { label: "How sure NOVA must be", section: "wake", words: "empfindlichkeit versteht" },
+  { label: "Wake with a double clap", section: "wake", words: "klatschen clap" },
+  { label: "Clap detection", section: "wake", words: "klatschen empfindlichkeit" },
+  { label: "After waking", section: "wake" },
+  { label: "Play a sound when NOVA wakes", section: "wake", words: "ton chime" },
+  { label: "Also in games", section: "wake", words: "spiele fortnite vollbild" },
+  { label: "Show the NOVA dot", section: "assistant", words: "punkt taskleiste" },
+  { label: "Where it sits", section: "assistant", words: "punkt position ecke taskleiste" },
+  { label: "Search inside text files", section: "finder", words: "suche ordner dateien" },
+  { label: "NOVA Finder folders", section: "finder", words: "ordner dateien pfad zugriff ganzer pc festplatte" },
+  { label: "API keys", section: "ai", words: "schlüssel key anthropic openai gemini" },
+  { label: "NOVA's own voices", section: "local-ai", words: "offline stimmen erkennung grafikkarte" },
+  { label: "Start with Windows", section: "startup", words: "autostart" },
+  { label: "Keep running in the tray", section: "startup", words: "hintergrund" },
+  { label: "Windows notifications", section: "startup", words: "benachrichtigung erinnerung" },
+  { label: "Automatic updates", section: "updates", words: "aktualisierung version" },
+  { label: "Weather", section: "integrations", words: "wetter ort" },
+  { label: "News feeds", section: "integrations", words: "nachrichten" },
+  { label: "Refresh interval", section: "system", words: "aktualisieren cpu" },
+  { label: "Keyboard shortcuts", section: "shortcuts", words: "tastenkürzel tasten" },
+  { label: "Action history and usage", section: "privacy", words: "verlauf datenschutz löschen" },
+  { label: "Version", section: "about", words: "what's new neu" },
+  { label: "Reset settings", section: "about", words: "zurücksetzen" },
+];
+
+export function searchSettings(query: string): typeof SEARCHABLE {
+  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return [];
+  return SEARCHABLE.filter((setting) => {
+    const text = `${setting.label} ${setting.words ?? ""}`.toLowerCase();
+    return terms.every((term) => text.includes(term));
+  }).slice(0, 8);
+}
+
+const OVERVIEW = "overview";
 
 const MOTION_OPTIONS = [
   { value: "system", label: "System" },
@@ -62,94 +141,155 @@ const TITLE_BAR_CLOCK_OPTIONS = [
 const REFRESH_OPTIONS = REFRESH_INTERVALS_MS.map((ms) => ({ value: ms, label: `${ms / 1000}s` }));
 
 export default function SettingsPage() {
-  const active = useActiveSection();
   const requestedSection = useUi((s) => s.settingsSection);
   const clearSettingsSection = useUi((s) => s.clearSettingsSection);
+  const [active, setActive] = useState(requestedSection ?? OVERVIEW);
+  const [query, setQuery] = useState("");
+  // A setting the search led to: shown and briefly lit up once its section is there.
+  const [target, setTarget] = useState<string | null>(null);
+  const results = searchSettings(query);
 
-  const jumpTo = (id: string) => {
-    const reduce = document.documentElement.dataset.motion === "reduced";
-    document.getElementById(`settings-${id}`)?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+  const open = (section: string, setting: string | null = null) => {
+    setActive(section);
+    setTarget(setting);
+    setQuery("");
+    document.getElementById("main")?.scrollTo({ top: 0 });
   };
 
   // Opened from elsewhere (e.g. the NOVA AI panel) at a specific section.
   useEffect(() => {
     if (!requestedSection) return;
-    // Cleared inside the frame: clearing first would re-run this effect and cancel the jump.
+    open(requestedSection);
+    clearSettingsSection();
+  }, [requestedSection, clearSettingsSection]);
+
+  useEffect(() => {
+    if (!target) return;
+    window.dispatchEvent(new Event(REVEAL_SETTINGS_EVENT));
     const frame = requestAnimationFrame(() => {
-      jumpTo(requestedSection);
-      clearSettingsSection();
+      const row = [...document.querySelectorAll<HTMLElement>("[data-setting]")].find((el) => el.dataset.setting === target);
+      if (!row) return;
+      row.scrollIntoView({ block: "center" });
+      row.classList.add("setting-found");
+      setTimeout(() => row.classList.remove("setting-found"), 1800);
     });
     return () => cancelAnimationFrame(frame);
-  }, [requestedSection, clearSettingsSection]);
+  }, [target, active]);
+
+  const navButton = (id: string, label: string, Icon: LucideIcon) => (
+    <button
+      key={id}
+      type="button"
+      onClick={() => open(id)}
+      aria-current={active === id ? "page" : undefined}
+      className={cn(
+        "flex h-8 w-full items-center gap-2.5 rounded-control px-2.5 text-left text-[12.5px] font-medium transition-colors",
+        active === id ? "bg-white/[0.07] text-fg" : "text-fg-muted hover:bg-white/[0.04] hover:text-fg",
+      )}
+    >
+      <Icon size={14} className={active === id ? "text-accent-text" : "text-fg-subtle"} aria-hidden />
+      <span className="min-w-0 truncate">{label}</span>
+    </button>
+  );
 
   return (
     <Page>
       <PageHeader title="Settings" description="Personalize NOVA. Changes are saved automatically on this PC." />
-      <div className="grid grid-cols-[200px_minmax(0,1fr)] items-start gap-8">
-        <nav aria-label="Settings sections" className="sticky top-0 space-y-0.5">
-          {SECTIONS.map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => jumpTo(id)}
-              aria-current={active === id ? "true" : undefined}
-              className={cn(
-                "flex h-9 w-full items-center gap-2.5 rounded-control px-3 text-left text-[13px] font-medium transition-colors",
-                active === id ? "bg-white/[0.07] text-fg" : "text-fg-muted hover:bg-white/[0.04] hover:text-fg",
-              )}
-            >
-              <Icon size={15} className={active === id ? "text-accent-text" : "text-fg-subtle"} aria-hidden />
-              {label}
-            </button>
-          ))}
+      <div className="grid grid-cols-[212px_minmax(0,1fr)] items-start gap-6">
+        <nav aria-label="Settings sections" className="sticky top-0 max-h-[calc(100vh-3.5rem)] space-y-3 overflow-y-auto pb-4">
+          <label className="flex h-9 items-center gap-2 rounded-control border border-line bg-black/25 px-2.5 focus-within:border-line-strong">
+            <Search size={14} className="shrink-0 text-fg-subtle" aria-hidden />
+            <span className="sr-only">Search settings</span>
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && results[0]) open(results[0].section, results[0].label);
+                if (event.key === "Escape") setQuery("");
+              }}
+              placeholder="Search settings"
+              className="h-full min-w-0 flex-1 bg-transparent text-[12.5px] text-fg outline-none select-text placeholder:text-fg-subtle"
+            />
+          </label>
+          {query.trim() ? (
+            results.length === 0 ? (
+              <p className="px-2.5 text-[12px] text-fg-subtle">Nothing found.</p>
+            ) : (
+              <ul className="space-y-0.5">
+                {results.map((result) => (
+                  <li key={result.label}>
+                    <button type="button" onClick={() => open(result.section, result.label)} className="w-full rounded-control px-2.5 py-1.5 text-left transition-colors hover:bg-white/[0.05]">
+                      <span className="block truncate text-[12.5px] font-medium text-fg">{result.label}</span>
+                      <span className="block truncate text-[11px] text-fg-subtle">{GROUPS.flatMap((g) => g.sections).find((s) => s.id === result.section)?.label}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )
+          ) : (
+            <>
+              {navButton(OVERVIEW, "Overview", Gauge)}
+              {GROUPS.map((group) => (
+                <div key={group.label}>
+                  <p className="px-2.5 pb-1 text-[10.5px] font-semibold tracking-[0.08em] text-fg-subtle uppercase">{group.label}</p>
+                  <div className="space-y-0.5">{group.sections.map(({ id, label, icon }) => navButton(id, label, icon))}</div>
+                </div>
+              ))}
+            </>
+          )}
         </nav>
 
-        <div className="max-w-3xl space-y-5">
+        <div className="min-w-0 max-w-3xl space-y-5">
           <StorageWarning />
-          <NameSection />
-          <AppearanceSection />
-          <ProfilesSettings />
-          <NavigationSettings />
-          <DashboardSection />
-          <AssistantSettings />
-          <WakeSettings />
-          <AgentSettings />
-          <SpeechSettings />
-          <FinderSettings />
-          <AiProviderSettings />
-          <IntegrationsSettings />
-          <StartupSettings />
-          <UpdatesSettings />
-          <SystemSection />
-          <ShortcutsSection />
-          <PrivacySection />
-          <AboutSection />
+          <Section id={active} onOpen={open} />
         </div>
       </div>
     </Page>
   );
 }
 
-/** Highlights the section nearest the top of the scroll container. */
-function useActiveSection(): string {
-  const [active, setActive] = useState<string>(SECTIONS[0]!.id);
-  useEffect(() => {
-    const root = document.getElementById("main");
-    if (!root || typeof IntersectionObserver === "undefined") return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const visible = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
-        if (visible) setActive(visible.target.id.replace("settings-", ""));
-      },
-      { root, rootMargin: "0px 0px -65% 0px" },
-    );
-    for (const { id } of SECTIONS) {
-      const el = document.getElementById(`settings-${id}`);
-      if (el) observer.observe(el);
-    }
-    return () => observer.disconnect();
-  }, []);
-  return active;
+/** One section at a time: eighteen in a row was too much to find anything in. */
+function Section({ id, onOpen }: { id: string; onOpen: (section: string) => void }) {
+  switch (id) {
+    case "you":
+      return <NameSection />;
+    case "appearance":
+      return <AppearanceSection />;
+    case "profiles":
+      return <ProfilesSettings />;
+    case "navigation":
+      return <NavigationSettings />;
+    case "dashboard":
+      return <DashboardSection />;
+    case "assistant":
+      return <AssistantSettings />;
+    case "wake":
+      return <WakeSettings />;
+    case "assistant-brain":
+      return <AgentSettings />;
+    case "local-ai":
+      return <SpeechSettings />;
+    case "finder":
+      return <FinderSettings />;
+    case "ai":
+      return <AiProviderSettings />;
+    case "integrations":
+      return <IntegrationsSettings />;
+    case "startup":
+      return <StartupSettings />;
+    case "updates":
+      return <UpdatesSettings />;
+    case "system":
+      return <SystemSection />;
+    case "shortcuts":
+      return <ShortcutsSection />;
+    case "privacy":
+      return <PrivacySection />;
+    case "about":
+      return <AboutSection />;
+    default:
+      return <SettingsOverview onOpen={onOpen} />;
+  }
 }
 
 function NameSection() {
@@ -274,6 +414,8 @@ const PRIVACY_FACTS = [
   "Settings, layouts, tasks, notes and chats are stored in a local database on this PC.",
   "No analytics, telemetry or tracking of any kind.",
   "System metrics, apps, files and media are read locally and never leave your device.",
+  "Asked for the weather or your internet speed, NOVA contacts Open-Meteo or downloads a test file from Hetzner. Only then.",
+  "NOVA Finder only knows the folders you give it. Even with the whole PC added, Windows, installed programs and app data stay off limits.",
   "AI keys live in Windows Credential Manager. Only your messages — and screenshots or files when you share them — go to the provider you chose.",
   "Wallpaper colors are sampled on this PC.",
   "The NOVA AI dot never captures your screen in the background. Changes to files wait for your OK, unless you turn on auto mode.",
@@ -372,7 +514,7 @@ function AboutSection() {
           {storage ? (storage.available ? `Schema v${storage.schemaVersion}` : "Unavailable") : "—"}
         </span>
       </SettingRow>
-      <SettingRow label="Reset settings" description="Restore appearance, navigation, dashboard and system preferences. Dashboard layouts are kept.">
+      <SettingRow label="Reset settings" description="Restore appearance, navigation, dashboard and system preferences. Your name, weather place, news feeds, startup and update choices and dashboard layouts are kept.">
         <Button
           size="sm"
           variant={confirming ? "danger" : "secondary"}

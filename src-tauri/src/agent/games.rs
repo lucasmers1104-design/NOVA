@@ -74,7 +74,9 @@ pub fn installed() -> Vec<Game> {
     if let Some(file) = std::env::var_os("APPDATA").map(|appdata| PathBuf::from(appdata).join(".minecraft").join("options.txt")).filter(|file| file.is_file()) {
         games.push(game("Minecraft".into(), file, Style::Colon, true));
     }
-    if let Some(file) = std::env::var_os("USERPROFILE").map(|home| PathBuf::from(home).join("Documents").join("My Games").join("Rocket League").join("TAGame").join("Config").join("TASystemSettings.ini")).filter(|file| file.is_file()) {
+    // Documents may have moved to OneDrive, so Windows says where it is.
+    let documents = crate::files::known_folders().into_iter().find(|folder| folder.id == "documents").map(|folder| PathBuf::from(folder.path));
+    if let Some(file) = documents.map(|documents| documents.join("My Games").join("Rocket League").join("TAGame").join("Config").join("TASystemSettings.ini")).filter(|file| file.is_file()) {
         games.push(game("Rocket League".into(), file, Style::Ini, false));
     }
     games.sort_by_key(|g| g.name.to_lowercase());
@@ -94,6 +96,125 @@ pub fn pick(games: &[Game], wanted: &str) -> Result<Game, String> {
     match matches.as_slice() {
         [one] => Ok((*one).clone()),
         [] => Err(format!("NOVA found no settings file for that game. It knows these: {}.", names())),
+        several => Err(format!("That could be {}.", several.iter().map(|g| g.name.as_str()).collect::<Vec<_>>().join(", "))),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Starting games
+// ---------------------------------------------------------------------------
+
+/// A game installed through a launcher, started by the launcher's own link.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Installed {
+    pub name: String,
+    pub launcher: &'static str,
+    pub link: String,
+    /// Fully installed; otherwise the launcher still has to download or update it.
+    pub ready: bool,
+}
+
+/// Steam's own parts that show up beside the games.
+const STEAM_NOT_GAMES: &[&str] = &["steamworks common redistributables", "steam linux runtime", "steamvr", "proton"];
+
+/// One `.item` file of the Epic Games Launcher.
+fn parse_epic_manifest(text: &str) -> Option<Installed> {
+    let item: serde_json::Value = serde_json::from_str(text.trim_start_matches('\u{feff}')).ok()?;
+    let name = item["DisplayName"].as_str()?.trim();
+    let part = |key: &str| item[key].as_str().map(crate::shell::encode_query).filter(|p| !p.is_empty());
+    let (namespace, id, app) = (part("CatalogNamespace")?, part("CatalogItemId")?, part("AppName")?);
+    // Add-ons have manifests too; they point at their game instead of being one.
+    if name.is_empty() || item["bIsApplication"].as_bool() == Some(false) || item["MainGameAppName"].as_str().is_some_and(|main| !main.is_empty() && main != item["AppName"].as_str().unwrap_or_default()) {
+        return None;
+    }
+    Some(Installed {
+        name: name.to_string(),
+        launcher: "Epic Games",
+        link: format!("com.epicgames.launcher://apps/{namespace}%3A{id}%3A{app}?action=launch&silent=true"),
+        ready: !item["bIsIncompleteInstall"].as_bool().unwrap_or(false),
+    })
+}
+
+/// The value of `"key" "value"` in one of Steam's text files, in the first place it appears.
+fn steam_value<'a>(text: &'a str, key: &str) -> Option<&'a str> {
+    text.lines().find_map(|line| {
+        let mut parts = line.split('"').skip(1).step_by(2);
+        (parts.next()?.eq_ignore_ascii_case(key)).then(|| parts.next()).flatten()
+    })
+}
+
+/// One `appmanifest_*.acf` of Steam.
+fn parse_steam_manifest(text: &str) -> Option<Installed> {
+    let id = steam_value(text, "appid").filter(|id| id.chars().all(|c| c.is_ascii_digit()) && !id.is_empty())?;
+    let name = steam_value(text, "name")?.trim();
+    let lower = name.to_lowercase();
+    if name.is_empty() || STEAM_NOT_GAMES.iter().any(|part| lower.starts_with(part)) {
+        return None;
+    }
+    // Bit 4 of StateFlags: fully installed, and nothing else (updating, downloading) going on.
+    let ready = steam_value(text, "StateFlags") == Some("4");
+    Some(Installed { name: name.to_string(), launcher: "Steam", link: format!("steam://rungameid/{id}"), ready })
+}
+
+/// The folders of `libraryfolders.vdf`, where Steam keeps games on other drives.
+fn steam_library_folders(text: &str) -> Vec<PathBuf> {
+    text.lines()
+        .filter_map(|line| {
+            let mut parts = line.split('"').skip(1).step_by(2);
+            parts.next()?.eq_ignore_ascii_case("path").then(|| parts.next()).flatten()
+        })
+        .map(|path| PathBuf::from(path.replace("\\\\", "\\")))
+        .collect()
+}
+
+fn epic_games() -> Vec<Installed> {
+    let Some(data) = std::env::var_os("ProgramData") else { return Vec::new() };
+    let Ok(files) = std::fs::read_dir(Path::new(&data).join("Epic").join("EpicGamesLauncher").join("Data").join("Manifests")) else { return Vec::new() };
+    files.flatten().filter(|file| file.path().extension().is_some_and(|e| e.eq_ignore_ascii_case("item"))).filter_map(|file| parse_epic_manifest(&std::fs::read_to_string(file.path()).ok()?)).collect()
+}
+
+fn steam_games() -> Vec<Installed> {
+    let Some(steam) = crate::agent::pc::steam_folder() else { return Vec::new() };
+    let mut libraries = vec![steam.clone()];
+    if let Ok(text) = std::fs::read_to_string(steam.join("steamapps").join("libraryfolders.vdf")) {
+        libraries.extend(steam_library_folders(&text));
+    }
+    let mut seen = std::collections::HashSet::new();
+    // Steam writes the same folder as c:/program files and as C:\\Program Files.
+    libraries.retain(|library| seen.insert(library.to_string_lossy().replace('/', "\\").to_lowercase()));
+    let mut games = Vec::new();
+    for library in libraries {
+        let Ok(files) = std::fs::read_dir(library.join("steamapps")) else { continue };
+        for file in files.flatten() {
+            if file.file_name().to_string_lossy().starts_with("appmanifest_") {
+                games.extend(std::fs::read_to_string(file.path()).ok().and_then(|text| parse_steam_manifest(&text)));
+            }
+        }
+    }
+    games
+}
+
+/// The games Epic and Steam have installed on this PC.
+pub fn library() -> Vec<Installed> {
+    let mut games = epic_games();
+    games.extend(steam_games());
+    games.sort_by_key(|game| game.name.to_lowercase());
+    games
+}
+
+pub fn pick_installed(games: &[Installed], wanted: &str) -> Result<Installed, String> {
+    let wanted = letters(wanted);
+    if wanted.is_empty() {
+        return Err("Say which game".into());
+    }
+    if let Some(exact) = games.iter().find(|g| letters(&g.name) == wanted) {
+        return Ok(exact.clone());
+    }
+    let matches: Vec<&Installed> = games.iter().filter(|g| letters(&g.name).contains(&wanted) || wanted.contains(&letters(&g.name))).collect();
+    match matches.as_slice() {
+        [one] => Ok((*one).clone()),
+        [] if games.is_empty() => Err("No games from Epic or Steam were found on this PC. For other launchers try open_app.".into()),
+        [] => Err(format!("That game isn't installed through Epic or Steam. Installed: {}. For other launchers try open_app.", games.iter().map(|g| g.name.as_str()).collect::<Vec<_>>().join(", "))),
         several => Err(format!("That could be {}.", several.iter().map(|g| g.name.as_str()).collect::<Vec<_>>().join(", "))),
     }
 }
@@ -291,6 +412,41 @@ mod tests {
 
     fn fake(name: &str, style: Style, by_window: bool) -> Game {
         game(name.into(), PathBuf::from("x"), style, by_window)
+    }
+
+    #[test]
+    fn reads_what_the_launchers_know_about_their_games() {
+        let fortnite = r#"{"DisplayName":"Fortnite","AppName":"Fortnite","CatalogNamespace":"fn","CatalogItemId":"4fe75bbc5a674f4f9b356b5c90567da5","bIsIncompleteInstall":false,"bIsApplication":true,"MainGameAppName":"Fortnite"}"#;
+        let game = parse_epic_manifest(fortnite).unwrap();
+        assert_eq!(game.link, "com.epicgames.launcher://apps/fn%3A4fe75bbc5a674f4f9b356b5c90567da5%3AFortnite?action=launch&silent=true");
+        assert!(game.ready);
+        assert!(!parse_epic_manifest(&fortnite.replace(r#""bIsIncompleteInstall":false"#, r#""bIsIncompleteInstall":true"#)).unwrap().ready);
+        assert_eq!(parse_epic_manifest(&fortnite.replace(r#""MainGameAppName":"Fortnite""#, r#""MainGameAppName":"Other""#)), None, "an add-on");
+        assert_eq!(parse_epic_manifest("kaputt"), None);
+        // As the launcher really writes it: no main game, or an empty one.
+        assert!(parse_epic_manifest(&fortnite.replace(r#""MainGameAppName":"Fortnite""#, r#""MainGameAppName":"""#)).is_some());
+        assert!(parse_epic_manifest(&fortnite.replace(r#","MainGameAppName":"Fortnite""#, "")).is_some());
+        assert_eq!(parse_epic_manifest(&fortnite.replace(r#""bIsApplication":true"#, r#""bIsApplication":false"#)), None, "Unreal Engine itself");
+
+        let acf = "\"AppState\"\n{\n\t\"appid\"\t\t\"730\"\n\t\"name\"\t\t\"Counter-Strike 2\"\n\t\"StateFlags\"\t\t\"4\"\n}";
+        let game = parse_steam_manifest(acf).unwrap();
+        assert_eq!((game.name.as_str(), game.link.as_str(), game.ready), ("Counter-Strike 2", "steam://rungameid/730", true));
+        assert!(!parse_steam_manifest(&acf.replace("\"4\"", "\"6\"")).unwrap().ready, "needs an update");
+        assert_eq!(parse_steam_manifest(&acf.replace("Counter-Strike 2", "Steamworks Common Redistributables")), None);
+
+        let vdf = "\"libraryfolders\"\n{\n\t\"0\"\n\t{\n\t\t\"path\"\t\t\"C:\\\\Program Files (x86)\\\\Steam\"\n\t}\n\t\"1\"\n\t{\n\t\t\"path\"\t\t\"D:\\\\Games\"\n\t}\n}";
+        assert_eq!(steam_library_folders(vdf), [PathBuf::from(r"C:\Program Files (x86)\Steam"), PathBuf::from(r"D:\Games")]);
+    }
+
+    #[test]
+    fn picks_the_game_that_was_asked_for() {
+        let game = |name: &str| Installed { name: name.into(), launcher: "Steam", link: String::new(), ready: true };
+        let games = [game("Fortnite"), game("Rocket League"), game("Dark Souls II"), game("Dark Souls III")];
+        assert_eq!(pick_installed(&games, "fortnite").unwrap().name, "Fortnite");
+        assert_eq!(pick_installed(&games, "rocket").unwrap().name, "Rocket League");
+        assert_eq!(pick_installed(&games, "dark souls iii").unwrap().name, "Dark Souls III");
+        assert!(pick_installed(&games, "dark souls").unwrap_err().contains("could be"));
+        assert!(pick_installed(&games, "tetris").unwrap_err().contains("Installed: Fortnite"));
     }
 
     #[test]

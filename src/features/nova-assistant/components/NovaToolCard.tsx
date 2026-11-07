@@ -2,7 +2,11 @@ import {
   AppWindow,
   Box,
   Check,
+  ChevronDown,
+  ClipboardList,
+  CloudSun,
   Copy,
+  Cpu,
   ExternalLink,
   File,
   FileArchive,
@@ -14,21 +18,34 @@ import {
   FileVideo,
   Folder,
   FolderOpen,
+  FolderPlus,
+  Gamepad2,
   Globe,
   HardDrive,
+  Keyboard,
   ListChecks,
-  Loader2,
   type LucideIcon,
+  MessageSquareText,
+  Music2,
+  Power,
   Presentation,
+  Search,
   ShieldAlert,
+  ShieldCheck,
   ShieldQuestion,
+  Sparkles,
+  Timer,
+  Trash2,
   Type,
+  Wifi,
   X,
 } from "lucide-react";
+import { motion } from "motion/react";
 import { type ReactNode, useEffect, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
 import { openNova, openPath, openWebPage } from "../api";
+import { FinderHintCard, GameCard, MusicCard, PowerCard, SpeedCard, SystemCard, TimerCard, WeatherCard } from "./NovaResultCards";
 import type { ToolItem } from "../conversation";
 import type { FileHit, ToolCard } from "../types";
 
@@ -193,7 +210,7 @@ function ResultCard({ card }: { card: ToolCard }) {
       return <img src={card.dataUrl} alt={`Screenshot of ${card.label}`} className="mt-2 max-h-40 rounded-[10px] border border-line object-contain" />;
     case "path":
       return (
-        <div className="mt-1 flex items-center gap-2 pl-6">
+        <div className="mt-1 flex items-center gap-2 pl-9">
           <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-fg-subtle" title={card.path}>
             {card.path}
           </span>
@@ -202,14 +219,14 @@ function ResultCard({ card }: { card: ToolCard }) {
       );
     case "link":
       return (
-        <button type="button" title={card.url} className="mt-1 ml-6 flex max-w-[calc(100%-1.5rem)] items-center gap-1.5 text-[11.5px] font-medium text-accent-text hover:underline" onClick={() => void openWebPage(card.url)}>
+        <button type="button" title={card.url} className="mt-1 ml-9 flex max-w-[calc(100%-2.25rem)] items-center gap-1.5 text-[11.5px] font-medium text-accent-text hover:underline" onClick={() => void openWebPage(card.url)}>
           <Globe size={12} className="shrink-0" aria-hidden />
           <span className="truncate">{new URL(card.url).host}</span>
         </button>
       );
     case "productivity":
       return (
-        <div className="mt-1.5 ml-6 flex items-center gap-2.5 rounded-[12px] border border-line bg-white/[0.035] px-2.5 py-2">
+        <div className="mt-1.5 ml-9 flex items-center gap-2.5 rounded-[12px] border border-line bg-white/[0.035] px-2.5 py-2">
           <ListChecks size={15} className="shrink-0 text-accent-text" aria-hidden />
           <span className="min-w-0 flex-1">
             <span className="block truncate text-[12.5px] font-medium text-fg">{card.label}</span>
@@ -222,6 +239,22 @@ function ResultCard({ card }: { card: ToolCard }) {
       );
     case "freed":
       return <FreedCard card={card} />;
+    case "music":
+      return <MusicCard card={card} />;
+    case "game":
+      return <GameCard card={card} />;
+    case "timer":
+      return <TimerCard card={card} />;
+    case "weather":
+      return <WeatherCard card={card} />;
+    case "speed":
+      return <SpeedCard card={card} />;
+    case "system":
+      return <SystemCard card={card} />;
+    case "power":
+      return <PowerCard card={card} />;
+    case "finderHint":
+      return <FinderHintCard />;
     case "app":
       return null;
   }
@@ -252,7 +285,7 @@ function useCountUp(target: number, durationMs = 900): number {
 export function FreedCard({ card }: { card: Extract<ToolCard, { kind: "freed" }> }) {
   const shown = useCountUp(card.bytes);
   return (
-    <div className="mt-2 ml-6 rounded-[14px] border border-success/30 bg-success/[0.07] p-3">
+    <div className="mt-2 ml-9 rounded-[14px] border border-success/30 bg-success/[0.07] p-3">
       <div className="flex items-center gap-2.5">
         <span className="flex size-9 shrink-0 items-center justify-center rounded-[11px] bg-success/15 text-success">
           <HardDrive size={17} aria-hidden />
@@ -278,21 +311,117 @@ export function FreedCard({ card }: { card: Extract<ToolCard, { kind: "freed" }>
   );
 }
 
+/** What each kind of action looks like, so a row of steps reads at a glance. */
+const TOOL_ICONS: Record<string, LucideIcon> = {
+  search_files: Search,
+  open_file: FolderOpen,
+  show_in_folder: FolderOpen,
+  list_folder: Folder,
+  open_app: AppWindow,
+  open_website: Globe,
+  search_web_in_browser: Globe,
+  read_webpage: Globe,
+  system_info: Cpu,
+  task_manager: Cpu,
+  end_process: X,
+  installed_programs: HardDrive,
+  look_at_screen: AppWindow,
+  list_windows: AppWindow,
+  window_action: AppWindow,
+  read_window: AppWindow,
+  send_input: Keyboard,
+  use_element: Keyboard,
+  create_document: FileText,
+  create_folder: FolderPlus,
+  move_item: FolderOpen,
+  rename_item: Type,
+  delete_item: Trash2,
+  list_tasks: ListChecks,
+  add_task: ListChecks,
+  complete_task: ListChecks,
+  add_note: MessageSquareText,
+  add_project: ListChecks,
+  media_control: Music2,
+  now_playing: Music2,
+  search_on_spotify: Music2,
+  spotify_play: Music2,
+  spotify_library: Music2,
+  spotify_control: Music2,
+  game_settings: Gamepad2,
+  change_game_settings: Gamepad2,
+  start_game: Gamepad2,
+  virus_scan: ShieldCheck,
+  find_junk: HardDrive,
+  clean_up: HardDrive,
+  uninstall_program: Trash2,
+  timer: Timer,
+  weather: CloudSun,
+  internet_speed: Wifi,
+  power: Power,
+  clipboard: ClipboardList,
+};
+
+/** The action's icon, with a ring while it runs and a mark when it's over. */
+function StepIcon({ tool }: { tool: ToolItem }) {
+  const Icon = TOOL_ICONS[tool.name] ?? Sparkles;
+  const high = tool.risk === "high";
+  const tone = {
+    running: "bg-accent/15 text-accent-text",
+    confirm: high ? "bg-danger/15 text-danger" : "bg-warning/15 text-warning",
+    done: "bg-white/[0.07] text-fg-muted",
+    failed: "bg-danger/15 text-danger",
+    declined: "bg-white/[0.05] text-fg-subtle",
+  }[tool.state];
+  return (
+    <span className={cn("relative flex size-[26px] shrink-0 items-center justify-center rounded-full", tone)}>
+      {tool.state === "confirm" ? high ? <ShieldAlert size={14} aria-hidden /> : <ShieldQuestion size={14} aria-hidden /> : <Icon size={14} aria-hidden />}
+      {tool.state === "running" && <span className="absolute inset-0 animate-spin rounded-full border-[1.5px] border-accent/25 border-t-accent-text" aria-hidden />}
+      {tool.state === "done" && (
+        <motion.span initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", stiffness: 520, damping: 22 }} className="absolute -right-1 -bottom-1 flex size-3.5 items-center justify-center rounded-full bg-success text-[#08130d] ring-2 ring-[#151a29]">
+          <Check size={9} strokeWidth={3.5} aria-hidden />
+        </motion.span>
+      )}
+      {(tool.state === "failed" || tool.state === "declined") && (
+        <span className={cn("absolute -right-1 -bottom-1 flex size-3.5 items-center justify-center rounded-full ring-2 ring-[#151a29]", tool.state === "failed" ? "bg-danger text-white" : "bg-fg-subtle text-[#151a29]")}>
+          <X size={9} strokeWidth={3.5} aria-hidden />
+        </span>
+      )}
+    </span>
+  );
+}
+
 interface NovaToolCardProps {
   tool: ToolItem;
   onConfirm: (approved: boolean) => void;
 }
 
+/** Several steps in a row: one card, with how far along it is; finished long ones fold away. */
+export function NovaToolSteps({ tools, onConfirm }: { tools: ToolItem[]; onConfirm: (id: string, approved: boolean) => void }) {
+  const finished = tools.filter((t) => t.state === "done").length;
+  const over = tools.every((t) => t.state !== "running" && t.state !== "confirm");
+  const [open, setOpen] = useState(false);
+  if (tools.length === 1) return <NovaToolCard tool={tools[0]!} onConfirm={(approved) => onConfirm(tools[0]!.id, approved)} />;
+  const folds = over && tools.length > 2 && tools.every((t) => !t.card);
+  const shown = !folds || open;
+  return (
+    <div className="my-2 rounded-[14px] border border-line bg-white/[0.025] px-2.5 py-1.5">
+      <button type="button" disabled={!folds} aria-expanded={folds ? open : undefined} onClick={() => setOpen((now) => !now)} className="flex w-full items-center gap-2 py-1 text-left text-[11.5px] text-fg-muted">
+        <span className="font-medium tabular-nums">
+          {finished}/{tools.length}
+        </span>
+        <span className="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-white/[0.07]">
+          <motion.span className="block h-full rounded-full bg-accent-text" initial={false} animate={{ width: `${(finished / tools.length) * 100}%` }} transition={{ duration: 0.3 }} />
+        </span>
+        {folds && <ChevronDown size={13} className={cn("shrink-0 transition-transform", open && "rotate-180")} aria-hidden />}
+      </button>
+      {shown && tools.map((tool) => <NovaToolCard key={tool.id} tool={tool} onConfirm={(approved) => onConfirm(tool.id, approved)} />)}
+    </div>
+  );
+}
+
 /** One action NOVA AI takes: its progress, the user's confirmation, and the result. */
 export function NovaToolCard({ tool, onConfirm }: NovaToolCardProps) {
   const high = tool.risk === "high";
-  const icon = {
-    running: <Loader2 size={14} className="animate-spin text-accent-text" aria-hidden />,
-    confirm: high ? <ShieldAlert size={14} className="text-danger" aria-hidden /> : <ShieldQuestion size={14} className="text-warning" aria-hidden />,
-    done: <Check size={14} className="text-success" aria-hidden />,
-    failed: <X size={14} className="text-danger" aria-hidden />,
-    declined: <X size={14} className="text-fg-subtle" aria-hidden />,
-  }[tool.state];
   const stateLabel = { running: "In progress", confirm: "Needs your OK", done: "Done", failed: "Failed", declined: "Not allowed" }[tool.state];
 
   return (
@@ -305,8 +434,8 @@ export function NovaToolCard({ tool, onConfirm }: NovaToolCardProps) {
         tool.state === "confirm" && (high ? "border-danger/40 bg-danger/[0.06]" : "border-warning/35 bg-warning/[0.05]"),
       )}
     >
-      <div className="flex items-start gap-2">
-        <span className="mt-[3px] shrink-0">{icon}</span>
+      <div className="flex items-center gap-2.5">
+        <StepIcon tool={tool} />
         <p className="min-w-0 flex-1 text-[12.5px] leading-snug">
           <span className={cn("text-fg", tool.state === "confirm" && "font-medium")}>{tool.title}</span>
           {tool.summary && tool.summary !== tool.title && tool.state !== "confirm" && (
@@ -320,7 +449,7 @@ export function NovaToolCard({ tool, onConfirm }: NovaToolCardProps) {
         </p>
       </div>
       {tool.state === "confirm" && (
-        <div className="mt-1.5 pl-6">
+        <div className="mt-1.5 pl-9">
           {tool.detail && <p className="text-[11.5px] leading-relaxed text-fg-muted">{tool.detail}</p>}
           <div className="mt-2 flex gap-1.5">
             <Button size="sm" variant={high ? "danger" : "primary"} onClick={() => onConfirm(true)}>

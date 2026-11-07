@@ -76,6 +76,8 @@ export function useSaveKey() {
     onSuccess: (_, { provider }) => {
       void client.invalidateQueries({ queryKey: aiKeys.keyStatus });
       void client.invalidateQueries({ queryKey: aiKeys.models(provider) });
+      // Who answers and which online voices can be used depend on the keys.
+      void client.invalidateQueries({ queryKey: ["assistant"] });
       notify(`${providerInfo(provider).name} key saved to Windows Credential Manager`, { kind: "success" });
     },
     onError: (error) => notifyError("Couldn't save the key", error),
@@ -89,6 +91,7 @@ export function useDeleteKey() {
     onSuccess: (_, provider) => {
       void client.invalidateQueries({ queryKey: aiKeys.keyStatus });
       client.removeQueries({ queryKey: aiKeys.models(provider) });
+      void client.invalidateQueries({ queryKey: ["assistant"] });
     },
   });
 }
