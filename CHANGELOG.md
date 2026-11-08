@@ -4,7 +4,8 @@
 
 ### Added
 - **NOVA Companion**, NOVA on your phone (Android first): ask NOVA AI from your phone and get the answer as text, with a screenshot if you want one. „Öffne Fortnite, ich komme gleich“ runs now, as soon as the PC is on, or at a time you set; a time missed while the PC was off is made up within two hours. „Sag Bescheid, wenn der Download fertig ist“ tells your phone too, and when nothing NOVA can watch directly fits, NOVA looks at the screen every 10 minutes, at most 12 times.
-- **Settings → Phone**: turn the connection on, pair a phone by QR code (you confirm on the PC), see and remove paired phones, choose the apps and games a phone may start without your fingerprint, keep phone screenshots for 7 days if you want, and see the log of tasks from phones.
+- **NOVA Companion is a plugin**: install it from Plugins → Available. Its page “Phone” has a QR code to get the Android app, turns the connection on, pairs a phone by QR code (you confirm in NOVA's own window), shows and removes paired phones, lets you choose the apps and games a phone may start without your fingerprint, keeps phone screenshots for 7 days if you want, and shows the log of tasks from phones.
+- **Plugins → Available**: NOVA's own plugin list, next to the releases on your update source. NOVA checks each download against the list and the plugin's signature before the usual install dialog.
 - **Approvals on the phone**: when a task from the phone wants to change something on the PC, the phone asks for your fingerprint, and the PC shows a notification. Settings, keys, saved routines, account changes and working websites never run from the phone.
 
 ### Changed

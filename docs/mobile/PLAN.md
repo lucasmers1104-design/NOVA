@@ -306,3 +306,13 @@ Bewusst weggelassen: Blur-Bibliothek (Glas auf Android über halbtransparente Fl
 12. Desktop-Abschnitt auf Englisch, Handy-App auf Deutsch.
 13. „Um HH:MM“ bei ausgeschaltetem PC: bis 2 Stunden nachholen, sonst verwerfen und melden.
 14. `mobile/` und `packages/companion-protocol/` in diesem Repository.
+
+## 9. Als Plugin (2026-11-08)
+
+NOVA Companion kommt als Plugin aus der Plugin-Liste (Plugins → Available). Plugins sind abgeschottete Webseiten ohne nativen Code, deshalb bleibt der Kern (Server, Verschlüsselung, Freigaben) in NOVA und läuft nur, solange ein von NOVA signiertes Plugin mit der Berechtigung `companion` installiert, eingeschaltet und erlaubt ist (`plugins::companion_unlocked`).
+
+- Plugin-Quelle: `plugins/companion/` (Seite „Phone“: App per QR-Code, Verbindung, Koppeln, Geräte, Allowlist, Protokoll). Gepackt nach `releases/plugins/`, gelistet in `releases/plugins/catalog.json`.
+- Die Plugin-Seite spricht über `plugin_call` mit `companion.*`-Methoden; die früheren Tauri-Befehle und Einstellungen → Phone sind weg.
+- SECURITY: „Handy koppeln?“ beantwortet NOVAs eigenes Fenster (`PairDialog.tsx`, Befehl `companion_pair_decide`), nie das Plugin.
+- Die Android-App liegt als `releases/NOVA-Companion.apk` (nur arm64, rund 40 MB) neben den PC-Installern; die Plugin-Seite zeigt dafür einen QR-Code.
+- Ohne Plugin: kein Server, keine Handy-Aufträge. Gekoppelte Geräte bleiben gespeichert und funktionieren wieder, wenn das Plugin zurückkommt.

@@ -149,19 +149,20 @@ Legend: ✅ done · ⬜ planned
 ## NOVA Companion — the phone ✅
 See [mobile/PLAN.md](mobile/PLAN.md).
 - ✅ C0 Protocol in one shared package (types, checking parsers, fixtures Rust and TypeScript both test against), phone permission tiers (an exhaustive match: a new tool doesn't compile without a tier), schedule with a two-hour make-up window
-- ✅ C1 Pairing by single-use QR code with a click on the PC, X25519 + HKDF + AES-256-GCM sessions (Noise KK pattern), WebSocket server on the LAN with mDNS, device list and revoke in Settings → Phone; end-to-end test over real sockets
+- ✅ C1 Pairing by single-use QR code with a click on the PC, X25519 + HKDF + AES-256-GCM sessions (Noise KK pattern), WebSocket server on the LAN with mDNS, device list and revoke; end-to-end test over real sockets
 - ✅ C2 Expo app (Android first): Start, Chat, Aufgaben, Freigaben, pairing, reconnect, glass look
 - ✅ C3 Tasks run through NOVA AI in the phone's own conversation; the phone's tiers replace the PC's confirmations; answer and screenshot to the phone
 - ✅ C4 Approvals bound to the phone's biometric-locked Keystore key, two-minute expiry, a notification on the PC
 - ✅ C5 Outbox for "sobald PC an", tasks at a set time, watchers that tell the phone, AI checks with a call limit, local notifications and a background pickup every ~15 minutes
 - ✅ C6 Quick capture, dictation with the phone's speech recognition, docs
+- ✅ As a plugin: NOVA Companion comes from the new plugin list (Plugins → Available) and needs the `companion` permission, which only NOVA-signed plugins get; without it the phone connection doesn't run. The Android app (arm64) is in `releases/`
 - ⚠️ No APK built here: this PC has no Android SDK. The app typechecks and its Android bundle builds; see [mobile/README.md](../mobile/README.md)
 - ⚠️ The handshake follows the Noise KK pattern but is written by hand; have someone with cryptography experience review it before a public release
 - ⚠️ Later: relay server, Wake-on-LAN, several PCs, iOS build, location triggers, live screen, widgets, file transfer
 
 ## Next ideas
 - Calendar sync adapters (Outlook, Google) behind explicit opt-in
-- A public plugin catalog and plugins contributing tools to NOVA AI (see [PLUGIN_API.md](PLUGIN_API.md#later))
+- More plugins in the plugin list, and plugins contributing tools to NOVA AI (see [PLUGIN_API.md](PLUGIN_API.md#later))
 - Store (UWP) apps in the launcher via the `shell:AppsFolder` namespace
 - Split widget metadata from components to shrink the startup bundle
 

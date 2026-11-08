@@ -62,6 +62,7 @@ The user sees them before installing and can turn each one off later on the Plug
 | `network` (`hosts`) | HTTPS to exactly these public hosts, no redirects, carried out by Rust | `network.fetch` |
 | `system.metrics` | CPU, memory and GPU load | `system.snapshot` |
 | `developer.analytics` | NOVA's statistics; only signed plugins of the `private` channel, and only with a developer sign-in the server checks | `analytics.*` |
+| `companion` | NOVA Companion: the phone connection, pairing, paired phones, the allowlist, the task log. Only plugins signed by NOVA, also in debug builds. Without such a plugin, installed, on and allowed, the phone connection doesn't run. The answer to “Pair this phone?” is never a plugin method: NOVA asks in its own window | `companion.*` |
 
 There is deliberately no permission for files, process launch, the shell, credentials, the assistant or other plugins' data.
 
@@ -106,8 +107,22 @@ node scripts/e2e/plugin-isolation.mjs
 
 Limits, measured: a plugin stuck in a loop stalled NOVA's window by about 110 ms, since the frame runs in its own process. It can still use a CPU core until it is turned off.
 
-## Later
+## Plugin list
 
-- A public catalog: a signed list of reviewed plugins. Until then, a plugin reaches users as a file signed with NOVA's key.
+Plugins → Available shows `releases/plugins/catalog.json`, next to `latest.json` on the update source. Each entry names a package in the same folder and its SHA-256; NOVA downloads only from there, compares the hash, then checks the signature and shows the install dialog as for a file. Debug builds read a local list from `NOVA_PLUGIN_CATALOG` (an absolute path).
+
+Publishing a plugin (here NOVA Companion, whose source is `plugins/companion/`):
+
+```bash
+node scripts/package-plugin.mjs plugins/companion/manifest.json plugins/companion/payload --out releases/plugins/dev.nova.companion-1.0.0.novaplugin
+```
+
+```bash
+node scripts/plugin-catalog.mjs plugins/companion/manifest.json releases/plugins/dev.nova.companion-1.0.0.novaplugin
+```
+
+Then commit and push `releases/plugins/`. A Rust test checks that every listed package matches its hash and installs as in a release build.
+
+## Later
 - Plugins contributing tools to NOVA AI. They would need the approval gates of the built-in tools.
 - More permissions (`notifications`, `media.read`), once a plugin needs them.
