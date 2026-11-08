@@ -272,11 +272,18 @@ pub fn start<R: Runtime>(app: &AppHandle<R>) {
 }
 
 /// Private IPv4 addresses of this PC, best first: what the QR code offers the phone.
+/// Adapters a phone in the home network can't reach: virtual machines, WSL, containers, VPNs.
+fn virtual_adapter(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    ["vmware", "virtualbox", "vethernet", "hyper-v", "wsl", "docker", "loopback", "tailscale", "zerotier", "wireguard", "openvpn", "tap-", "npcap"].iter().any(|word| name.contains(word))
+}
+
 fn lan_addresses() -> Vec<std::net::Ipv4Addr> {
     let Ok(networks) = sysinfo::Networks::new_with_refreshed_list() else { return Vec::new() };
     let mut found: Vec<std::net::Ipv4Addr> = networks
-        .values()
-        .flat_map(|data| data.ip_networks().iter().map(|n| n.addr))
+        .iter()
+        .filter(|(name, _)| !virtual_adapter(&name.to_string_lossy()))
+        .flat_map(|(_, data)| data.ip_networks().iter().map(|n| n.addr))
         .filter_map(|addr| match addr {
             std::net::IpAddr::V4(v4) if v4.is_private() => Some(v4),
             _ => None,
@@ -674,4 +681,17 @@ pub(crate) fn drop_conn<R: Runtime>(app: &AppHandle<R>, id: u64) {
 
 pub(crate) fn mdns_address() -> Option<std::net::Ipv4Addr> {
     lan_addresses().into_iter().next()
+}
+
+#[cfg(test)]
+mod adapter_tests {
+    #[test]
+    fn virtual_adapters_stay_out_of_the_pairing_code() {
+        for name in ["VMware Network Adapter VMnet8", "vEthernet (Default Switch)", "vEthernet (WSL)", "Tailscale", "Loopback Pseudo-Interface 1"] {
+            assert!(super::virtual_adapter(name), "{name}");
+        }
+        for name in ["Ethernet 2", "WLAN", "Wi-Fi", "Ethernet"] {
+            assert!(!super::virtual_adapter(name), "{name}");
+        }
+    }
 }
