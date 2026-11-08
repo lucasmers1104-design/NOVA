@@ -65,6 +65,11 @@ fn needs_decision(consent: Option<&Consent>) -> bool {
     consent.is_none_or(|c| c.scope < CONSENT_SCOPE)
 }
 
+/// Whether to show the popup now: never before the saved decision has been read.
+fn asks(inner: &Inner) -> bool {
+    inner.loaded && needs_decision(inner.consent.as_ref())
+}
+
 fn allows_sending(consent: Option<&Consent>) -> bool {
     consent.is_some_and(|c| c.accepted && c.scope >= CONSENT_SCOPE)
 }
@@ -163,6 +168,9 @@ struct Inner {
     last_sent: Option<i64>,
     last_error: Option<String>,
     consent: Option<Consent>,
+    /// The saved decision has been read. Until then nobody is asked: the page can
+    /// ask before the start is through, and "not read yet" isn't "not decided".
+    loaded: bool,
     queue: Option<Connection>,
 }
 
@@ -186,6 +194,7 @@ impl Default for Inner {
             last_sent: None,
             last_error: None,
             consent: None,
+            loaded: false,
             queue: None,
         }
     }
@@ -311,6 +320,7 @@ pub fn init<R: Runtime>(app: &AppHandle<R>) {
     {
         let mut inner = lock(&state);
         inner.consent = consent;
+        inner.loaded = true;
         if sending {
             inner.push(Event::AppStart);
         }
@@ -603,7 +613,7 @@ fn status_of<R: Runtime>(app: &AppHandle<R>) -> TelemetryStatus {
     let base = base_url();
     let waiting = inner.queue.as_ref().and_then(|c| c.query_row("SELECT count(*) FROM queue WHERE sent_at IS NULL", [], |r| r.get::<_, i64>(0)).ok()).unwrap_or(0) + inner.buffer.len() as i64;
     TelemetryStatus {
-        needs_decision: needs_decision(consent),
+        needs_decision: asks(&inner),
         accepted: allows_sending(consent),
         decided_at: consent.map(|c| c.decided_at),
         install_id: consent.and_then(|c| c.install_id.clone()),
@@ -736,6 +746,16 @@ mod tests {
         assert!(!needs_decision(Some(&consent(false, CONSENT_SCOPE))));
         assert!(needs_decision(Some(&consent(true, CONSENT_SCOPE - 1))));
         assert!(needs_decision(Some(&consent(false, CONSENT_SCOPE - 1))));
+    }
+
+    #[test]
+    fn doesnt_ask_before_the_saved_decision_is_read() {
+        let mut inner = Inner::default();
+        assert!(!asks(&inner));
+        inner.loaded = true;
+        assert!(asks(&inner));
+        inner.consent = Some(consent(true, CONSENT_SCOPE));
+        assert!(!asks(&inner));
     }
 
     #[test]

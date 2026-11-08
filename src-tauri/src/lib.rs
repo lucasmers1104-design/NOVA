@@ -102,6 +102,10 @@ pub fn run() {
             let speech_prefs = speech::load_prefs(&database);
             app.state::<desktop::DesktopState>().close_to_tray.store(close_to_tray, Ordering::Relaxed);
             app.manage(database);
+            // Saved decisions first: creating the tray and the assistant's windows lets the
+            // page's first questions through, and they must not get "nothing decided yet".
+            telemetry::init(app.handle());
+            replay::init(app.handle());
             desktop::create_tray(app.handle())?;
             app.handle().on_menu_event(assistant::on_menu_event);
 
@@ -120,9 +124,7 @@ pub fn run() {
             wake::init(app.handle(), wake_prefs);
             capture::watch_foreground();
             agent::auto::start(app.handle());
-            replay::init(app.handle());
             agent::play::start(app.handle());
-            telemetry::init(app.handle());
             #[cfg(debug_assertions)]
             plugins::install_dev_plugins(app.handle());
             Ok(())

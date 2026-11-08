@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.11.1 — 2026-11-08
+
+### Fixed
+- **The statistics question came back after updates** although you had already answered it. NOVA read your answer only at the end of its start, and the window could ask before that. Your answer is now read first, and NOVA never asks before it has read it.
+
 ## 1.11.0 — 2026-11-08
 
 ### Added
