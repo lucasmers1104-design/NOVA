@@ -26,6 +26,8 @@ coverage/
 
 # Plugin packages never belong here: private ones live in nova-private, keys outside any repository.
 *.novaplugin
+# ...except the published ones NOVA offers in Plugins → Available.
+!releases/plugins/*.novaplugin
 *.key
 
 # Built by scripts/build-helpers.mjs
