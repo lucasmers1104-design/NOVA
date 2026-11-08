@@ -13,6 +13,7 @@ pub mod games;
 pub mod local;
 pub mod memory;
 pub mod pc;
+pub mod play;
 pub mod provider;
 pub mod spotify;
 pub mod tidy;
@@ -308,6 +309,7 @@ fn system_prompt<R: Runtime>(app: &AppHandle<R>) -> String {
          Files: read_file reads text files, Word documents and PDFs when the user wants to know what's in them. tidy_folder sorts a messy folder into subfolders, and undo takes that back. pc_check is the general look at how the PC is doing; say what's worth doing and offer it.\n\
          This PC: when the user asks what makes the PC slow, what is running or what uses memory or disk, call task_manager and name the actual culprit in plain words, with its numbers. Offer to end it, or call end_process when they asked for that. installed_programs shows which programs take the most disk space.\n\
          Games: to change a game's settings (\"mach Fortnite flüssiger\"), read them with game_settings, then change them directly with change_game_settings instead of only suggesting them; lower settings mean more frames. The game has to be closed; if it's running, ask the user to close it. Be honest about limits: in Fortnite, mouse sensitivity and key bindings are stored in Epic's cloud rather than in this file, so NOVA can't change them. Never send keys or clicks into a running game.\n\
+         While playing: \"Clip das\" saves the last seconds with clip (30 unless they say otherwise; pass a name they give it), then just say it's saved. \"Schick das an …\" sends the latest clip to their Discord channel with send_clip. \"Wie lange zock ich schon?\" is game_time. \"Was hat da eben geruckelt?\" is recent_load: name the most likely cause in a sentence or two, e.g. a program that spiked or a graphics card at its limit, and say plainly when nothing stood out.\n\
          Virus scans: virus_scan starts Windows Defender in the background and NOVA shows and announces the result by itself, so don't wait or call it again. If Defender can't run because another antivirus protects the PC, say so and name it.\n\
          Disk space: when the user wants more space, call find_junk and installed_programs, then list what you'd remove with sizes, biggest first. For temporary files and installers call clean_up; for programs the user no longer needs, uninstall_program. You can't tell how often a program is used, so name the candidates rather than assuming. Afterwards say how much space was won and what went.\n\
          Starting things: start_game starts Epic and Steam games (\"starte Fortnite\"); open_app also finds Store apps such as the Microsoft Store. To close an app use window_action with close and its name; if it isn't among the windows, it isn't open.\n\
@@ -450,6 +452,9 @@ async fn run_turn<R: Runtime>(app: &AppHandle<R>, text: String, voice: bool, cha
     let has_image = attachments.iter().any(|a| matches!(a.part, Part::Image { .. }));
 
     crate::telemetry::note_activity(app);
+    if let Some(command) = play::quick(&text, crate::replay::discord_name(app).as_deref()) {
+        return run_quick(app, command, &text, channel).await;
+    }
     let Some((provider, model, key)) = resolve_provider(&app.state::<Database>(), &prefs) else {
         crate::telemetry::track(app, crate::telemetry::Event::Assistant("local"));
         return run_local(app, &text, has_image, channel).await;
@@ -819,6 +824,41 @@ async fn stream<R: Runtime>(app: &AppHandle<R>, request: reqwest::RequestBuilder
 
 async fn say(channel: &Channel<AgentEvent>, text: &str) {
     emit(channel, AgentEvent::Text { text: text.to_string() });
+}
+
+/// "Clip das" and "Schick das an die Jungs": done at once, answered in a word.
+async fn run_quick<R: Runtime>(app: &AppHandle<R>, command: play::Quick, text: &str, channel: &Channel<AgentEvent>) -> Result<(), String> {
+    let de = local::language(text) == local::Lang::De || text.to_lowercase().contains("schick");
+    match command {
+        play::Quick::Clip { seconds, name } => {
+            let call = provider::ToolCall { id: format!("quick-{}", storage::now_millis()), name: "clip".into(), input: Ok(json!({ "seconds": seconds, "name": name })) };
+            let result = handle_call(app, &call, channel, &mut Opened::default()).await;
+            let saved = !matches!(result, Part::ToolResult { is_error: true, .. });
+            say(channel, if saved { if de { "Geclippt!" } else { "Clipped!" } } else { crate::replay::clip_problem_words(app, de) }).await;
+        }
+        play::Quick::Send => {
+            let reply = if crate::replay::last_clip(app).is_none() {
+                if de { "Es gibt noch keinen Clip. Sag erst „Clip das“." } else { "There's no clip yet. Say “clip that” first." }
+            } else if crate::replay::discord_name(app).is_none() {
+                if de { "Richte dafür zuerst einen Discord-Kanal ein, in den Einstellungen unter Games & clips." } else { "Set up a Discord channel first, in Settings under Games & clips." }
+            } else {
+                status(channel, Status::Executing, Some("Sending to Discord"));
+                let message = play::current_game(app).map(|game| format!("🎮 {}", game.title)).unwrap_or_default();
+                match crate::replay::send_to_discord(app, &message).await {
+                    Ok(name) => {
+                        log_action(app, "send_clip", &format!("Send {name} to Discord"), Risk::Safe, "done", "");
+                        if de { "Ist raus!" } else { "Sent!" }
+                    }
+                    Err(error) => {
+                        log_action(app, "send_clip", "Send the clip to Discord", Risk::Safe, "failed", &error);
+                        if de { "Das Senden an Discord hat nicht geklappt. Den Grund siehst du im Verlauf." } else { "Sending to Discord didn't work. The history says why." }
+                    }
+                }
+            };
+            say(channel, reply).await;
+        }
+    }
+    Ok(())
 }
 
 async fn run_local<R: Runtime>(app: &AppHandle<R>, text: &str, has_image: bool, channel: &Channel<AgentEvent>) -> Result<(), String> {

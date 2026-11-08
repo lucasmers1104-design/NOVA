@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.11.0 — 2026-11-08
+
+### Added
+- **„Clip das!“**: say it while you play, and NOVA saves the last 30 seconds as a video in Videos\NOVA Clips, with the game's sound. „Clip die letzte Minute“ saves all of it, „Clip das, nenn es Monsterkill“ gives it a name. It happens at once, without a round trip to the AI, so it also works without an AI key. Turn it on under Settings → Games & clips; NOVA then downloads ffmpeg once (36 MB). It only records while a game runs in fullscreen and two minutes after, on your graphics card, through Windows' own screen capture, so the game itself is never touched.
+- **„Schick das an die Jungs“**: sends your latest clip to a Discord channel you set up once under Settings → Games & clips, made small enough for Discord. Say the name you gave the channel and it goes right away; otherwise NOVA asks first.
+- **„Wie lange zock ich schon?“**: NOVA knows which game is in front and since when.
+- **„Was hat da eben geruckelt?“**: while you play, NOVA remembers what the PC did in the last two minutes, second by second, and names the likely cause: a program that suddenly used the CPU or the disk, full memory, or a graphics card at its limit. It can't see the frame rate itself.
+- **„Nova, Stopp“**: ends the conversation and starts a new chat. „Tschüss“, „Das war's“ and „Neuer Chat“ work too, after a reply or right after „Hey NOVA“.
+
+### Changed
+- **The dot moves along the taskbar**: drag it to any spot on the taskbar and it stays there. Dropped anywhere else, it stays on the desktop as before.
+
 ## 1.10.2 — 2026-11-07
 
 ### Added

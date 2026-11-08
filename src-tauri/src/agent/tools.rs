@@ -220,6 +220,32 @@ pub fn definitions() -> Vec<ToolSpec> {
             schema: json!({ "type": "object", "properties": {} }),
         },
         ToolSpec {
+            name: "game_time",
+            description: "Which game the user plays or last played and for how long ('Wie lange zock ich schon?'). NOVA notices games that run in fullscreen.",
+            schema: json!({ "type": "object", "properties": {} }),
+        },
+        ToolSpec {
+            name: "recent_load",
+            description: "What the PC did in the last two minutes, second by second, while a game ran: CPU, GPU and memory, which programs spiked, used the disk or started. Use it for 'Was hat da eben geruckelt?' and name the likely cause in a sentence or two. It can't see frame rates or network lag.",
+            schema: json!({ "type": "object", "properties": {} }),
+        },
+        ToolSpec {
+            name: "clip",
+            description: "Save the last seconds of the game as a video ('Clip das!') in Videos\\NOVA Clips. Only works while a game runs and clips are turned on in NOVA's settings.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "seconds": { "type": "integer", "description": "How far back, 5 to 60; 30 if the user didn't say." },
+                    "name": string("A name the user gave the clip, e.g. 'Monsterkill'."),
+                },
+            }),
+        },
+        ToolSpec {
+            name: "send_clip",
+            description: "Send the latest clip to the user's Discord channel ('Schick das an die Jungs'). The channel is the one the user set up in NOVA's settings; it's made smaller if Discord needs that. The user confirms first.",
+            schema: json!({ "type": "object", "properties": { "message": string("A short line to go with it, in the user's words.") } }),
+        },
+        ToolSpec {
             name: "end_process",
             description: "End a running program (all its processes, or one by id): its windows are asked to close so it can save; background processes without a window are terminated. High impact: the user must confirm explicitly. Windows' own processes and NOVA can't be ended.",
             schema: json!({
@@ -664,6 +690,10 @@ pub enum Action {
     ReadFile { path: PathBuf, page: u32 },
     BrowserRead(pc::Target),
     BrowserUse { target: pc::Target, element: String, kind: Option<String>, index: usize, text: Option<String>, submit: bool },
+    GameTime,
+    RecentLoad,
+    Clip { seconds: u64, name: Option<String> },
+    SendClip(String),
 }
 
 /// Which video to play.
@@ -1197,6 +1227,24 @@ pub fn prepare<R: Runtime>(app: &AppHandle<R>, name: &str, input: &Value) -> Res
             safe(Action::SpotifySearch(query.clone()), format!("Search Spotify for “{query}”"))
         }
         "task_manager" => safe(Action::TaskManager, "Check what's running".into()),
+        "game_time" => safe(Action::GameTime, "Check how long the game runs".into()),
+        "recent_load" => safe(Action::RecentLoad, "Check the last two minutes".into()),
+        "clip" => {
+            let seconds = input["seconds"].as_u64().unwrap_or(crate::replay::DEFAULT_CLIP).clamp(5, crate::replay::LONGEST_CLIP);
+            let name = input["name"].as_str().map(|n| n.trim().chars().take(60).collect::<String>()).filter(|n| !n.is_empty());
+            safe(Action::Clip { seconds, name }, format!("Save the last {seconds} seconds"))
+        }
+        "send_clip" => {
+            let (clip, _) = crate::replay::last_clip(app).ok_or("There's no clip to send yet. Say \"Clip das\" first.")?;
+            let channel = crate::replay::discord_name(app).ok_or("No Discord channel is set up. The user adds one under Settings → Games & clips.")?;
+            let message: String = input["message"].as_str().unwrap_or_default().trim().chars().take(200).collect();
+            Ok(Prepared {
+                title: format!("Send {} to {channel} on Discord", display_name(&clip)),
+                detail: Some(if message.is_empty() { "Only the video, without a message.".into() } else { format!("With the message “{message}”") }),
+                action: Action::SendClip(message),
+                risk: Risk::Confirm,
+            })
+        }
         "installed_programs" => safe(Action::InstalledPrograms, "Check installed programs".into()),
         "list_windows" => safe(Action::ListWindows, "Check open windows".into()),
         "end_process" => {
@@ -2000,6 +2048,36 @@ pub fn execute<R: Runtime>(app: &AppHandle<R>, action: &Action) -> Result<Outcom
             let overview = crate::system::overview(&app.state::<crate::system::SystemMonitor>())?;
             let (for_model, summary, card) = pc::task_manager(&overview, &crate::system::volume_lines())?;
             Ok(Outcome { for_model, summary, card: Some(card), image: None })
+        }
+        Action::GameTime => {
+            let mut game = super::play::current_game(app);
+            // It may have closed while NOVA wasn't watching anymore.
+            if let Some(g) = game.as_mut().filter(|g| g.ended.is_none()) {
+                if !pc::processes()?.iter().any(|(pid, _)| *pid == g.pid) {
+                    g.ended = Some(super::play::now_secs());
+                }
+            }
+            let text = super::play::game_time(game.as_ref(), super::play::now_secs());
+            Ok(Outcome { summary: game.map_or("No game seen".into(), |g| g.title), for_model: text, ..Outcome::default() })
+        }
+        Action::RecentLoad => {
+            let samples = super::play::history(app);
+            Ok(Outcome { for_model: super::play::recent_load(&samples, super::play::now_secs()), summary: format!("{} seconds looked at", samples.len()), ..Outcome::default() })
+        }
+        Action::Clip { seconds, name } => {
+            let game = super::play::current_game(app).map(|g| g.title);
+            let path = crate::replay::clip(app, *seconds, name.as_deref(), game.as_deref())?;
+            let file = display_name(&path);
+            Ok(Outcome {
+                for_model: format!("Saved the last {seconds} seconds as {}. Say it in a few words, e.g. \"Geclippt!\".", path.display()),
+                summary: format!("Saved {file}"),
+                card: Some(auto::facts_card("clip", "Clip gespeichert", vec![file, "Videos › NOVA Clips".into()])),
+                image: None,
+            })
+        }
+        Action::SendClip(message) => {
+            let name = tauri::async_runtime::block_on(crate::replay::send_to_discord(app, message))?;
+            Ok(Outcome { for_model: format!("Sent {name} to the user's Discord channel."), summary: format!("Sent {name} to Discord"), ..Outcome::default() })
         }
         Action::EndProcess { name, pids, force } => {
             let said = pc::end_processes(name, pids, *force)?;

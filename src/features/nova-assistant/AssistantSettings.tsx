@@ -103,7 +103,7 @@ export function AssistantSettings() {
   const busy = !status || configure.isPending;
   const shortcutProblem = rejected ?? status?.shortcutError ?? null;
   const placement = status?.placement ?? "taskbar";
-  const inTaskbar = placement === "taskbar" && (status?.taskbarAvailable ?? true) && !status?.customPosition;
+  const inTaskbar = status ? status.docked : placement === "taskbar";
 
   return (
     <SettingsSection id="assistant" title="NOVA AI assistant" description="A small dot that opens NOVA AI from anywhere on your desktop." icon={Sparkles}>
@@ -125,7 +125,7 @@ export function AssistantSettings() {
         description={
           status?.customPosition ? (
             <>
-              Where you dragged it.{" "}
+              {inTaskbar ? "Where you put it in the taskbar." : "Where you dragged it."}{" "}
               <button type="button" className="font-medium text-accent-text hover:underline" onClick={() => reset.mutate()}>
                 Put it back
               </button>
@@ -133,7 +133,7 @@ export function AssistantSettings() {
           ) : placement === "taskbar" && status && !status.taskbarAvailable ? (
             "Your taskbar hides itself, so the dot uses the corner below instead."
           ) : placement === "taskbar" ? (
-            "In the taskbar, right after your app buttons. It hides with the taskbar while a fullscreen app runs."
+            "In the taskbar, right after your app buttons. Drag it along the taskbar to put it somewhere else there. It hides with the taskbar while a fullscreen app runs."
           ) : (
             "Above the taskbar in a corner of your main display. You can also drag the dot anywhere, on any display."
           )

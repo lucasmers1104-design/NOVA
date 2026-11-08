@@ -139,6 +139,13 @@ Legend: ✅ done · ⬜ planned
 - ✅ Appears once on a new installation, after the consent popup: name, color, voice download, AI key, "Hey NOVA", a walk through the real app, shortcuts
 - ⚠️ German only, like the consent popup, while the rest of the interface is English
 
+## 1.11 — Games ✅
+- ✅ “Clip das!”: a replay buffer while a game runs in fullscreen (ffmpeg, Desktop Duplication, NVENC/AMF or Windows' encoder, two-second pieces joined without re-encoding), with the PC's sound through WASAPI loopback
+- ✅ “Schick das an die Jungs”: the latest clip to a saved Discord webhook, shrunk to fit
+- ✅ “Wie lange zock ich schon?” and “Was hat da eben geruckelt?” from a per-second record kept only while a game runs
+- ✅ “Nova, Stopp” starts a new chat; the dot can sit anywhere on the taskbar
+- ⚠️ No frame rate or network lag: that needs a hook in the game or administrator rights
+
 ## Next ideas
 - Calendar sync adapters (Outlook, Google) behind explicit opt-in
 - A public plugin catalog and plugins contributing tools to NOVA AI (see [PLUGIN_API.md](PLUGIN_API.md#later))

@@ -178,6 +178,9 @@ pub struct AssistantPrefs {
     pub hide_in_fullscreen: bool,
     /// Where the user dragged the dot (physical top-left of its window). Overrides `corner`.
     pub position: Option<Point>,
+    /// Where the user dropped the dot on the taskbar: physical px from the bar's
+    /// left (or top) edge. Without one it sits beside the notification area.
+    pub taskbar_spot: Option<i32>,
     /// Where the user dragged the panel (physical top-left of its window); beside the dot without one.
     pub panel_position: Option<Point>,
     /// The panel stays where it is, and stays open when NOVA's main window comes up.
@@ -195,6 +198,7 @@ impl Default for AssistantPrefs {
             background: false,
             hide_in_fullscreen: false,
             position: None,
+            taskbar_spot: None,
             panel_position: None,
             panel_pinned: false,
         }
@@ -384,14 +388,24 @@ pub struct Taskbar {
 
 /// Top-left of the dot window in the taskbar: at the end of the app buttons,
 /// just before `next`, centred across the bar (taskbars on the left or right
-/// included). `gap` is the space between the window and `next`.
-pub fn taskbar_position(taskbar: Taskbar, side: i32, gap: i32) -> (i32, i32) {
+/// included). `gap` is the space between the window and `next`. With a `spot`
+/// (px from the bar's start) the dot sits there instead, never past the bar's ends.
+pub fn taskbar_position(taskbar: Taskbar, side: i32, gap: i32, spot: Option<i32>) -> (i32, i32) {
     let Taskbar { bar, next } = taskbar;
     if bar.w >= bar.h {
-        (next.x - gap - side, bar.y + (bar.h - side) / 2)
+        let x = spot.map_or(next.x - gap - side, |s| fit(bar.x + s, bar.x, bar.right() - side));
+        (x, bar.y + (bar.h - side) / 2)
     } else {
-        (bar.x + (bar.w - side) / 2, next.y - gap - side)
+        let y = spot.map_or(next.y - gap - side, |s| fit(bar.y + s, bar.y, bar.bottom() - side));
+        (bar.x + (bar.w - side) / 2, y)
     }
+}
+
+/// Where on the taskbar a dot window dropped at `pos` lands (px from the bar's
+/// start), or `None` when its centre isn't over the bar.
+pub fn taskbar_spot(bar: Rect, side: i32, pos: (i32, i32)) -> Option<i32> {
+    let center = (pos.0 + side / 2, pos.1 + side / 2);
+    bar.contains(center).then(|| if bar.w >= bar.h { pos.0 - bar.x } else { pos.1 - bar.y })
 }
 
 /// Of the taskbar's parts, the first one that starts after the app buttons.
@@ -601,7 +615,7 @@ fn dot_target<R: Runtime>(app: &AppHandle<R>, prefs: &AssistantPrefs) -> Option<
         let taskbar = find_taskbar()?;
         let screen = nearest_screen(&all, taskbar.bar.center())?;
         let gap = px((TRAY_GAP - look.room()).max(0.0), screen.scale);
-        Some((screen, taskbar_position(taskbar, dot_side(screen, look), gap)))
+        Some((screen, taskbar_position(taskbar, dot_side(screen, look), gap, prefs.taskbar_spot)))
     };
     let (screen, (x, y)) = match dragged {
         Some(found) => found,
@@ -1128,7 +1142,8 @@ fn watch_taskbar<R: Runtime>(app: &AppHandle<R>) {
                 let _ = if hide { dot.hide() } else { dot.show() };
                 hidden = hide;
             }
-            if !hide {
+            // Not while the user drags it around.
+            if !hide && !self::state(&app).settling.load(Ordering::SeqCst) && !mouse_button_down() {
                 let moved = match (dot_target(&app, &prefs), dot.outer_position()) {
                     (Some((_, target)), Ok(now)) => (target.x - now.x).abs() > 1 || (target.y - now.y).abs() > 1,
                     _ => false,
@@ -1300,10 +1315,18 @@ fn settle_drag<R: Runtime>(app: &AppHandle<R>) {
     let all = screens(app);
     let half = px(look.window_side(), 1.0) / 2;
     let Some(screen) = nearest_screen(&all, (pos.x + half, pos.y + half)) else { return };
-    let (x, y) = clamp_dot(screen, &look, (pos.x, pos.y));
+    // Dropped on the taskbar: it stays there, at that spot.
+    let spot = find_taskbar().and_then(|t| taskbar_spot(t.bar, dot_side(screen, &look), (pos.x, pos.y)));
     let prefs = {
         let mut inner = state(app).lock();
-        inner.prefs.position = Some(Point { x, y });
+        if spot.is_some() {
+            inner.prefs.placement = Placement::Taskbar;
+            inner.prefs.position = None;
+            inner.prefs.taskbar_spot = spot;
+        } else {
+            let (x, y) = clamp_dot(screen, &look, (pos.x, pos.y));
+            inner.prefs.position = Some(Point { x, y });
+        }
         inner.prefs.clone()
     };
     save_prefs(app, &prefs);
@@ -1313,6 +1336,9 @@ fn settle_drag<R: Runtime>(app: &AppHandle<R>) {
     // Out of the taskbar: only this watcher still hides the dot in fullscreen apps.
     if prefs.hide_in_fullscreen && prefs.enabled && !docked(&prefs) {
         watch_fullscreen(app);
+    }
+    if docked(&prefs) {
+        watch_taskbar(app);
     }
     if state(app).lock().panel_open {
         if let Some(panel) = app.get_webview_window(PANEL_LABEL) {
@@ -1432,6 +1458,8 @@ pub struct AssistantStatus {
     hide_in_fullscreen: bool,
     /// The dot sits where the user dragged it instead of in `corner`.
     custom_position: bool,
+    /// The dot sits in the taskbar right now.
+    docked: bool,
     /// Why the saved shortcut couldn't be registered at startup.
     shortcut_error: Option<String>,
     default_shortcut: &'static str,
@@ -1440,17 +1468,19 @@ pub struct AssistantStatus {
 }
 
 fn status<R: Runtime>(app: &AppHandle<R>) -> AssistantStatus {
+    let taskbar_available = find_taskbar().is_some();
     let inner = state(app).lock();
     AssistantStatus {
         enabled: inner.prefs.enabled,
         placement: inner.prefs.placement,
         corner: inner.prefs.corner,
         look: inner.prefs.look.clone(),
-        taskbar_available: find_taskbar().is_some(),
+        taskbar_available,
+        docked: taskbar_available && docked(&inner.prefs),
         shortcut: inner.prefs.shortcut.clone(),
         background: inner.prefs.background,
         hide_in_fullscreen: inner.prefs.hide_in_fullscreen,
-        custom_position: inner.prefs.position.is_some(),
+        custom_position: inner.prefs.position.is_some() || inner.prefs.taskbar_spot.is_some(),
         shortcut_error: inner.shortcut_error.clone(),
         default_shortcut: DEFAULT_SHORTCUT,
         panel_open: inner.panel_open,
@@ -1499,6 +1529,7 @@ pub async fn assistant_configure<R: Runtime>(app: AppHandle<R>, update: PrefsUpd
         // Picking a place moves a dragged dot back into it.
         if update.corner != prefs.corner || update.placement != prefs.placement {
             prefs.position = None;
+            prefs.taskbar_spot = None;
         }
         prefs.enabled = update.enabled;
         prefs.placement = update.placement;
@@ -1522,6 +1553,7 @@ pub async fn assistant_reset_position<R: Runtime>(app: AppHandle<R>) -> CommandR
     let prefs = {
         let mut inner = state(&app).lock();
         inner.prefs.position = None;
+        inner.prefs.taskbar_spot = None;
         inner.prefs.clone()
     };
     save_prefs(&app, &prefs);
@@ -1768,11 +1800,30 @@ mod tests {
     fn the_dot_sits_in_the_taskbar_after_the_app_buttons() {
         // 1920×1080 with a 40 px taskbar; the next part starts at x = 1650.
         let bottom = Taskbar { bar: Rect { x: 0, y: 1040, w: 1920, h: 40 }, next: Rect { x: 1650, y: 1040, w: 270, h: 40 } };
-        assert_eq!(taskbar_position(bottom, 40, 0), (1610, 1040));
-        assert_eq!(taskbar_position(bottom, 30, 4), (1616, 1045));
+        assert_eq!(taskbar_position(bottom, 40, 0, None), (1610, 1040));
+        assert_eq!(taskbar_position(bottom, 30, 4, None), (1616, 1045));
         // A taskbar on the right: the tray sits at its bottom.
         let right = Taskbar { bar: Rect { x: 1860, y: 0, w: 60, h: 1080 }, next: Rect { x: 1860, y: 900, w: 60, h: 180 } };
-        assert_eq!(taskbar_position(right, 40, 0), (1870, 860));
+        assert_eq!(taskbar_position(right, 40, 0, None), (1870, 860));
+    }
+
+    #[test]
+    fn the_dot_moves_along_the_taskbar() {
+        let bottom = Rect { x: 0, y: 1040, w: 1920, h: 40 };
+        let taskbar = Taskbar { bar: bottom, next: Rect { x: 1650, y: 1040, w: 270, h: 40 } };
+        // Dropped over the bar, near the Start button: it stays there.
+        let spot = taskbar_spot(bottom, 40, (300, 1035));
+        assert_eq!(spot, Some(300));
+        assert_eq!(taskbar_position(taskbar, 40, 0, spot), (300, 1040));
+        // Dropped above the bar: not in the taskbar.
+        assert_eq!(taskbar_spot(bottom, 40, (300, 990)), None);
+        // A spot past the end (a smaller screen now) stays on the bar.
+        assert_eq!(taskbar_position(taskbar, 40, 0, Some(5000)), (1880, 1040));
+        assert_eq!(taskbar_position(taskbar, 40, 0, Some(-20)), (0, 1040));
+        // A taskbar on the left counts from its top.
+        let left = Rect { x: 0, y: 0, w: 60, h: 1080 };
+        assert_eq!(taskbar_spot(left, 40, (5, 400)), Some(400));
+        assert_eq!(taskbar_position(Taskbar { bar: left, next: Rect { x: 0, y: 900, w: 60, h: 180 } }, 40, 0, Some(400)), (10, 400));
     }
 
     #[test]

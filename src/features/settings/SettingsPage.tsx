@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { getTauriVersion, getVersion } from "@tauri-apps/api/app";
-import { Activity, AudioLines, Check, CloudDownload, Cpu, Ear, FolderSearch, Gauge, Globe, Info, Keyboard, KeyRound, LayoutDashboard, Layers, type LucideIcon, Palette, PanelLeft, Plug, Power, RotateCcw, Search, ShieldCheck, Sparkles, TriangleAlert, UserRound } from "lucide-react";
+import { Activity, AudioLines, Check, Clapperboard, CloudDownload, Cpu, Ear, FolderSearch, Gauge, Globe, Info, Keyboard, KeyRound, LayoutDashboard, Layers, type LucideIcon, Palette, PanelLeft, Plug, Power, RotateCcw, Search, ShieldCheck, Sparkles, TriangleAlert, UserRound } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { SHORTCUTS } from "@/app/shortcuts";
 import { NovaMark } from "@/components/brand/NovaMark";
@@ -24,6 +24,7 @@ import { type MotionPreference, REFRESH_INTERVALS_MS, type TitleBarClock, useSet
 import { useUi } from "@/stores/ui";
 import { AccentSettings } from "./AccentSettings";
 import { BackdropSettings } from "./BackdropSettings";
+import { GamesSettings } from "./GamesSettings";
 import { AiProviderSettings, IntegrationsSettings, ProfilesSettings, StartupSettings, UpdatesSettings, useExternalConnections } from "./ExtraSettings";
 import { NavigationSettings } from "./NavigationSettings";
 import { REVEAL_SETTINGS_EVENT, SettingRow, SettingsSection } from "./SettingsLayout";
@@ -45,6 +46,7 @@ const GROUPS: readonly { label: string; sections: readonly { id: string; label: 
     sections: [
       { id: "assistant-brain", label: "Model & voice", icon: AudioLines },
       { id: "wake", label: "Hey NOVA & claps", icon: Ear },
+      { id: "games", label: "Games & clips", icon: Clapperboard },
       { id: "assistant", label: "The NOVA dot", icon: Sparkles },
       { id: "finder", label: "NOVA Finder", icon: FolderSearch },
       { id: "ai", label: "AI providers", icon: KeyRound },
@@ -99,6 +101,9 @@ const SEARCHABLE: readonly { label: string; section: string; words?: string }[] 
   { label: "After waking", section: "wake" },
   { label: "Play a sound when NOVA wakes", section: "wake", words: "ton chime" },
   { label: "Also in games", section: "wake", words: "spiele fortnite vollbild" },
+  { label: "Clip das!", section: "games", words: "clip clips aufnahme aufnehmen video replay spiele gaming ffmpeg" },
+  { label: "Your clips", section: "games", words: "clips ordner videos" },
+  { label: "Discord channel", section: "games", words: "discord jungs schicken teilen webhook" },
   { label: "Show the NOVA dot", section: "assistant", words: "punkt taskleiste" },
   { label: "Where it sits", section: "assistant", words: "punkt position ecke taskleiste" },
   { label: "Search inside text files", section: "finder", words: "suche ordner dateien" },
@@ -269,6 +274,8 @@ function Section({ id, onOpen }: { id: string; onOpen: (section: string) => void
       return <AssistantSettings />;
     case "wake":
       return <WakeSettings />;
+    case "games":
+      return <GamesSettings />;
     case "assistant-brain":
       return <AgentSettings />;
     case "local-ai":

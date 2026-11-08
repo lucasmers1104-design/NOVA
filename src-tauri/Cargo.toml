@@ -1,6 +1,6 @@
 [package]
 name = "nova"
-version = "1.10.2"
+version = "1.11.0"
 description = "NOVA — Your Personal Command Center"
 authors = ["Luca Warmers"]
 edition = "2021"

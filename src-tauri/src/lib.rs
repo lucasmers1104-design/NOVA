@@ -13,6 +13,7 @@ mod http;
 mod live;
 mod media;
 mod plugins;
+mod replay;
 mod shell;
 pub mod speech;
 mod storage;
@@ -79,6 +80,8 @@ pub fn run() {
         .manage(telemetry::TelemetryState::default())
         .manage(plugins::PluginState::default())
         .manage(developer::DeveloperState::default())
+        .manage(agent::play::PlayState::default())
+        .manage(replay::ReplayState::default())
         .register_asynchronous_uri_scheme_protocol(plugins::SCHEME, |ctx, request, responder| {
             let app = ctx.app_handle().clone();
             tauri::async_runtime::spawn_blocking(move || responder.respond(plugins::serve(&app, &request)));
@@ -117,6 +120,8 @@ pub fn run() {
             wake::init(app.handle(), wake_prefs);
             capture::watch_foreground();
             agent::auto::start(app.handle());
+            replay::init(app.handle());
+            agent::play::start(app.handle());
             telemetry::init(app.handle());
             #[cfg(debug_assertions)]
             plugins::install_dev_plugins(app.handle());
@@ -293,6 +298,11 @@ pub fn run() {
             speech::speech_remove,
             speech::speech_warm,
             speech::speech_benchmark,
+            replay::replay_status,
+            replay::replay_configure,
+            replay::replay_install,
+            replay::replay_open_folder,
+            replay::replay_discord_set,
             telemetry::telemetry_status,
             telemetry::telemetry_decide,
             telemetry::telemetry_track,

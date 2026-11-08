@@ -4,7 +4,7 @@ import { prewarmAssistant } from "./api";
 import { useConversation } from "./conversation";
 import { beginTurn, discardTurn, mark } from "./speech/timings";
 import type { AgentStatus, WakeCall } from "./types";
-import { listen, speak, speaksGerman, stopListening, stopSpeaking, useVoice, voiceLine } from "./voice";
+import { isStopCommand, listen, speak, speaksGerman, stopListening, stopSpeaking, useVoice, voiceLine } from "./voice";
 import { playChime } from "./wake";
 
 interface VoiceTurnsOptions {
@@ -40,6 +40,13 @@ export function useVoiceTurns({ agent, wake, typing, onStart, onSend }: VoiceTur
     return speak(text, agent?.prefs ?? { voice: "", speechRate: 1, speechVolume: 1 }, label, german);
   };
 
+  /** "Nova, Stopp": whatever runs stops, a new chat begins and the microphone stays closed. */
+  const endConversation = async () => {
+    discardTurn();
+    await useConversation.getState().reset();
+    await say(voiceLine("bye", language), "bye");
+  };
+
   /** `followUp`: the microphone opens by itself after a reply. */
   const startVoice = async (followUp = false) => {
     const mode = useVoice.getState().mode;
@@ -54,7 +61,9 @@ export function useVoiceTurns({ agent, wake, typing, onStart, onSend }: VoiceTur
     // Warm the AI provider while the user speaks (skipped when the panel just did).
     void prewarmAssistant();
     const text = await listen(german, undefined, followUp);
-    if (text && !discard.current) {
+    if (text && !discard.current && isStopCommand(text)) {
+      void endConversation();
+    } else if (text && !discard.current) {
       onSend?.();
       // The reply is read aloud as it arrives; "one moment" plays only if it takes a while.
       void send(text, { voice: true, ack: voiceLine("ack", language) });
@@ -70,6 +79,8 @@ export function useVoiceTurns({ agent, wake, typing, onStart, onSend }: VoiceTur
   sayRef.current = say;
   const onSendRef = useRef(onSend);
   onSendRef.current = onSend;
+  const endConversationRef = useRef(endConversation);
+  endConversationRef.current = endConversation;
   useEffect(() => {
     if (!wake) return;
     let cancelled = false;
@@ -79,6 +90,11 @@ export function useVoiceTurns({ agent, wake, typing, onStart, onSend }: VoiceTur
       if (wake.call.chime) await playChime();
       mark("chimeEnd");
       if (cancelled) return;
+      // "Hey NOVA, stopp" also ends a reply that is still running.
+      if (wake.call.request && isStopCommand(wake.call.request)) {
+        void endConversationRef.current();
+        return;
+      }
       // A reply is still running: the greeting would cut it off and nobody could answer.
       if (useConversation.getState().busy) return;
       // "Hey NOVA, wie spät ist es?": the request is already there.

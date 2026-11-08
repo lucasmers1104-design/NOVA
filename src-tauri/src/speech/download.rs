@@ -197,7 +197,9 @@ fn inflate(method: u16, data: &[u8], size: u64) -> Result<Vec<u8>, String> {
 }
 
 async fn fetch_zip_entry(file: &File, name: &str, dest: &Path, progress: &(dyn Fn(u64) + Sync)) -> Result<(), String> {
-    let (tail, total) = range(file.url, -(65_536 + 22), None, None).await?;
+    // The size first: GitHub's download servers refuse "the last n bytes".
+    let (_, total) = range(file.url, 0, Some(0), None).await?;
+    let (tail, _) = range(file.url, total.saturating_sub(65_536 + 22) as i64, Some(total.saturating_sub(1)), None).await?;
     let (offset, size) = central_directory(&tail).ok_or("The archive has no directory")?;
     // The directory is usually inside the tail already.
     let tail_start = total.saturating_sub(tail.len() as u64);

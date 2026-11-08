@@ -355,6 +355,7 @@ export function useExternalConnections(): string[] {
   }
   list.push("Voices and offline speech recognition: huggingface.co, api.nuget.org, github.com — only for downloads you start (each file checked against a fixed hash)");
   list.push("Online voices: generativelanguage.googleapis.com or api.elevenlabs.io — only if you pick one (what NOVA says goes there)");
+  list.push("Clips: github.com for the video tool ffmpeg when you turn clips on (checked against a fixed hash), and discord.com when you send a clip to the channel you saved");
   list.push("Web pages: any public site — only when NOVA AI reads a page for your request (it can search the web through Anthropic too, and never reaches your own network)");
   return list;
 }

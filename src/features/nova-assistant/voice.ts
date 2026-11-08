@@ -573,6 +573,7 @@ const LINES = {
     scanClean: ["Der Virenscan ist fertig. Alles sauber."],
     scanThreats: ["Der Virenscan hat etwas gefunden. Schau bitte kurz in die Windows-Sicherheit."],
     scanFailed: ["Der Virenscan konnte nicht laufen. Den Grund siehst du bei mir im Fenster."],
+    bye: ["Alles klar, wir fangen neu an."],
   },
   en: {
     greet: ["Hey! What can I do for you?", "I'm here. What's up?", "What can I do for you today?", "Hi! How can I help?", "Good to hear you. What do you need?"],
@@ -583,8 +584,25 @@ const LINES = {
     scanClean: ["The virus scan is finished. All clean."],
     scanThreats: ["The virus scan found something. Please take a look at Windows Security."],
     scanFailed: ["The virus scan couldn't run. You'll see why in my window."],
+    bye: ["Okay, starting fresh."],
   },
 } as const;
+
+const STOP_PHRASES = new Set([
+  "stopp", "stop", "halt", "ende", "beenden", "schluss", "tschüss", "tschüs", "ciao", "bye", "das wars", "das war s", "das war es",
+  "danke das wars", "danke das war s", "neuer chat", "neues gespräch", "fang neu an", "new chat", "that s all", "goodbye",
+]);
+
+/** "Nova, Stopp", "Tschüss" or "Neuer Chat": the whole utterance, nothing else, ends the conversation. */
+export function isStopCommand(text: string): boolean {
+  const words = text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim()
+    .replace(/^(?:(?:hey|hallo|hi|okay|ok) )?nova /, "")
+    .replace(/ nova$/, "");
+  return STOP_PHRASES.has(words);
+}
 
 const FIXED_LINES: ReadonlySet<string> = new Set(Object.values(LINES).flatMap((lines) => Object.values(lines).flat()));
 

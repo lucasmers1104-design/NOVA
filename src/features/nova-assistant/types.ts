@@ -39,6 +39,8 @@ export interface AssistantStatus {
   hideInFullscreen: boolean;
   /** The dot sits where the user dragged it instead of in `corner`. */
   customPosition: boolean;
+  /** The dot sits in the taskbar right now (at its own spot there if `customPosition`). */
+  docked: boolean;
   /** The panel stays where it is, and stays open when NOVA's main window comes up. */
   panelPinned: boolean;
   /** Why the saved shortcut couldn't be registered (e.g. taken by another app). */
@@ -143,7 +145,7 @@ export type ToolCard =
   | { kind: "power"; action: "shutdown" | "restart"; at: number }
   | { kind: "finderHint" }
   | { kind: "videos"; videos: VideoInfo[]; playing: boolean }
-  | { kind: "facts"; icon: "volume" | "routine" | "watch" | "memory" | "tidy"; title: string; lines: string[] };
+  | { kind: "facts"; icon: "clip" | "volume" | "routine" | "watch" | "memory" | "tidy"; title: string; lines: string[] };
 
 /** Mirrors `AgentEvent` in src-tauri/src/agent/mod.rs. */
 export type AgentEvent =

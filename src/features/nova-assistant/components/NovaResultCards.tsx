@@ -1,4 +1,4 @@
-import { Brain, Check, Eye, FolderInput, FolderPlus, Gamepad2, HardDrive, type LucideIcon, Music2, Play, Power, Timer, Volume2, Workflow, X } from "lucide-react";
+import { Brain, Check, Clapperboard, Eye, FolderInput, FolderPlus, Gamepad2, HardDrive, type LucideIcon, Music2, Play, Power, Timer, Volume2, Workflow, X } from "lucide-react";
 import { motion } from "motion/react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/Button";
@@ -288,7 +288,7 @@ export function VideosCard({ card }: { card: CardOf<"videos"> }) {
   );
 }
 
-const FACT_ICONS: Record<CardOf<"facts">["icon"], LucideIcon> = { volume: Volume2, routine: Workflow, watch: Eye, memory: Brain, tidy: FolderInput };
+const FACT_ICONS: Record<CardOf<"facts">["icon"], LucideIcon> = { clip: Clapperboard, volume: Volume2, routine: Workflow, watch: Eye, memory: Brain, tidy: FolderInput };
 
 /** Something saved or changed: what it is, in a few lines. */
 export function FactsCard({ card }: { card: CardOf<"facts"> }) {

@@ -19,7 +19,7 @@ import { reduceReply, replyText, useConversation } from "./conversation";
 import { displayedState } from "./panel/PanelApp";
 import { captureShortcut, shortcutLabels } from "./shortcut";
 import { type AgentEvent, type AgentStatus, type AssistantStatus, DEFAULT_DOT_LOOK, type FinderStatus } from "./types";
-import { isOnlineVoice, listen, NOVA_VOICE, speakableText, speaksGerman, speechChunks, usesNovaVoice, useVoice, type VoiceEvent, voiceLine } from "./voice";
+import { isOnlineVoice, isStopCommand, listen, NOVA_VOICE, speakableText, speaksGerman, speechChunks, usesNovaVoice, useVoice, type VoiceEvent, voiceLine } from "./voice";
 import { voiceDescription } from "./AgentSettings";
 import { NovaVoiceLine } from "./components/NovaVoiceLine";
 import { describeHeard, listenerLabel, type WakeStatus } from "./wake";
@@ -552,6 +552,11 @@ describe("conversation helpers", () => {
     expect(voiceLine("ack", "en-US", () => 0.99)).toBe("Got it.");
   });
 
+  it("knows when the user wants to stop and start over", () => {
+    for (const said of ["Stopp.", "Nova, Stopp!", "Hey Nova stopp", "Tschüss Nova", "Das war's.", "Neuer Chat", "stop"]) expect(isStopCommand(said)).toBe(true);
+    for (const said of ["Stopp die Musik", "Halt den Timer an", "Wann ist das Spiel zu Ende?", "Nova", ""]) expect(isStopCommand(said)).toBe(false);
+  });
+
   it("shows what was understood with a voice line to finish or cancel", async () => {
     const user = userEvent.setup();
     const done = vi.fn();
@@ -620,6 +625,7 @@ describe("AssistantSettings", () => {
     background: false,
     hideInFullscreen: false,
     customPosition: false,
+    docked: true,
     shortcutError: null,
     defaultShortcut: "Ctrl+Alt+Space",
     panelOpen: false,
@@ -639,6 +645,7 @@ describe("AssistantSettings", () => {
         const update = args?.update as Partial<AssistantStatus>;
         if (update.shortcut === "Ctrl+Alt+J") throw new Error("This shortcut is already used by another app. Choose a different one.");
         status = { ...status, ...update };
+        status.docked = status.enabled && status.placement === "taskbar";
         return status;
       }
       if (command === "assistant_reset_position") {
@@ -704,9 +711,17 @@ describe("AssistantSettings", () => {
 
   it("offers to move a dragged dot back", async () => {
     status.customPosition = true;
+    status.docked = false;
     const user = userEvent.setup();
+    const view = renderWithQuery(<AssistantSettings />);
+    expect(await screen.findByText(/Where you dragged it/)).toBeInTheDocument();
+    view.unmount();
+
+    // Moved along the taskbar: still in it.
+    status.docked = true;
     renderWithQuery(<AssistantSettings />);
-    await user.click(await screen.findByRole("button", { name: "Put it back" }));
+    expect(await screen.findByText(/Where you put it in the taskbar/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Put it back" }));
     expect(call).toHaveBeenCalledWith("assistant_reset_position");
     expect(await screen.findByText(/In the taskbar, right after your app buttons/)).toBeInTheDocument();
   });
