@@ -27,7 +27,12 @@
       "blockedPermissions": [
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION"
-      ]
+      ],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "monochromeImage": "./assets/monochrome-icon.png",
+        "backgroundColor": "#11152A"
+      }
     },
     "ios": {
       "bundleIdentifier": "dev.nova.companion",
@@ -73,7 +78,7 @@
           "speechRecognitionPermission": "Damit dein Handy dein Diktat in Text umwandelt."
         }
       ],
-      "./plugins/local-network"
+      "./plugins/android"
     ],
     "experiments": {
       "typedRoutes": true
@@ -88,6 +93,7 @@
         "projectId": "65913e27-0964-46ab-a518-24144d9d83e6"
       }
     },
-    "owner": "lucasx77"
+    "owner": "lucasx77",
+    "icon": "./assets/icon.png"
   }
 }
