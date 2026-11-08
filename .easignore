@@ -1,0 +1,21 @@
+# What `eas build` uploads from this repository: only the phone app and the shared
+# package. (An .easignore replaces .gitignore for the upload, so both are listed.)
+node_modules/
+dist/
+.expo/
+.env
+.env.*
+
+# The desktop app, its installers and tools aren't needed to build the phone app.
+releases/
+src/
+src-tauri/
+tools/
+examples/
+scripts/
+public/
+assets/
+mobile/android/
+mobile/ios/
+*.novaplugin
+*.key
