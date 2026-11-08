@@ -1,0 +1,14 @@
+{
+  "id": "dev.nova.companion",
+  "name": "NOVA Companion",
+  "version": "1.0.0",
+  "description": "Your phone as a line to NOVA AI: ask from anywhere at home, start apps, approve changes with your fingerprint.",
+  "author": "NOVA",
+  "apiVersion": 1,
+  "minNovaVersion": "1.11.1",
+  "entry": "index.html",
+  "permissions": [{ "type": "companion" }],
+  "contributes": {
+    "pages": [{ "id": "main", "title": "Phone" }]
+  }
+}

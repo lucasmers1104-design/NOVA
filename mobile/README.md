@@ -42,9 +42,10 @@ Die Tests für Protokoll, Verschlüsselung, Client und Zustand laufen im Hauptpr
 
 ## Ausprobieren
 
-1. Am PC: NOVA → Einstellungen → Phone → „Phone connection“ einschalten. Windows fragt einmal nach der Firewall: nur für private Netzwerke erlauben.
-2. „Show code“ und den Code mit der App scannen, am PC „Pair“ klicken.
-3. Im Chat: „Wie lange geht der Steam-Download noch?“ mit „Screenshot mitschicken“.
+1. Am PC: NOVA → Plugins → bei „NOVA Companion“ auf „Install“, dann die neue Seite „Phone“ öffnen. Dort steht auch der QR-Code für diese App.
+2. „Phone connection“ einschalten. Windows fragt einmal nach der Firewall: nur für private Netzwerke erlauben.
+3. „Show code“ und den Code mit der App scannen, am PC „Pair“ klicken.
+4. Im Chat: „Wie lange geht der Steam-Download noch?“ mit „Screenshot mitschicken“.
 
 ## Grenzen
 

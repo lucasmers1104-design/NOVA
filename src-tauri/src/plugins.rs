@@ -60,6 +60,9 @@ pub enum Permission {
     SystemMetrics,
     #[serde(rename = "developer.analytics")]
     DeveloperAnalytics,
+    /// NOVA Companion: pairing phones and their tasks. Only plugins signed by NOVA.
+    #[serde(rename = "companion")]
+    Companion,
 }
 
 impl Permission {
@@ -69,6 +72,7 @@ impl Permission {
             Self::Network { .. } => "network",
             Self::SystemMetrics => "system.metrics",
             Self::DeveloperAnalytics => "developer.analytics",
+            Self::Companion => "companion",
         }
     }
 
@@ -78,6 +82,7 @@ impl Permission {
             Self::Network { hosts } => format!("Connect to {}", hosts.join(", ")),
             Self::SystemMetrics => "Read CPU, memory and graphics card usage".into(),
             Self::DeveloperAnalytics => "Read NOVA's usage statistics (developer sign-in required)".into(),
+            Self::Companion => "Pair your phones with NOVA, so they can send tasks to NOVA AI on this PC".into(),
         }
     }
 }
@@ -323,6 +328,10 @@ fn read_package(bytes: &[u8], trusted: &[&str], allow_unsigned: bool) -> Result<
     if manifest.channel == Channel::Private && signer != Signer::Nova {
         return Err("A private plugin has to be signed".into());
     }
+    // SECURITY: connecting phones reaches NOVA AI and its approvals; only NOVA's own plugin may.
+    if manifest.permissions.contains(&Permission::Companion) && signer != Signer::Nova {
+        return Err("Only plugins signed by NOVA can connect phones".into());
+    }
     if let Some(entry) = &manifest.entry {
         if !safe_path(entry) || !files.contains_key(&format!("payload/{entry}")) {
             return Err("The plugin's entry file is missing".into());
@@ -482,6 +491,11 @@ pub async fn plugins_pick<R: Runtime>(app: AppHandle<R>, pending: tauri::State<'
     })
     .await
     .map_err(|e| e.to_string())??;
+    stage(&app, &pending, package).map(Some)
+}
+
+/// Checks a read package against this NOVA and holds it until the user confirms.
+fn stage<R: Runtime>(app: &AppHandle<R>, pending: &PluginState, package: Package) -> CommandResult<PendingInstall> {
     if let Some(problem) = incompatibility(&package.manifest, env!("CARGO_PKG_VERSION")) {
         return Err(problem);
     }
@@ -499,7 +513,130 @@ pub async fn plugins_pick<R: Runtime>(app: AppHandle<R>, pending: tauri::State<'
         added_permissions: added_permissions(m, existing.as_ref().map(|row| &row.manifest)),
     };
     *pending.pending.lock().map_err(|_| "plugin state lock poisoned")? = Some(package);
-    Ok(Some(summary))
+    Ok(summary)
+}
+
+// ---------------------------------------------------------------------------
+// The catalog: plugins NOVA offers, listed next to the releases
+// ---------------------------------------------------------------------------
+
+const MAX_CATALOG: usize = 64 * 1024;
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CatalogEntry {
+    id: String,
+    name: String,
+    version: String,
+    description: String,
+    #[serde(default)]
+    author: String,
+    /// The package's file name next to catalog.json.
+    file: String,
+    sha256: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct Catalog {
+    plugins: Vec<CatalogEntry>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogItem {
+    id: String,
+    name: String,
+    version: String,
+    description: String,
+    author: String,
+    installed: Option<String>,
+    update: bool,
+}
+
+/// `releases/plugins/catalog.json` next to the update manifest of the update source.
+fn catalog_url(source: &str) -> CommandResult<url::Url> {
+    crate::updates::manifest_url(source)?.join("plugins/catalog.json").map_err(|e| e.to_string())
+}
+
+/// Only plain package names in the catalog's own folder, on the catalog's own host.
+fn package_url(catalog: &url::Url, entry: &CatalogEntry) -> CommandResult<url::Url> {
+    if !safe_path(&entry.file) || entry.file.contains('/') || !entry.file.ends_with(".novaplugin") {
+        return Err("The catalog names an invalid package".into());
+    }
+    let url = catalog.join(&entry.file).map_err(|e| e.to_string())?;
+    if url.host_str() != catalog.host_str() || url.scheme() != catalog.scheme() {
+        return Err("The catalog points elsewhere".into());
+    }
+    Ok(url)
+}
+
+fn parse_catalog(bytes: &[u8]) -> CommandResult<Vec<CatalogEntry>> {
+    let catalog: Catalog = serde_json::from_slice(bytes).map_err(|e| format!("The plugin list isn't valid: {e}"))?;
+    Ok(catalog
+        .plugins
+        .into_iter()
+        .filter(|e| is_plugin_id(&e.id) && short_text(&e.name, 40) && short_text(&e.description, 200) && parse_version(&e.version).is_some() && e.sha256.len() == 64)
+        .take(100)
+        .collect())
+}
+
+async fn fetch(url: &url::Url, limit: usize) -> CommandResult<Vec<u8>> {
+    // Debug builds can try a catalog from disk before it is pushed (file:// URLs).
+    #[cfg(debug_assertions)]
+    if url.scheme() == "file" {
+        let path = url.to_file_path().map_err(|_| "Bad file address".to_string())?;
+        return std::fs::read(path).map_err(|e| e.to_string());
+    }
+    if url.scheme() != "https" && !matches!(url.host_str(), Some("localhost" | "127.0.0.1")) {
+        return Err("Plugins only come over https".into());
+    }
+    let response = crate::http::client().get(url.clone()).timeout(Duration::from_secs(60)).send().await.map_err(crate::http::describe)?;
+    if !response.status().is_success() {
+        return Err(if response.status() == reqwest::StatusCode::NOT_FOUND { "No plugin list was published yet".into() } else { format!("The plugin list answered {}", response.status()) });
+    }
+    crate::http::read_limited(response, limit).await
+}
+
+/// In debug builds NOVA_PLUGIN_CATALOG can point to a catalog.json on disk.
+fn catalog_location(source: &str) -> CommandResult<url::Url> {
+    #[cfg(debug_assertions)]
+    if let Ok(path) = std::env::var("NOVA_PLUGIN_CATALOG") {
+        return url::Url::from_file_path(&path).map_err(|_| "NOVA_PLUGIN_CATALOG must be an absolute path".to_string());
+    }
+    catalog_url(source)
+}
+
+/// What can be installed from NOVA's plugin list, and what of it is installed.
+#[tauri::command]
+pub async fn plugins_catalog<R: Runtime>(app: AppHandle<R>, source: String) -> CommandResult<Vec<CatalogItem>> {
+    let url = catalog_location(&source)?;
+    let entries = parse_catalog(&fetch(&url, MAX_CATALOG).await?)?;
+    let rows = load_rows(&app.state::<Database>())?;
+    Ok(entries
+        .into_iter()
+        .map(|e| {
+            let installed = rows.iter().find(|r| r.manifest.id == e.id).map(|r| r.manifest.version.clone());
+            let update = installed.as_deref().and_then(parse_version).zip(parse_version(&e.version)).is_some_and(|(have, offered)| offered > have);
+            CatalogItem { id: e.id, name: e.name, version: e.version, description: e.description, author: e.author, installed, update }
+        })
+        .collect())
+}
+
+/// Downloads a listed plugin and stages it like a picked file: its hash must match the
+/// list, and its signature is checked as always. Nothing is installed before the dialog.
+#[tauri::command]
+pub async fn plugins_catalog_install<R: Runtime>(app: AppHandle<R>, pending: tauri::State<'_, PluginState>, source: String, id: String) -> CommandResult<PendingInstall> {
+    let url = catalog_location(&source)?;
+    let entry = parse_catalog(&fetch(&url, MAX_CATALOG).await?)?.into_iter().find(|e| e.id == id).ok_or("That plugin isn't offered anymore")?;
+    let bytes = fetch(&package_url(&url, &entry)?, MAX_PACKAGE as usize).await?;
+    if format!("{:x}", Sha256::digest(&bytes)) != entry.sha256.to_ascii_lowercase() {
+        return Err("The download doesn't match the plugin list, so NOVA won't install it".into());
+    }
+    let package = tauri::async_runtime::spawn_blocking(move || read_package(&bytes, TRUSTED_KEYS, cfg!(debug_assertions))).await.map_err(|e| e.to_string())??;
+    if package.manifest.id != entry.id {
+        return Err("The download isn't the plugin the list names".into());
+    }
+    stage(&app, &pending, package)
 }
 
 #[tauri::command]
@@ -601,6 +738,7 @@ async fn install<R: Runtime>(app: &AppHandle<R>, package: Package) -> CommandRes
         }
     }
     telemetry::track(app, Event::Plugin("installed"));
+    crate::companion::apply(app);
     let row = load_row(&db, &package.manifest.id)?.ok_or("The plugin vanished")?;
     Ok(plugin_info(&row))
 }
@@ -617,6 +755,7 @@ pub async fn plugins_uninstall<R: Runtime>(app: AppHandle<R>, id: String) -> Com
     let dir = plugins_dir(&app)?.join(&id);
     let _ = tauri::async_runtime::spawn_blocking(move || std::fs::remove_dir_all(dir)).await;
     telemetry::track(&app, Event::Plugin("uninstalled"));
+    crate::companion::apply(&app);
     Ok(())
 }
 
@@ -627,6 +766,7 @@ pub async fn plugins_set_enabled<R: Runtime>(app: AppHandle<R>, id: String, enab
         Ok(())
     })?;
     telemetry::track(&app, Event::Plugin(if enabled { "enabled" } else { "disabled" }));
+    crate::companion::apply(&app);
     Ok(())
 }
 
@@ -646,6 +786,20 @@ pub async fn plugins_set_permission<R: Runtime>(app: AppHandle<R>, id: String, p
     db.with(|c| {
         c.execute("UPDATE plugins SET granted = ?1 WHERE id = ?2", params![value, id])?;
         Ok(())
+    })?;
+    crate::companion::apply(&app);
+    Ok(())
+}
+
+/// Whether a NOVA-signed plugin with the companion permission is installed, on, allowed
+/// and fits this NOVA. Without one, NOVA Companion doesn't run at all.
+pub fn companion_unlocked<R: Runtime>(app: &AppHandle<R>) -> bool {
+    load_rows(&app.state::<Database>()).unwrap_or_default().iter().any(|row| {
+        row.enabled
+            && row.signer == Signer::Nova
+            && row.manifest.permissions.contains(&Permission::Companion)
+            && row.granted.iter().any(|g| g == "companion")
+            && incompatibility(&row.manifest, env!("CARGO_PKG_VERSION")).is_none()
     })
 }
 
@@ -729,6 +883,7 @@ fn permission_of(method: &str) -> Option<&'static str> {
         "network" => Some("network"),
         "system" => Some("system.metrics"),
         "analytics" => Some("developer.analytics"),
+        "companion" => Some("companion"),
         _ => None,
     }
 }
@@ -835,6 +990,7 @@ pub async fn plugin_call<R: Runtime>(app: AppHandle<R>, plugin_id: String, metho
             serde_json::to_value(snapshot).map_err(|e| e.to_string())
         }
         Permission::DeveloperAnalytics if row.signer == Signer::Nova && row.manifest.channel == Channel::Private => crate::developer::call(&app, &method, &params).await,
+        Permission::Companion if row.signer == Signer::Nova => crate::companion::plugin_call(&app, &method, &params).await,
         _ => Err("Unknown method".into()),
     }
 }
@@ -842,6 +998,48 @@ pub async fn plugin_call<R: Runtime>(app: AppHandle<R>, plugin_id: String, metho
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_catalog_sits_next_to_the_releases_and_names_only_its_own_files() {
+        let catalog = catalog_url("lucasmers1104-design/NOVA").unwrap();
+        assert_eq!(catalog.as_str(), "https://raw.githubusercontent.com/lucasmers1104-design/NOVA/main/releases/plugins/catalog.json");
+        let entry = |file: &str| CatalogEntry { id: "dev.nova.companion".into(), name: "x".into(), version: "1.0.0".into(), description: "x".into(), author: String::new(), file: file.into(), sha256: "0".repeat(64) };
+        assert_eq!(package_url(&catalog, &entry("dev.nova.companion-1.0.0.novaplugin")).unwrap().as_str(), "https://raw.githubusercontent.com/lucasmers1104-design/NOVA/main/releases/plugins/dev.nova.companion-1.0.0.novaplugin");
+        for bad in ["https://evil.example/x.novaplugin", "../latest.json", "x/y.novaplugin", "//evil.example/x.novaplugin", "setup.exe"] {
+            assert!(package_url(&catalog, &entry(bad)).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_catalog_drops_invalid_entries() {
+        let good = json!({ "id": "dev.nova.companion", "name": "NOVA Companion", "version": "1.0.0", "description": "Phone", "file": "a.novaplugin", "sha256": "a".repeat(64) });
+        let bad = json!({ "id": "Not An Id", "name": "x", "version": "1.0.0", "description": "x", "file": "b.novaplugin", "sha256": "a".repeat(64) });
+        let list = parse_catalog(json!({ "plugins": [good, bad] }).to_string().as_bytes()).unwrap();
+        assert_eq!(list.len(), 1);
+        assert!(parse_catalog(b"not json").is_err());
+    }
+
+    #[test]
+    fn the_published_companion_plugin_installs_like_in_a_release_build() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../releases/plugins");
+        let catalog = parse_catalog(&std::fs::read(dir.join("catalog.json")).unwrap()).unwrap();
+        for entry in catalog {
+            let bytes = std::fs::read(dir.join(&entry.file)).unwrap();
+            assert_eq!(format!("{:x}", Sha256::digest(&bytes)), entry.sha256, "{}: catalog hash is stale", entry.id);
+            let package = read_package(&bytes, TRUSTED_KEYS, false).unwrap_or_else(|e| panic!("{}: {e}", entry.id));
+            assert_eq!(package.manifest.id, entry.id);
+            assert_eq!(package.manifest.version, entry.version);
+            assert!(incompatibility(&package.manifest, env!("CARGO_PKG_VERSION")).is_none(), "{} doesn't fit this NOVA", entry.id);
+        }
+    }
+
+    #[test]
+    fn only_nova_signed_plugins_connect_phones() {
+        let mut m = manifest();
+        m["permissions"] = json!([{ "type": "companion" }]);
+        // Even debug builds, which take unsigned plugins, don't take this one unsigned.
+        assert!(read_package(&unsigned(&m, &[]), TRUSTED_KEYS, true).unwrap_err().contains("signed by NOVA"));
+    }
     use std::io::Write;
     use zip::write::SimpleFileOptions;
 

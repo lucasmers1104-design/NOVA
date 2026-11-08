@@ -542,6 +542,10 @@ pub fn start<R: Runtime>(app: &AppHandle<R>) {
 
 /// Every 15 seconds from NOVA's automation thread: due tasks wait their turn, missed ones are reported.
 pub fn tick<R: Runtime>(app: &AppHandle<R>) {
+    // Without the plugin, nothing from a phone runs.
+    if !crate::plugins::companion_unlocked(app) {
+        return;
+    }
     let (now_date, now_time) = local_now();
     let scheduled: Vec<(String, String, String, String, String)> = app
         .state::<Database>()

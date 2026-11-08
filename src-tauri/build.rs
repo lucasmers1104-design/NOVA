@@ -167,16 +167,9 @@ fn main() {
         "plugins_set_permission",
         "plugin_call",
         "plugin_report_crash",
-        "companion_status",
-        "companion_configure",
-        "companion_allow_candidates",
-        "companion_set_allowlist",
-        "companion_pair_start",
-        "companion_pair_cancel",
         "companion_pair_decide",
-        "companion_revoke",
-        "companion_log",
-        "companion_clear_log",
+        "plugins_catalog",
+        "plugins_catalog_install",
     ])))
     .expect("failed to run tauri-build");
 }

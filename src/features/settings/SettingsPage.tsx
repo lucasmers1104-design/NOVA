@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { getTauriVersion, getVersion } from "@tauri-apps/api/app";
-import { Activity, AudioLines, Check, Clapperboard, CloudDownload, Cpu, Ear, FolderSearch, Gauge, Globe, Info, Keyboard, KeyRound, LayoutDashboard, Layers, type LucideIcon, Palette, PanelLeft, Plug, Power, RotateCcw, Search, ShieldCheck, Smartphone, Sparkles, TriangleAlert, UserRound } from "lucide-react";
+import { Activity, AudioLines, Check, Clapperboard, CloudDownload, Cpu, Ear, FolderSearch, Gauge, Globe, Info, Keyboard, KeyRound, LayoutDashboard, Layers, type LucideIcon, Palette, PanelLeft, Plug, Power, RotateCcw, Search, ShieldCheck, Sparkles, TriangleAlert, UserRound } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { SHORTCUTS } from "@/app/shortcuts";
 import { NovaMark } from "@/components/brand/NovaMark";
@@ -9,7 +9,6 @@ import { Kbd } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { Switch } from "@/components/ui/Switch";
-import { CompanionSettings } from "@/features/companion/CompanionSettings";
 import { AgentSettings, AssistantHistoryRow, FinderSettings } from "@/features/nova-assistant/AgentSettings";
 import { SpeechSettings } from "@/features/nova-assistant/SpeechSettings";
 import { AssistantSettings } from "@/features/nova-assistant/AssistantSettings";
@@ -59,7 +58,6 @@ const GROUPS: readonly { label: string; sections: readonly { id: string; label: 
     sections: [
       { id: "startup", label: "Startup", icon: Power },
       { id: "updates", label: "Updates", icon: CloudDownload },
-      { id: "phone", label: "Phone", icon: Smartphone },
       { id: "integrations", label: "Integrations", icon: Plug },
       { id: "system", label: "System", icon: Activity },
       { id: "shortcuts", label: "Keyboard shortcuts", icon: Keyboard },
@@ -77,9 +75,6 @@ const GROUPS: readonly { label: string; sections: readonly { id: string; label: 
 /** What the search finds: the settings by the name their row shows, with the words people may use instead. */
 const SEARCHABLE: readonly { label: string; section: string; words?: string }[] = [
   { label: "Your name", section: "you", words: "name heißen nennen anrede" },
-  { label: "Phone connection", section: "phone", words: "handy telefon smartphone companion koppeln pairing qr app" },
-  { label: "Pair a phone", section: "phone", words: "handy koppeln qr code scannen" },
-  { label: "Start without fingerprint", section: "phone", words: "handy allowlist erlauben fingerabdruck apps" },
   { label: "Start the tour", section: "about", words: "tour einführung tutorial hilfe" },
   { label: "Accent color", section: "appearance", words: "farbe akzent color" },
   { label: "Background", section: "appearance", words: "hintergrund verlauf gradient bild picture png wallpaper" },
@@ -289,8 +284,6 @@ function Section({ id, onOpen }: { id: string; onOpen: (section: string) => void
       return <FinderSettings />;
     case "ai":
       return <AiProviderSettings />;
-    case "phone":
-      return <CompanionSettings />;
     case "integrations":
       return <IntegrationsSettings />;
     case "startup":

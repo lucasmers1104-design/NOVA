@@ -1,6 +1,7 @@
 //! NOVA Companion: the phone as a channel for tasks to NOVA AI on this PC.
 //! See docs/mobile/PLAN.md. The phone is a thin client; the AI, the keys and the
-//! log stay here. Off until the user turns it on in Settings → Phone.
+//! log stay here. Runs only while NOVA's signed "NOVA Companion" plugin is installed,
+//! on and allowed (plugins.rs), and the user turned the connection on in its page.
 
 pub mod crypto;
 mod mdns;
@@ -46,6 +47,9 @@ const MOST_DEVICES: usize = 10;
 const MOST_ALLOWED: usize = 100;
 pub const EVENT_CHANGED: &str = "companion://changed";
 pub const EVENT_PAIR_REQUEST: &str = "companion://pair-request";
+const DEFAULT_SOURCE: &str = "lucasmers1104-design/NOVA";
+/// The phone app, next to NOVA's own installers in releases/.
+const APK_FILE: &str = "NOVA-Companion.apk";
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -238,7 +242,7 @@ fn remove_conn<R: Runtime>(app: &AppHandle<R>, id: u64) {
 pub fn apply<R: Runtime>(app: &AppHandle<R>) {
     let config = config(app);
     let mut server = lock(&state(app).server);
-    if !config.enabled {
+    if !config.enabled || !crate::plugins::companion_unlocked(app) {
         *server = None;
         *lock(&state(app).error) = None;
         return;
@@ -375,7 +379,7 @@ pub fn status<R: Runtime>(app: &AppHandle<R>, device_id: &str) -> PcMessage {
 }
 
 // ---------------------------------------------------------------------------
-// Commands (main window only)
+// What the NOVA Companion plugin's page can do (plugin_call → plugin_call below)
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize)]
@@ -410,13 +414,11 @@ fn status_view<R: Runtime>(app: &AppHandle<R>) -> CompanionStatus {
     }
 }
 
-#[tauri::command]
-pub async fn companion_status<R: Runtime>(app: AppHandle<R>) -> CommandResult<CompanionStatus> {
+async fn companion_status<R: Runtime>(app: AppHandle<R>) -> CommandResult<CompanionStatus> {
     tauri::async_runtime::spawn_blocking(move || status_view(&app)).await.map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-pub async fn companion_configure<R: Runtime>(app: AppHandle<R>, enabled: Option<bool>, keep_screenshots: Option<bool>) -> CommandResult<CompanionStatus> {
+async fn companion_configure<R: Runtime>(app: AppHandle<R>, enabled: Option<bool>, keep_screenshots: Option<bool>) -> CommandResult<CompanionStatus> {
     tauri::async_runtime::spawn_blocking(move || {
         let mut config = config(&app);
         if let Some(enabled) = enabled {
@@ -446,8 +448,7 @@ pub struct Candidate {
 }
 
 /// What can go on the allowlist: the app catalog and the installed Epic and Steam games.
-#[tauri::command]
-pub async fn companion_allow_candidates<R: Runtime>(app: AppHandle<R>) -> CommandResult<Vec<Candidate>> {
+async fn companion_allow_candidates<R: Runtime>(app: AppHandle<R>) -> CommandResult<Vec<Candidate>> {
     tauri::async_runtime::spawn_blocking(move || {
         let (apps, _) = app.state::<crate::apps::AppCatalog>().scanned(false)?;
         let mut list: Vec<Candidate> = apps.iter().map(|a| Candidate { kind: policy::AllowedKind::App, id: a.id.clone(), name: a.name.clone() }).collect();
@@ -460,8 +461,7 @@ pub async fn companion_allow_candidates<R: Runtime>(app: AppHandle<R>) -> Comman
 }
 
 /// SECURITY: only ids that exist in the catalog or game library get on the list.
-#[tauri::command]
-pub async fn companion_set_allowlist<R: Runtime>(app: AppHandle<R>, allowlist: Vec<AllowedApp>) -> CommandResult<CompanionStatus> {
+async fn companion_set_allowlist<R: Runtime>(app: AppHandle<R>, allowlist: Vec<AllowedApp>) -> CommandResult<CompanionStatus> {
     let known = companion_allow_candidates(app.clone()).await?;
     tauri::async_runtime::spawn_blocking(move || {
         let mut checked: Vec<AllowedApp> = Vec::new();
@@ -507,8 +507,7 @@ fn qr_svg(text: &str) -> CommandResult<String> {
 }
 
 /// SECURITY: a fresh one-time secret each time; it is only ever shown on this PC's screen.
-#[tauri::command]
-pub async fn companion_pair_start<R: Runtime>(app: AppHandle<R>) -> CommandResult<PairingView> {
+async fn companion_pair_start<R: Runtime>(app: AppHandle<R>) -> CommandResult<PairingView> {
     tauri::async_runtime::spawn_blocking(move || {
         let config = config(&app);
         if lock(&state(&app).server).is_none() {
@@ -534,8 +533,7 @@ pub async fn companion_pair_start<R: Runtime>(app: AppHandle<R>) -> CommandResul
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
-pub async fn companion_pair_cancel<R: Runtime>(app: AppHandle<R>) -> CommandResult<()> {
+async fn companion_pair_cancel<R: Runtime>(app: AppHandle<R>) -> CommandResult<()> {
     *lock(&state(&app).pairing) = None;
     if let Some(ask) = lock(&state(&app).pair_ask).take() {
         let _ = ask.answer.send(false);
@@ -543,7 +541,8 @@ pub async fn companion_pair_cancel<R: Runtime>(app: AppHandle<R>) -> CommandResu
     Ok(())
 }
 
-/// The user's answer to "Pair this phone?".
+/// The user's answer to "Pair this phone?", from NOVA's own dialog (PairDialog.tsx).
+/// SECURITY: deliberately not a plugin method: the plugin can't let a phone in by itself.
 #[tauri::command]
 pub async fn companion_pair_decide<R: Runtime>(app: AppHandle<R>, approved: bool) -> CommandResult<()> {
     let ask = lock(&state(&app).pair_ask).take().ok_or("No phone is waiting to pair")?;
@@ -552,8 +551,7 @@ pub async fn companion_pair_decide<R: Runtime>(app: AppHandle<R>, approved: bool
 }
 
 /// SECURITY: forgets the device's keys, closes its connections at once and drops its tasks.
-#[tauri::command]
-pub async fn companion_revoke<R: Runtime>(app: AppHandle<R>, device_id: String) -> CommandResult<CompanionStatus> {
+pub(crate) async fn companion_revoke<R: Runtime>(app: AppHandle<R>, device_id: String) -> CommandResult<CompanionStatus> {
     tauri::async_runtime::spawn_blocking(move || {
         app.state::<Database>().with(|c| {
             c.execute("DELETE FROM companion_devices WHERE id = ?1", [&device_id])?;
@@ -587,8 +585,7 @@ pub struct LogEntry {
 }
 
 /// The local log of tasks from phones. Approvals and tool calls are in NOVA AI's action history.
-#[tauri::command]
-pub async fn companion_log<R: Runtime>(app: AppHandle<R>) -> CommandResult<Vec<LogEntry>> {
+async fn companion_log<R: Runtime>(app: AppHandle<R>) -> CommandResult<Vec<LogEntry>> {
     tauri::async_runtime::spawn_blocking(move || {
         app.state::<Database>().with(|c| {
             let mut statement = c.prepare(
@@ -614,11 +611,49 @@ pub async fn companion_log<R: Runtime>(app: AppHandle<R>) -> CommandResult<Vec<L
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
-pub async fn companion_clear_log<R: Runtime>(app: AppHandle<R>) -> CommandResult<()> {
+async fn companion_clear_log<R: Runtime>(app: AppHandle<R>) -> CommandResult<()> {
     app.state::<Database>().with(|c| Ok(c.execute("DELETE FROM companion_jobs WHERE state NOT IN ('queued', 'scheduled', 'running')", [])?))?;
     changed(&app);
     Ok(())
+}
+
+/// Where the phone app is offered: next to the releases of NOVA's update source.
+fn app_download<R: Runtime>(app: &AppHandle<R>) -> CommandResult<serde_json::Value> {
+    let settings = app.state::<Database>().with(|c| storage::kv_get(c, "nova.settings")).ok().flatten();
+    let source = settings
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|value| value["state"]["updateSource"].as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string))
+        .unwrap_or_else(|| DEFAULT_SOURCE.into());
+    let url = crate::updates::manifest_url(&source)?.join(APK_FILE).map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({ "url": url.as_str(), "svg": qr_svg(url.as_str())? }))
+}
+
+/// Everything the NOVA Companion plugin's page asks for. plugins.rs checked that the
+/// plugin is signed by NOVA and has the companion permission.
+pub async fn plugin_call<R: Runtime>(app: &AppHandle<R>, method: &str, params: &serde_json::Value) -> CommandResult<serde_json::Value> {
+    fn json(value: impl Serialize) -> CommandResult<serde_json::Value> {
+        serde_json::to_value(value).map_err(|e| e.to_string())
+    }
+    let app = app.clone();
+    match method {
+        "companion.status" => json(companion_status(app).await?),
+        "companion.configure" => json(companion_configure(app, params["enabled"].as_bool(), params["keepScreenshots"].as_bool()).await?),
+        "companion.candidates" => json(companion_allow_candidates(app).await?),
+        "companion.setAllowlist" => {
+            let list: Vec<AllowedApp> = serde_json::from_value(params["allowlist"].clone()).map_err(|_| "The list isn't valid".to_string())?;
+            json(companion_set_allowlist(app, list).await?)
+        }
+        "companion.pairStart" => json(companion_pair_start(app).await?),
+        "companion.pairCancel" => json(companion_pair_cancel(app).await?),
+        "companion.revoke" => {
+            let device = params["deviceId"].as_str().filter(|id| protocol::is_key32(id) || (1..=64).contains(&id.len())).ok_or("Unknown phone")?;
+            json(companion_revoke(app, device.to_string()).await?)
+        }
+        "companion.log" => json(companion_log(app).await?),
+        "companion.clearLog" => json(companion_clear_log(app).await?),
+        "companion.app" => app_download(&app),
+        _ => Err("Unknown method".into()),
+    }
 }
 
 pub(crate) fn device_for_session<R: Runtime>(app: &AppHandle<R>, device_id: &str) -> Option<([u8; 32], String)> {

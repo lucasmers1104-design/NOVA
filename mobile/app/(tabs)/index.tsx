@@ -36,7 +36,7 @@ export default function StartScreen() {
           </Text>
           <Glass style={{ marginTop: 28, gap: 8 }}>
             <Text style={ui.heading}>So koppelst du dein Handy</Text>
-            <Text style={ui.muted}>1. Öffne NOVA auf deinem PC: Einstellungen → Phone.</Text>
+            <Text style={ui.muted}>1. Installiere in NOVA auf deinem PC unter Plugins das Plugin „NOVA Companion“ und öffne die Seite „Phone“.</Text>
             <Text style={ui.muted}>2. Schalte „Phone connection“ ein und tippe auf „Show code“.</Text>
             <Text style={ui.muted}>3. Scanne den Code und bestätige am PC.</Text>
           </Glass>
@@ -120,7 +120,7 @@ export default function StartScreen() {
             label="Kopplung aufheben"
             kind="ghost"
             onPress={() =>
-              Alert.alert("Kopplung aufheben?", "Dein Handy vergisst diesen PC. Am PC kannst du es unter Einstellungen → Phone ebenfalls entfernen.", [
+              Alert.alert("Kopplung aufheben?", "Dein Handy vergisst diesen PC. Am PC kannst du es auf der Seite „Phone“ ebenfalls entfernen.", [
                 { text: "Abbrechen", style: "cancel" },
                 { text: "Aufheben", style: "destructive", onPress: () => void forget() },
               ])

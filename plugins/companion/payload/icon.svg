@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1C2238"/>
+      <stop offset="1" stop-color="#07080F"/>
+    </linearGradient>
+    <linearGradient id="star" x1="0.15" y1="0.1" x2="0.85" y2="0.9">
+      <stop offset="0" stop-color="#DDD6FE"/>
+      <stop offset="0.45" stop-color="#8B5CF6"/>
+      <stop offset="1" stop-color="#22D3EE"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#8B5CF6" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#8B5CF6" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="224" fill="url(#tile)"/>
+  <circle cx="468" cy="470" r="400" fill="url(#glow)"/>
+  <path d="M468 194 Q519 419 744 470 Q519 521 468 746 Q417 521 192 470 Q417 419 468 194 Z" fill="url(#star)"/>
+  <path d="M770 180 Q781 225 826 236 Q781 247 770 292 Q759 247 714 236 Q759 225 770 180 Z" fill="#EEEBFF" fill-opacity="0.92"/>
+  <path d="M810 547 A342 342 0 0 1 540 809" fill="none" stroke="#22D3EE" stroke-width="37" stroke-linecap="round"/>
+  <path d="M882 616 A432 432 0 0 1 606 878" fill="none" stroke="#22D3EE" stroke-opacity="0.55" stroke-width="37" stroke-linecap="round"/>
+</svg>

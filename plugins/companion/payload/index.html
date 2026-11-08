@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>NOVA Companion</title>
+    <link rel="stylesheet" href="companion.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <img src="icon.svg" alt="" width="44" height="44" />
+        <div>
+          <h1>NOVA Companion</h1>
+          <p class="muted">Ask NOVA AI from your phone, start apps and approve changes with your fingerprint. Messages stay encrypted between your phone and this PC; the AI and its keys stay here.</p>
+        </div>
+      </header>
+
+      <section class="card" aria-labelledby="app-title">
+        <h2 id="app-title"><span class="step">1</span> Get the app</h2>
+        <div class="split">
+          <img id="app-qr" class="qr" alt="QR code to download NOVA Companion for Android" hidden />
+          <div>
+            <p>Scan the code with your Android phone's camera and open the download to install NOVA Companion. Android asks once whether your browser may install apps.</p>
+            <p class="muted small" id="app-url"></p>
+          </div>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="link-title">
+        <div class="row">
+          <div>
+            <h2 id="link-title"><span class="step">2</span> Phone connection</h2>
+            <p class="muted" id="link-text">Loading…</p>
+          </div>
+          <label class="switch"><input type="checkbox" id="enabled" aria-label="Phone connection" /><span></span></label>
+        </div>
+        <p class="warning" id="error" hidden></p>
+      </section>
+
+      <section class="card" aria-labelledby="pair-title">
+        <div class="row">
+          <div>
+            <h2 id="pair-title"><span class="step">3</span> Pair a phone</h2>
+            <p class="muted">Open NOVA Companion on your phone and scan this code. It works once, for two minutes, and NOVA asks you in its own window before the phone is paired.</p>
+          </div>
+          <button type="button" id="pair">Show code</button>
+        </div>
+        <div class="split" id="pairing" hidden>
+          <img id="pair-qr" class="qr" alt="Pairing code for NOVA Companion" />
+          <div>
+            <p id="countdown"></p>
+            <button type="button" class="ghost" id="pair-cancel">Cancel</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="devices-title">
+        <h2 id="devices-title">Paired phones</h2>
+        <ul id="devices" class="list"></ul>
+        <p class="muted" id="no-devices">No phone is paired yet.</p>
+      </section>
+
+      <section class="card" aria-labelledby="allow-title">
+        <h2 id="allow-title">Start without fingerprint</h2>
+        <p class="muted">Apps and games a phone may start right away. Everything else that changes something on this PC needs your fingerprint on the phone; settings, keys, saved routines, accounts and purchases never work from the phone.</p>
+        <form id="allow-form" class="inline">
+          <input id="allow-input" list="candidates" placeholder="App or game" aria-label="App or game" autocomplete="off" />
+          <datalist id="candidates"></datalist>
+          <button type="submit">Add</button>
+        </form>
+        <ul id="allowlist" class="chips" aria-label="Apps phones may start"></ul>
+      </section>
+
+      <section class="card" aria-labelledby="shots-title">
+        <div class="row">
+          <div>
+            <h2 id="shots-title">Keep phone screenshots</h2>
+            <p class="muted">Off: screenshots go to the phone and are not stored on this PC. On: NOVA also keeps them here for 7 days.</p>
+          </div>
+          <label class="switch"><input type="checkbox" id="keep" aria-label="Keep phone screenshots" /><span></span></label>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="log-title">
+        <div class="row">
+          <div>
+            <h2 id="log-title">Tasks from phones</h2>
+            <p class="muted">Stays on this PC. Each step NOVA took is also in NOVA AI's action history, marked “Phone”.</p>
+          </div>
+          <button type="button" class="ghost" id="log-toggle">Show</button>
+        </div>
+        <div id="log" hidden>
+          <ul id="log-list" class="list"></ul>
+          <button type="button" class="ghost" id="log-clear">Clear finished tasks</button>
+        </div>
+      </section>
+    </main>
+    <script src="companion.js"></script>
+  </body>
+</html>

@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use tauri::test::{mock_builder, mock_context, noop_assets, MockRuntime};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tungstenite::{Message, WebSocket};
 
 use super::crypto::{self, KeyPair, SecureChannel};
@@ -127,7 +127,21 @@ fn set_pairing(handle: &AppHandle<MockRuntime>, secret: [u8; 32], valid_for: Dur
 fn pair_connect_approve_replay_and_revoke() {
     let app = app();
     let handle = app.handle().clone();
+    // Without NOVA's plugin the phone connection stays off.
     save_config(&handle, &Config { enabled: true, ..config(&handle) }).unwrap();
+    apply(&handle);
+    assert!(lock(&state(&handle).server).is_none(), "ran without the plugin");
+    let manifest = json!({ "id": "dev.nova.companion", "name": "NOVA Companion", "version": "1.0.0", "description": "Phone", "apiVersion": 1, "minNovaVersion": "1.0.0", "permissions": [{ "type": "companion" }] });
+    handle
+        .state::<Database>()
+        .with(|c| {
+            c.execute(
+                "INSERT INTO plugins (id, version, manifest, signer, enabled, granted, installed_at, updated_at) VALUES ('dev.nova.companion', '1.0.0', ?1, 'nova', 1, '[\"companion\"]', 0, 0)",
+                [manifest.to_string()],
+            )?;
+            Ok(())
+        })
+        .unwrap();
     apply(&handle);
     let port = lock(&state(&handle).server).as_ref().expect("server running").port;
     let pc_pub = pc_key().unwrap().public;

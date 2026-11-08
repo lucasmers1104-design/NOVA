@@ -7,6 +7,7 @@ import { Skeleton } from "@/components/ui/Skeleton";
 import { useThemeSync } from "@/design/theme";
 import { useWallpaperAccentSync } from "@/design/wallpaper";
 import { CommandPalette } from "@/features/command-palette/CommandPalette";
+import { PairDialog } from "@/features/companion/PairDialog";
 import { useDesktopSync } from "@/features/desktop/useDesktopSync";
 import { useAssistantBridge } from "@/features/nova-assistant/useAssistantBridge";
 import { NotificationCenter, Toaster } from "@/features/notifications/NotificationUI";
@@ -77,6 +78,7 @@ export function AppShell() {
         <UpdateBanner />
         <WhatsNewDialog />
         <ConsentDialog />
+        <PairDialog />
         <Tour />
       </div>
     </MotionConfig>

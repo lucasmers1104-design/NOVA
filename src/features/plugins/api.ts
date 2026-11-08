@@ -32,7 +32,24 @@ export interface PendingInstall {
   addedPermissions: string[];
 }
 
+/** Mirrors `CatalogItem` in src-tauri/src/plugins.rs: what NOVA's plugin list offers. */
+export interface CatalogItem {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  author: string;
+  installed: string | null;
+  update: boolean;
+}
+
 export const PLUGINS_KEY = ["plugins"] as const;
+export const CATALOG_KEY = ["plugins", "catalog"] as const;
+
+/** The plugin list next to NOVA's releases, from the update source. */
+export function useCatalog(source: string) {
+  return useQuery({ queryKey: [...CATALOG_KEY, source], queryFn: () => callNative<CatalogItem[]>("plugins_catalog", { source }), enabled: isDesktop(), staleTime: 5 * 60_000, retry: false });
+}
 
 export function usePlugins() {
   return useQuery({ queryKey: PLUGINS_KEY, queryFn: () => callNative<PluginInfo[]>("plugins_list"), enabled: isDesktop() });

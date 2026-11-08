@@ -1,4 +1,4 @@
-import { ArrowLeft, Lock, Palette, Puzzle, ShieldCheck, TriangleAlert, Upload } from "lucide-react";
+import { ArrowLeft, Download, Lock, Palette, Puzzle, ShieldCheck, TriangleAlert, Upload } from "lucide-react";
 import { useState } from "react";
 import { Page, PageHeader } from "@/components/layout/PageHeader";
 import { Badge } from "@/components/ui/Badge";
@@ -9,9 +9,10 @@ import { StatusMessage } from "@/components/ui/StatusMessage";
 import { Switch } from "@/components/ui/Switch";
 import { notify, notifyError } from "@/features/notifications/store";
 import { callNative, isDesktop, NativeUnavailableError } from "@/lib/native";
+import { DEFAULT_UPDATE_SOURCE } from "@/features/updates/store";
 import { useSettings } from "@/stores/settings";
 import { useUi } from "@/stores/ui";
-import { type PendingInstall, type PluginInfo, runnable, usePluginAction, usePlugins } from "./api";
+import { type CatalogItem, type PendingInstall, type PluginInfo, runnable, useCatalog, usePluginAction, usePlugins } from "./api";
 import { PluginFrame } from "./PluginFrame";
 
 export default function PluginsPage() {
@@ -50,6 +51,10 @@ function PluginList({ plugins }: { plugins: PluginInfo[] }) {
     setPending(found);
   });
   const confirm = usePluginAction<void>(() => callNative("plugins_install_confirm"));
+  const source = useSettings((st) => st.updateSource.trim()) || DEFAULT_UPDATE_SOURCE;
+  const download = usePluginAction<string>(async (id) => {
+    setPending(await callNative<PendingInstall>("plugins_catalog_install", { source, id }));
+  });
 
   const install = () => {
     if (!pending) return;
@@ -72,13 +77,14 @@ function PluginList({ plugins }: { plugins: PluginInfo[] }) {
           </Button>
         }
       />
+      {isDesktop() && <Catalog source={source} busy={download.isPending ? download.variables : null} onInstall={(item) => download.mutate(item.id, { onError: (error) => notifyError(`Couldn't download ${item.name}`, error) })} />}
       {!isDesktop() ? (
         <StatusMessage error={new NativeUnavailableError("plugins_list")} subject="plugins" />
       ) : plugins.length === 0 ? (
         <section className="glass flex flex-col items-center gap-2 rounded-widget p-10 text-center">
           <Puzzle size={26} className="text-accent-text" aria-hidden />
           <p className="text-[14px] font-semibold text-fg">No plugins yet</p>
-          <p className="max-w-md text-[13px] text-fg-muted">Choose a .novaplugin file to install one. NOVA checks its signature and shows what it asks for before anything is installed.</p>
+          <p className="max-w-md text-[13px] text-fg-muted">Install one from the list above, or choose a .novaplugin file. NOVA checks its signature and shows what it asks for before anything is installed.</p>
         </section>
       ) : (
         <ul className="space-y-3">
@@ -139,6 +145,39 @@ function PluginList({ plugins }: { plugins: PluginInfo[] }) {
         )}
       </Dialog>
     </Page>
+  );
+}
+
+/** What NOVA's plugin list offers, next to the releases on the update source. */
+function Catalog({ source, busy, onInstall }: { source: string; busy: string | null; onInstall: (item: CatalogItem) => void }) {
+  const { data, error, isLoading } = useCatalog(source);
+  const offered = (data ?? []).filter((item) => item.installed === null || item.update);
+  if (isLoading || (!error && offered.length === 0)) return null;
+  return (
+    <section aria-labelledby="plugins-available" className="mb-5">
+      <h2 id="plugins-available" className="mb-2 px-1 text-[12px] font-semibold tracking-wide text-fg-subtle uppercase">
+        Available
+      </h2>
+      {error ? (
+        <p className="px-1 text-[12.5px] text-fg-muted">NOVA's plugin list couldn't be loaded: {error instanceof Error ? error.message : String(error)}</p>
+      ) : (
+        <ul className="space-y-3">
+          {offered.map((item) => (
+            <li key={item.id} className="glass flex items-center justify-between gap-6 rounded-widget p-5">
+              <div className="min-w-0">
+                <p className="text-[14.5px] font-semibold text-fg">
+                  {item.name} <span className="text-[12px] font-normal text-fg-subtle">{item.version}</span>
+                </p>
+                <p className="mt-0.5 text-[13px] text-fg-muted">{item.description}</p>
+              </div>
+              <Button size="sm" variant="primary" icon={<Download size={14} />} disabled={busy !== null} onClick={() => onInstall(item)}>
+                {busy === item.id ? "Downloading…" : item.update ? "Update" : "Install"}
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 
