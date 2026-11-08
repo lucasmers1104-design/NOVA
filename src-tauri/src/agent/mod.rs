@@ -160,12 +160,40 @@ struct Run {
     /// This request has read something from outside (a page, a file, a window): what it
     /// said may be behind what the model wants next.
     read_outside: bool,
+    /// Who asked: the PC itself, or a paired phone (NOVA Companion).
+    origin: Origin,
 }
+
+/// A task from a paired phone: its own conversation, the phone's permission tiers
+/// instead of the PC's confirmations, and its approvals on the phone.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Phone {
+    pub device_id: String,
+    pub device_name: String,
+    pub task_id: String,
+    /// A background AI check ("sag Bescheid, wenn …"): its own empty conversation, and only free tools.
+    pub check: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub enum Origin {
+    #[default]
+    Desktop,
+    Phone(Phone),
+}
+
+/// Added to a request from the phone: the user isn't at the PC.
+const PHONE_NOTE: &str = "\n\n[Sent from the user's phone through NOVA Companion: they aren't at the PC and read your reply as text on the phone. Keep it short and lead with the answer. Some actions need their approval on the phone, NOVA asks for it by itself; some aren't allowed from the phone at all.]";
+/// A phone conversation starts over after this long without a task.
+const PHONE_SESSION_IDLE: Duration = Duration::from_secs(30 * 60);
 
 #[derive(Default)]
 pub struct AgentState {
     prefs: Mutex<AgentPrefs>,
     session: Mutex<Session>,
+    /// The phone's conversation, apart from the panel's.
+    phone_session: Mutex<Session>,
+    phone_last: Mutex<Option<Instant>>,
     run: Mutex<Option<Run>>,
     /// When NOVA last asked the provider anything (a prewarm included).
     last_request: Mutex<Option<Instant>>,
@@ -191,6 +219,28 @@ pub fn prefs<R: Runtime>(app: &AppHandle<R>) -> AgentPrefs {
 /// NOVA is answering something right now.
 pub fn busy<R: Runtime>(app: &AppHandle<R>) -> bool {
     lock(&state(app).run).is_some()
+}
+
+/// The phone behind the running request, if a phone asked.
+pub fn phone<R: Runtime>(app: &AppHandle<R>) -> Option<Phone> {
+    match lock(&state(app).run).as_ref().map(|run| &run.origin) {
+        Some(Origin::Phone(phone)) => Some(phone.clone()),
+        _ => None,
+    }
+}
+
+/// The conversation the running request belongs to.
+fn session_of<R: Runtime>(app: &AppHandle<R>) -> &Mutex<Session> {
+    if phone(app).is_some() {
+        &state(app).phone_session
+    } else {
+        &state(app).session
+    }
+}
+
+/// An AI provider with a key is set up (without one, NOVA still opens apps and finds files).
+pub fn ai_ready<R: Runtime>(app: &AppHandle<R>) -> bool {
+    resolve_provider(&app.state::<Database>(), &prefs(app)).is_some()
 }
 
 // ---------------------------------------------------------------------------
@@ -337,7 +387,7 @@ impl<R: Runtime> Drop for RunGuard<'_, R> {
     }
 }
 
-fn local_time() -> String {
+pub(crate) fn local_time() -> String {
     #[cfg(windows)]
     {
         use windows::Win32::System::SystemInformation::GetLocalTime;
@@ -361,7 +411,12 @@ fn status(channel: &Channel<AgentEvent>, state: Status, detail: Option<&str>) {
 }
 
 fn log_action<R: Runtime>(app: &AppHandle<R>, tool: &str, title: &str, risk: Risk, outcome: &str, detail: &str) {
-    let _ = app.state::<Database>().with(|c| storage::actions::log(c, tool, title, risk.as_str(), outcome, detail));
+    // What a phone asked for is marked as such in the local history.
+    let title = match phone(app) {
+        Some(phone) => format!("Phone ({}): {title}", phone.device_name),
+        None => title.to_string(),
+    };
+    let _ = app.state::<Database>().with(|c| storage::actions::log(c, tool, &title, risk.as_str(), outcome, detail));
     // Only the tool's name and how it went; the title and detail name files and programs.
     let outcome = match outcome {
         "done" => 1,
@@ -448,7 +503,7 @@ fn effort_change(session: &Session, prefs: &AgentPrefs, provider: Provider, mode
 
 async fn run_turn<R: Runtime>(app: &AppHandle<R>, text: String, voice: bool, channel: &Channel<AgentEvent>) -> Result<(), String> {
     let prefs = prefs(app);
-    let attachments = std::mem::take(&mut lock(&state(app).session).attachments);
+    let attachments = std::mem::take(&mut lock(session_of(app)).attachments);
     let has_image = attachments.iter().any(|a| matches!(a.part, Part::Image { .. }));
 
     crate::telemetry::note_activity(app);
@@ -462,7 +517,7 @@ async fn run_turn<R: Runtime>(app: &AppHandle<R>, text: String, voice: bool, cha
     crate::telemetry::track(app, crate::telemetry::Event::Assistant(if voice { "voice" } else { "text" }));
 
     let before = {
-        let mut session = lock(&state(app).session);
+        let mut session = lock(session_of(app));
         if session.system.is_none() {
             session.system = Some(system_prompt(app));
         }
@@ -474,7 +529,8 @@ async fn run_turn<R: Runtime>(app: &AppHandle<R>, text: String, voice: bool, cha
         let mut parts: Vec<Part> = attachments.into_iter().map(|a| a.part).collect();
         // In every message, not the system prompt: a name changed in Settings counts at once.
         let stamp = user_name(app).map_or_else(local_time, |name| format!("{}, user's name: {name}", local_time()));
-        parts.push(Part::Text(format!("[{stamp}] {}{}", text, if voice { VOICE_NOTE } else { "" })));
+        let note = if phone(app).is_some() { PHONE_NOTE } else if voice { VOICE_NOTE } else { "" };
+        parts.push(Part::Text(format!("[{stamp}] {text}{note}")));
         push_user(&mut session, parts);
         before
     };
@@ -491,7 +547,7 @@ async fn run_turn<R: Runtime>(app: &AppHandle<R>, text: String, voice: bool, cha
         status(channel, if round == 0 && has_image { Status::AnalyzingScreen } else { Status::Thinking }, None);
 
         let (messages, system) = {
-            let session = lock(&state(app).session);
+            let session = lock(session_of(app));
             (session.messages.clone(), session.system.clone().unwrap_or_default())
         };
         let request = provider::build(&Request { provider, key: &key, model: &model, system: &system, messages: &messages, tools: &tools, effort: prefs.effort });
@@ -500,11 +556,11 @@ async fn run_turn<R: Runtime>(app: &AppHandle<R>, text: String, voice: bool, cha
             Ok(turn) => turn,
             // The provider doesn't take effort changes after all: drop them (they were
             // never answered) and ask again once without.
-            Err(error) if round == 0 && rejected_effort_change(&error) && drop_effort_changes(&mut lock(&state(app).session)) => continue,
+            Err(error) if round == 0 && rejected_effort_change(&error) && drop_effort_changes(&mut lock(session_of(app))) => continue,
             Err(error) => {
                 // A request that was never answered must not poison every later one.
                 if round == 0 && error != "Stopped" {
-                    before.restore(&mut lock(&state(app).session));
+                    before.restore(&mut lock(session_of(app)));
                 }
                 return Err(error);
             }
@@ -531,25 +587,25 @@ async fn run_turn<R: Runtime>(app: &AppHandle<R>, text: String, voice: bool, cha
             },
         );
 
-        lock(&state(app).session).messages.push(turn.message());
+        lock(session_of(app)).messages.push(turn.message());
 
         match &turn.stop {
             Stop::Refusal(category) => {
                 let why = category.as_deref().map(|c| format!(" ({c})")).unwrap_or_default();
                 if round == 0 {
                     // Rephrasing only helps if the declined request isn't sent along again.
-                    before.restore(&mut lock(&state(app).session));
+                    before.restore(&mut lock(session_of(app)));
                 } else {
                     let answer = tool_results_for_unrun(&turn.calls, "Not run: the reply was declined.");
                     if !answer.is_empty() {
-                        push_user(&mut lock(&state(app).session), answer);
+                        push_user(&mut lock(session_of(app)), answer);
                     }
                 }
                 return Err(format!("The model declined this request{why}. Try rephrasing it."));
             }
             Stop::MaxTokens if !turn.calls.is_empty() => {
                 let answer = tool_results_for_unrun(&turn.calls, "Not run: the reply was cut off.");
-                push_user(&mut lock(&state(app).session), answer);
+                push_user(&mut lock(session_of(app)), answer);
                 return Err("The reply was cut off before NOVA could act. Try a shorter request.".into());
             }
             Stop::MaxTokens => return Err("The reply reached its length limit and is cut off. Ask NOVA to continue.".into()),
@@ -569,7 +625,7 @@ async fn run_turn<R: Runtime>(app: &AppHandle<R>, text: String, voice: bool, cha
             }
             results.push(handle_call(app, call, channel, &mut opened).await);
         }
-        push_user(&mut lock(&state(app).session), results);
+        push_user(&mut lock(session_of(app)), results);
         if cancelled(app) {
             return Err("Stopped".into());
         }
@@ -717,6 +773,28 @@ async fn handle_call<R: Runtime>(app: &AppHandle<R>, call: &provider::ToolCall, 
             _ => "Read the page in the browser".to_string(),
         };
     }
+    // SECURITY: a phone's request gets the phone's tiers instead of the PC's, checked
+    // here for every call (companion/policy.rs). "Never" doesn't run at all.
+    let from_phone = phone(app);
+    if let Some(asking) = &from_phone {
+        let mut tier = crate::companion::policy::tier(&prepared.action, &crate::companion::allowlist(app));
+        // A background check only looks; nobody is there to approve anything.
+        if asking.check && tier == crate::companion::protocol::Tier::Approve {
+            tier = crate::companion::protocol::Tier::Never;
+        }
+        match tier {
+            crate::companion::protocol::Tier::Never => {
+                log_action(app, &call.name, &prepared.title, prepared.risk, "declined", "Not allowed from the phone");
+                emit(channel, AgentEvent::ToolFinished { id: call.id.clone(), ok: false, summary: "Only at the PC".into(), card: None });
+                return error(crate::companion::policy::NEVER_FROM_PHONE.into());
+            }
+            crate::companion::protocol::Tier::Free => prepared.risk = Risk::Safe,
+            // Reading further pages after the user allowed the browser once in this request.
+            crate::companion::protocol::Tier::Approve if in_browser && opened.browser_allowed && !sends => prepared.risk = Risk::Safe,
+            crate::companion::protocol::Tier::Approve if prepared.risk == Risk::Safe => prepared.risk = Risk::Confirm,
+            crate::companion::protocol::Tier::Approve => {}
+        }
+    }
     emit(channel, AgentEvent::ToolStarted { id: call.id.clone(), name: call.name.clone(), title: prepared.title.clone(), risk: prepared.risk });
 
     // What goes on working by itself later asks here, whatever a page may have said.
@@ -724,6 +802,25 @@ async fn handle_call<R: Runtime>(app: &AppHandle<R>, call: &provider::ToolCall, 
     if lasting && prepared.risk == Risk::Safe && lock(&state(app).run).as_ref().is_some_and(|run| run.read_outside) {
         prepared.risk = Risk::Confirm;
         prepared.detail = Some("NOVA read something from outside during this request, so it asks first.".into());
+    }
+    if let Some(phone) = from_phone {
+        // SECURITY: auto mode doesn't apply to the phone; its approval comes from the phone's
+        // biometric-locked key (companion/tasks.rs), not from a card on this PC.
+        if prepared.risk != Risk::Safe {
+            status(channel, Status::Executing, Some("Waiting for your OK on the phone"));
+            let cancel = lock(&state(app).run).as_ref().map(|run| run.cancel.clone());
+            let approved = match cancel {
+                Some(cancel) => crate::companion::tasks::request_approval(app, &phone, &prepared.title, prepared.detail.as_deref(), prepared.risk, cancel).await,
+                None => false,
+            };
+            if !approved {
+                log_action(app, &call.name, &prepared.title, prepared.risk, "declined", "");
+                emit(channel, AgentEvent::ToolFinished { id: call.id.clone(), ok: false, summary: "Not allowed".into(), card: None });
+                return error("The user didn't approve this on the phone (declined, or the approval expired). Don't retry it unless they ask again.".into());
+            }
+        }
+        opened.browser_allowed |= in_browser;
+        return finish_call(app, call, prepared, channel, false).await;
     }
     // Auto mode ends; a saved routine wouldn't. Those are always asked about.
     let outlives_auto = matches!(prepared.action, Action::SaveRoutine(_)) || matches!(&prepared.action, Action::StartWatching { input, .. } if input["routine"].is_string());
@@ -746,7 +843,12 @@ async fn handle_call<R: Runtime>(app: &AppHandle<R>, call: &provider::ToolCall, 
         }
     }
     opened.browser_allowed |= in_browser;
+    finish_call(app, call, prepared, channel, auto).await
+}
 
+/// Runs an allowed tool call and reports how it went.
+async fn finish_call<R: Runtime>(app: &AppHandle<R>, call: &provider::ToolCall, prepared: tools::Prepared, channel: &Channel<AgentEvent>, auto: bool) -> Part {
+    let error = |content: String| Part::ToolResult { id: call.id.clone(), name: call.name.clone(), content, is_error: true, image: None };
     let (state_now, detail) = match prepared.action {
         Action::Search(_) => (Status::Searching, prepared.title.clone()),
         Action::LookAtScreen(_) => (Status::AnalyzingScreen, "Taking a screenshot".into()),
@@ -760,7 +862,7 @@ async fn handle_call<R: Runtime>(app: &AppHandle<R>, call: &provider::ToolCall, 
             }
             if let Action::Search(_) = prepared.action {
                 if let Some(hits) = outcome.card.as_ref().and_then(|c| serde_json::from_value::<Vec<FileHit>>(c["hits"].clone()).ok()) {
-                    lock(&state(app).session).last_hits = hits;
+                    lock(session_of(app)).last_hits = hits;
                 }
             }
             let logged = if auto { format!("Auto mode, not asked. {}", outcome.summary) } else { outcome.summary.clone() };
@@ -866,7 +968,7 @@ async fn run_local<R: Runtime>(app: &AppHandle<R>, text: &str, has_image: bool, 
     let lang = local::language(text);
     let de = lang == Lang::De;
     let pick = |n: usize| -> Option<FileHit> {
-        let hits = lock(&state(app).session).last_hits.clone();
+        let hits = lock(session_of(app)).last_hits.clone();
         if n == usize::MAX {
             hits.last().cloned()
         } else {
@@ -887,7 +989,7 @@ async fn run_local<R: Runtime>(app: &AppHandle<R>, text: &str, has_image: bool, 
             status(channel, Status::Searching, None);
             say(channel, if de { "Ich suche danach. " } else { "Let me look. " }).await;
             let result = run_tool("search_files", json!({ "text": query })).await;
-            let count = lock(&state(app).session).last_hits.len();
+            let count = lock(session_of(app)).last_hits.len();
             let reply = match (count, matches!(result, Part::ToolResult { is_error: true, .. })) {
                 (_, true) => if de { "Die Suche hat nicht geklappt." } else { "The search didn't work." }.to_string(),
                 (0, _) => if de { "Ich habe nichts Passendes gefunden." } else { "I didn't find anything that matches." }.to_string(),
@@ -920,7 +1022,7 @@ async fn run_local<R: Runtime>(app: &AppHandle<R>, text: &str, has_image: bool, 
                 // Not an app: maybe a file of that name.
                 status(channel, Status::Searching, None);
                 run_tool("search_files", json!({ "text": name })).await;
-                let count = lock(&state(app).session).last_hits.len();
+                let count = lock(session_of(app)).last_hits.len();
                 let reply = match (count, de) {
                     (0, true) => format!("Ich habe keine App und keine Datei namens „{name}“ gefunden."),
                     (0, false) => format!("I couldn't find an app or file called “{name}”."),
@@ -1002,7 +1104,7 @@ pub async fn assistant_send<R: Runtime>(app: AppHandle<R>, text: String, voice: 
         if run.is_some() {
             return Err("NOVA is still working on your last request".into());
         }
-        *run = Some(Run { cancelled: Arc::new(AtomicBool::new(false)), cancel: Arc::new(Notify::new()), confirmations: HashMap::new(), read_outside: false });
+        *run = Some(Run { cancelled: Arc::new(AtomicBool::new(false)), cancel: Arc::new(Notify::new()), confirmations: HashMap::new(), read_outside: false, origin: Origin::Desktop });
     }
     let _guard = RunGuard { app: &app };
     let text = if text.is_empty() { "What do you see?".to_string() } else { text };
@@ -1021,6 +1123,61 @@ pub async fn assistant_send<R: Runtime>(app: AppHandle<R>, text: String, voice: 
         }
     }
     Ok(())
+}
+
+pub const BUSY: &str = "NOVA is still working on your last request";
+
+/// A task from a paired phone (NOVA Companion), in the phone's own conversation.
+/// Fails with `BUSY` while NOVA answers something else; the caller retries later.
+pub async fn run_phone<R: Runtime>(app: &AppHandle<R>, phone: Phone, text: String, channel: &Channel<AgentEvent>) -> Result<(), String> {
+    let check = phone.check;
+    {
+        let mut run = lock(&state(app).run);
+        if run.is_some() {
+            return Err(BUSY.into());
+        }
+        *run = Some(Run { cancelled: Arc::new(AtomicBool::new(false)), cancel: Arc::new(Notify::new()), confirmations: HashMap::new(), read_outside: false, origin: Origin::Phone(phone) });
+    }
+    let _guard = RunGuard { app };
+    // A check runs in an empty conversation and leaves the phone's conversation as it was.
+    let saved = if check {
+        Some(std::mem::take(&mut *lock(&state(app).phone_session)))
+    } else {
+        let mut last = lock(&state(app).phone_last);
+        if last.is_some_and(|at| at.elapsed() > PHONE_SESSION_IDLE) {
+            *lock(&state(app).phone_session) = Session::default();
+        }
+        *last = Some(Instant::now());
+        None
+    };
+    let result = run_turn(app, text, false, channel).await;
+    if let Some(saved) = saved {
+        *lock(&state(app).phone_session) = saved;
+    }
+    match &result {
+        Ok(()) => {
+            status(channel, Status::Completed, None);
+            emit(channel, AgentEvent::Done);
+        }
+        Err(error) if error == "Stopped" => {
+            status(channel, Status::Completed, Some("Stopped"));
+            emit(channel, AgentEvent::Done);
+        }
+        Err(error) => {
+            status(channel, Status::Error, None);
+            emit(channel, AgentEvent::Failed { error: error.clone() });
+        }
+    }
+    result
+}
+
+/// Stops the running request if it is this phone task.
+pub fn cancel_phone<R: Runtime>(app: &AppHandle<R>, task_id: &str) -> bool {
+    let mut run = lock(&state(app).run);
+    let Some(run) = run.as_mut().filter(|run| matches!(&run.origin, Origin::Phone(p) if p.task_id == task_id)) else { return false };
+    run.cancelled.store(true, Ordering::SeqCst);
+    run.cancel.notify_waiters();
+    true
 }
 
 /// The box on the Media page: plays something right away, without asking the AI.

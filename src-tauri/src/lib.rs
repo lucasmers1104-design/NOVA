@@ -3,6 +3,7 @@ mod ai;
 mod apps;
 mod assistant;
 mod capture;
+mod companion;
 mod credentials;
 mod desktop;
 mod developer;
@@ -66,6 +67,7 @@ pub fn run() {
         )
         .manage(assistant::AssistantState::default())
         .manage(agent::AgentState::default())
+        .manage(companion::CompanionState::default())
         .manage(finder::FinderState::default())
         .manage(voice::VoiceState::default())
         .manage(tts::TtsState::default())
@@ -124,6 +126,7 @@ pub fn run() {
             wake::init(app.handle(), wake_prefs);
             capture::watch_foreground();
             agent::auto::start(app.handle());
+            companion::start(app.handle());
             agent::play::start(app.handle());
             #[cfg(debug_assertions)]
             plugins::install_dev_plugins(app.handle());
@@ -207,6 +210,16 @@ pub fn run() {
             agent::auto::media_played,
             agent::auto::media_played_clear,
             agent::auto::automation_list,
+            companion::companion_status,
+            companion::companion_configure,
+            companion::companion_allow_candidates,
+            companion::companion_set_allowlist,
+            companion::companion_pair_start,
+            companion::companion_pair_cancel,
+            companion::companion_pair_decide,
+            companion::companion_revoke,
+            companion::companion_log,
+            companion::companion_clear_log,
             agent::auto::automation_run,
             agent::auto::automation_delete_routine,
             agent::auto::automation_delete_watcher,

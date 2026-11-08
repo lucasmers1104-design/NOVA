@@ -1,0 +1,9 @@
+[
+  { "type": "status", "id": "p-1", "ts": 1, "pcName": "PC", "busy": false, "aiReady": true, "inGame": false, "pendingApprovals": 0, "activeTasks": 0 },
+  { "type": "task.event", "id": "p-3", "ts": 1, "taskId": "t-1", "event": { "kind": "usage", "inputTokens": 5 } },
+  { "type": "task.event", "id": "p-6", "ts": 1, "taskId": "t-1", "event": { "kind": "toolStarted", "toolId": "toolu_1", "title": "x", "tier": "maybe" } },
+  { "type": "approval.request", "id": "p-10", "ts": 1, "requestId": "r-1", "taskId": "t-1", "title": "x", "detail": null, "risk": "extreme", "expiresAt": 1 },
+  { "type": "approval.closed", "id": "p-11", "ts": 1, "requestId": "r-1", "outcome": "maybe" },
+  { "type": "notices", "id": "p-12", "ts": 1, "items": [{ "id": "n1", "kind": "spam", "text": "x", "taskId": null, "ts": 1 }] },
+  { "type": "run.shell", "id": "p-16", "ts": 1 }
+]

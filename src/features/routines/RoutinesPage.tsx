@@ -33,7 +33,8 @@ type Condition =
   | { type: "diskBelow"; gigabytes: number }
   | { type: "programStarts" | "programEnds"; program: string }
   | { type: "downloadsDone" }
-  | { type: "newVideo"; channel: string };
+  | { type: "newVideo"; channel: string }
+  | { type: "aiCheck"; question: string; callsLeft: number };
 interface Watcher {
   id: string;
   say: string;
@@ -100,6 +101,8 @@ export function conditionText(condition: Condition): string {
       return "Your browser's downloads are finished";
     case "newVideo":
       return `${condition.channel} has a new video`;
+    case "aiCheck":
+      return `NOVA checks for your phone: ${condition.question} (${condition.callsLeft} checks left)`;
   }
 }
 

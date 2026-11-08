@@ -1,0 +1,29 @@
+{
+  "inputs": {
+    "deviceStatic": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+    "deviceEph": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI",
+    "pcStatic": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM",
+    "pcEph": "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ",
+    "phoneNonce": "BQUFBQUFBQUFBQUFBQUFBQ",
+    "pcNonce": "BgYGBgYGBgYGBgYGBgYGBg",
+    "pairingSecret": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc",
+    "approvalKey": "CAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg"
+  },
+  "deviceId": "dev-1",
+  "requestId": "r-1",
+  "expiresAt": 1762600120000,
+  "plaintext": "{\"type\":\"status.get\",\"id\":\"s-1\",\"ts\":1}",
+  "expected": {
+    "devicePub": "pOCSkrZRwni5dyxWn1-puxPZBrRqtoyd-dwrRAn4ogk",
+    "deviceEphPub": "zo060cy2M-x7cMF4FKXHbs0CloUFDTRHRboFhw5YfVk",
+    "pcPub": "Xf7dO2vUf2-ijuFdlp1bsOpTd01Ii9r53xxuASSz7yI",
+    "pcEphPub": "rAGyIJ6GNU-4UyN7XeD0-rE8f8v0M6YcAZNpYX_s8Qs",
+    "pairingKey": "E4f457HpIBXGuID4sOg_UWNfxkajixCyL0x_Haof9ys",
+    "pairingBox": "DrLm2-102WR1B52i9Hbl9V1udY1_cAYGMnEO8zZC7oJhWvn_kJIH-4xPvycYjCiPJkReoC5jVA",
+    "up": "ZGGTQL_ue0NWJ30fqGZ1CndgFgkC69TQnGrjuZM4V8Y",
+    "down": "YC7sEULjird9013tB37Ba9tpXHAVp_0Wrgv8k1ar8Vk",
+    "upFrame0": "AAAAAAAAAADEI0q772pehOndlYtg0m_CbS660WKwFj0ZMigYd7KSMOvq_gkTbUseeGGyGwSin6Qe5Ahs6QGq",
+    "downFrame1": "AAAAAAAAAAFMx0UdBciZLOe6ZHQ7btD1uW-druZ83T4vJYd8gyfMTK8mSLoUEKxwMtd_mxLoMxo24gdsjaAh",
+    "approvalProof": "ZzU2UiJOb35MQdvNC6_2u6sLE5tx_pqZzx0eY89E6DQ"
+  }
+}

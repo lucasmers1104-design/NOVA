@@ -39,6 +39,16 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 sha2 = "0.10"
 minisign-verify = "0.3"
 zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
+# NOVA Companion (phone). Audited RustCrypto parts, the same algorithms as @noble
+# on the phone; hkdf/hmac 0.12 share sha2 0.10 with the rest of NOVA.
+x25519-dalek = { version = "3", features = ["static_secrets"] }
+aes-gcm = "0.11"
+hkdf = "0.12"
+hmac = "0.12"
+getrandom = "0.3"
+# WebSocket framing only: no TLS (messages are end-to-end encrypted), no async runtime.
+tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
+qrcodegen = "1.8"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
@@ -62,6 +72,7 @@ windows = { version = "0.62", features = [
     "Win32_Graphics_Gdi",
     "Win32_Media_Audio",
     "Win32_Media_Audio_Endpoints",
+    "Win32_NetworkManagement_Dns",
     "Win32_Security",
     "Win32_Security_Credentials",
     "Win32_Security_Cryptography",
@@ -87,6 +98,11 @@ windows = { version = "0.62", features = [
     "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+[features]
+# The companion's end-to-end test over real sockets with Tauri's mock runtime (no new
+# crate). Run with: cargo test --lib --features companion-e2e companion::tests
+companion-e2e = ["tauri/test"]
 
 [profile.dev]
 # Smaller debug info noticeably shortens link times on modest hardware.

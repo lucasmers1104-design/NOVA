@@ -1,0 +1,7 @@
+[
+  { "type": "hello", "v": 2, "deviceId": "dev-1", "ephPub": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "nonce": "AAAAAAAAAAAAAAAAAAAAAA" },
+  { "type": "hello", "v": 1, "deviceId": "dev-1", "ephPub": "AAAA", "nonce": "AAAAAAAAAAAAAAAAAAAAAA" },
+  { "type": "hello", "v": 1, "deviceId": "dev-1", "ephPub": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "nonce": "AAAA" },
+  { "type": "pair.rejected", "reason": "because" },
+  { "type": "goodbye" }
+]

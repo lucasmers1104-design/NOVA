@@ -1,0 +1,12 @@
+[
+  { "type": "task.create", "id": "t-1", "ts": 1762600000000, "text": "Wie lange geht der Steam-Download noch?", "voice": false, "wantScreenshot": true, "schedule": { "kind": "now" } },
+  { "type": "task.create", "id": "t-2", "ts": 1762600000000, "text": "Öffne Fortnite, ich komme gleich.", "voice": true, "wantScreenshot": false, "schedule": { "kind": "whenOnline" } },
+  { "type": "task.create", "id": "t-3", "ts": 1762600000000, "text": "Starte Spotify", "voice": false, "wantScreenshot": false, "schedule": { "kind": "at", "date": "2026-11-08", "time": "18:30" } },
+  { "type": "task.cancel", "id": "c-1", "ts": 1762600000000, "taskId": "t-3" },
+  { "type": "approval.answer", "id": "a-1", "ts": 1762600000000, "requestId": "r-1", "approved": true, "proof": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" },
+  { "type": "approval.answer", "id": "a-2", "ts": 1762600000000, "requestId": "r-1", "approved": false },
+  { "type": "status.get", "id": "s-1", "ts": 1762600000000 },
+  { "type": "notices.get", "id": "n-1", "ts": 1762600000000 },
+  { "type": "notices.ack", "id": "n-2", "ts": 1762600000000, "ids": ["x1", "x2"] },
+  { "type": "tasks.list", "id": "l-1", "ts": 1762600000000 }
+]

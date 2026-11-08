@@ -1,0 +1,17 @@
+[
+  { "type": "status", "id": "p-1", "ts": 1762600000000, "pcName": "GAMING-PC", "busy": false, "aiReady": true, "inGame": false, "media": { "title": "Thriller", "artist": "Michael Jackson", "playing": true }, "pendingApprovals": 1, "activeTasks": 0 },
+  { "type": "status", "id": "p-2", "ts": 1762600000000, "pcName": "GAMING-PC", "busy": true, "aiReady": false, "inGame": true, "media": null, "pendingApprovals": 0, "activeTasks": 1 },
+  { "type": "task.event", "id": "p-3", "ts": 1762600000000, "taskId": "t-1", "event": { "kind": "accepted", "state": "scheduled", "runAt": "2026-11-08 18:30" } },
+  { "type": "task.event", "id": "p-4", "ts": 1762600000000, "taskId": "t-1", "event": { "kind": "status", "state": "analyzingScreen", "detail": "Taking a screenshot" } },
+  { "type": "task.event", "id": "p-5", "ts": 1762600000000, "taskId": "t-1", "event": { "kind": "text", "text": "Noch etwa " } },
+  { "type": "task.event", "id": "p-6", "ts": 1762600000000, "taskId": "t-1", "event": { "kind": "toolStarted", "toolId": "toolu_1", "title": "Look at your screen", "tier": "free" } },
+  { "type": "task.event", "id": "p-7", "ts": 1762600000000, "taskId": "t-1", "event": { "kind": "toolFinished", "toolId": "toolu_1", "ok": true, "summary": "Screenshot taken" } },
+  { "type": "task.result", "id": "p-8", "ts": 1762600000000, "taskId": "t-1", "ok": true, "text": "Noch etwa 12 Minuten.", "screenshot": { "mime": "image/png", "width": 2, "height": 1, "data": "iVBORw0KGgo=" }, "error": null },
+  { "type": "task.result", "id": "p-9", "ts": 1762600000000, "taskId": "t-1", "ok": false, "text": "", "screenshot": null, "error": "NOVA is still working on your last request" },
+  { "type": "approval.request", "id": "p-10", "ts": 1762600000000, "requestId": "r-1", "taskId": "t-1", "title": "End Steam", "detail": "Unsaved data is lost.", "risk": "high", "expiresAt": 1762600120000 },
+  { "type": "approval.closed", "id": "p-11", "ts": 1762600000000, "requestId": "r-1", "outcome": "expired" },
+  { "type": "notices", "id": "p-12", "ts": 1762600000000, "items": [{ "id": "n1", "kind": "watch", "text": "Fortnite ist fertig.", "taskId": null, "ts": 1762600000000 }, { "id": "n2", "kind": "taskDone", "text": "Auftrag fertig", "taskId": "t-1", "ts": 1762600000000 }] },
+  { "type": "tasks", "id": "p-13", "ts": 1762600000000, "items": [{ "taskId": "t-3", "text": "Starte Spotify", "state": "scheduled", "runAt": "2026-11-08 18:30", "createdAt": 1762600000000 }] },
+  { "type": "error", "id": "p-14", "ts": 1762600000000, "code": "busy", "message": "NOVA is busy", "replyTo": "t-1" },
+  { "type": "device.revoked", "id": "p-15", "ts": 1762600000000 }
+]

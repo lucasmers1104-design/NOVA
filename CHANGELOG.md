@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **NOVA Companion**, NOVA on your phone (Android first): ask NOVA AI from your phone and get the answer as text, with a screenshot if you want one. „Öffne Fortnite, ich komme gleich“ runs now, as soon as the PC is on, or at a time you set; a time missed while the PC was off is made up within two hours. „Sag Bescheid, wenn der Download fertig ist“ tells your phone too, and when nothing NOVA can watch directly fits, NOVA looks at the screen every 10 minutes, at most 12 times.
+- **Settings → Phone**: turn the connection on, pair a phone by QR code (you confirm on the PC), see and remove paired phones, choose the apps and games a phone may start without your fingerprint, keep phone screenshots for 7 days if you want, and see the log of tasks from phones.
+- **Approvals on the phone**: when a task from the phone wants to change something on the PC, the phone asks for your fingerprint, and the PC shows a notification. Settings, keys, saved routines, account changes and working websites never run from the phone.
+
+### Changed
+- The Routines page also shows checks NOVA runs for your phone.
+
 ## 1.11.1 — 2026-11-08
 
 ### Fixed

@@ -186,6 +186,47 @@ pub const MIGRATIONS: &[Migration] = &[
         ) WITHOUT ROWID;
     "#,
     },
+    Migration {
+        version: 5,
+        name: "companion",
+        sql: r#"
+        -- Paired phones. The approval key is in Windows Credential Manager, not here.
+        CREATE TABLE companion_devices (
+            id         TEXT PRIMARY KEY NOT NULL,
+            name       TEXT NOT NULL,
+            platform   TEXT NOT NULL,
+            public_key TEXT NOT NULL,
+            paired_at  INTEGER NOT NULL,
+            last_seen  INTEGER
+        );
+
+        -- Every task from a phone, also after it ran: the local log.
+        CREATE TABLE companion_jobs (
+            id              TEXT PRIMARY KEY NOT NULL,
+            device_id       TEXT NOT NULL,
+            text            TEXT NOT NULL,
+            want_screenshot INTEGER NOT NULL DEFAULT 0,
+            schedule        TEXT NOT NULL,
+            run_date        TEXT,
+            run_time        TEXT,
+            state           TEXT NOT NULL,
+            created_at      INTEGER NOT NULL,
+            finished_at     INTEGER,
+            result          TEXT
+        );
+        CREATE INDEX idx_companion_jobs_state ON companion_jobs(state);
+
+        -- What a phone hasn't received yet (it was offline); fetched and acknowledged.
+        CREATE TABLE companion_notices (
+            id         TEXT PRIMARY KEY NOT NULL,
+            device_id  TEXT NOT NULL,
+            kind       TEXT NOT NULL,
+            text       TEXT NOT NULL,
+            task_id    TEXT,
+            created_at INTEGER NOT NULL
+        );
+    "#,
+    },
 ];
 
 #[cfg(test)]

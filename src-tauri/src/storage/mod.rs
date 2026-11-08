@@ -167,7 +167,8 @@ pub async fn settings_get(db: tauri::State<'_, Database>, key: String) -> Comman
 /// What only NOVA's own checked code writes: auto mode, what routines do and what
 /// NOVA remembers don't change through a page writing a setting directly.
 fn rust_owned(key: &str) -> bool {
-    key.starts_with("nova.assistant") || matches!(key, "nova.finder" | "nova.automation" | "nova.memory" | "nova.played" | "nova.tidy.last" | "nova.telemetry")
+    // SECURITY: "nova.companion" holds the phone allowlist; only the checked companion commands change it.
+    key.starts_with("nova.assistant") || matches!(key, "nova.finder" | "nova.automation" | "nova.memory" | "nova.played" | "nova.tidy.last" | "nova.telemetry" | "nova.companion")
 }
 
 #[tauri::command]

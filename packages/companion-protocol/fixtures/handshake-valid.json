@@ -1,0 +1,7 @@
+[
+  { "type": "hello", "v": 1, "deviceId": "dev-1", "ephPub": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "nonce": "AAAAAAAAAAAAAAAAAAAAAA" },
+  { "type": "welcome", "v": 1, "pcId": "pc-1", "ephPub": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "nonce": "AAAAAAAAAAAAAAAAAAAAAA" },
+  { "type": "pair.request", "v": 1, "ephPub": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "box": "abc" },
+  { "type": "pair.accepted", "box": "abc" },
+  { "type": "pair.rejected", "reason": "expired" }
+]

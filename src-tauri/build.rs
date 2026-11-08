@@ -1,4 +1,11 @@
 fn main() {
+    // The companion's end-to-end test (`--lib --features companion-e2e`) starts Tauri's mock
+    // runtime, which imports TaskDialogIndirect from Common Controls v6. The app gets that
+    // dependency from tauri-build's manifest; the lib's test executable gets it here.
+    if std::env::var_os("CARGO_FEATURE_COMPANION_E2E").is_some() && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+        println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
+        println!("cargo:rustc-link-arg=/MANIFESTDEPENDENCY:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'");
+    }
     // Declaring the app's commands in the manifest makes each one require an
     // explicit permission in a capability file, so no IPC command is reachable
     // from the webview unless it is listed in `capabilities/`.
@@ -160,6 +167,16 @@ fn main() {
         "plugins_set_permission",
         "plugin_call",
         "plugin_report_crash",
+        "companion_status",
+        "companion_configure",
+        "companion_allow_candidates",
+        "companion_set_allowlist",
+        "companion_pair_start",
+        "companion_pair_cancel",
+        "companion_pair_decide",
+        "companion_revoke",
+        "companion_log",
+        "companion_clear_log",
     ])))
     .expect("failed to run tauri-build");
 }

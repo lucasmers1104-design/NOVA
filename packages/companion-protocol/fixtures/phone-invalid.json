@@ -1,0 +1,16 @@
+[
+  { "type": "task.create", "id": "t-1", "ts": 1, "text": "", "voice": false, "wantScreenshot": false, "schedule": { "kind": "now" } },
+  { "type": "task.create", "id": "t-1", "ts": 1, "text": "   ", "voice": false, "wantScreenshot": false, "schedule": { "kind": "now" } },
+  { "type": "task.create", "id": "t-1", "ts": 1, "text": "x", "voice": "no", "wantScreenshot": false, "schedule": { "kind": "now" } },
+  { "type": "task.create", "id": "t-1", "ts": 1, "text": "x", "voice": false, "wantScreenshot": false, "schedule": { "kind": "at", "date": "2026-11-08", "time": "24:00" } },
+  { "type": "task.create", "id": "t-1", "ts": 1, "text": "x", "voice": false, "wantScreenshot": false, "schedule": { "kind": "later" } },
+  { "type": "task.create", "id": "bad id with spaces", "ts": 1, "text": "x", "voice": false, "wantScreenshot": false, "schedule": { "kind": "now" } },
+  { "type": "task.create", "id": "t-1", "ts": -5, "text": "x", "voice": false, "wantScreenshot": false, "schedule": { "kind": "now" } },
+  { "type": "approval.answer", "id": "a-1", "ts": 1, "requestId": "r-1", "approved": true },
+  { "type": "approval.answer", "id": "a-1", "ts": 1, "requestId": "r-1", "approved": true, "proof": "short" },
+  { "type": "settings.set", "id": "x", "ts": 1, "key": "nova.assistant.agent" },
+  { "type": "notices.ack", "id": "n-2", "ts": 1, "ids": "x1" },
+  { "id": "s-1", "ts": 1 },
+  "status.get",
+  null
+]

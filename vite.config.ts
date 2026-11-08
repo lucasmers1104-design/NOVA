@@ -41,5 +41,7 @@ export default defineConfig({
     setupFiles: ["./src/test/setup.ts"],
     css: false,
     restoreMocks: true,
+    // The phone app (React Native) has its own Jest; the shared package runs here.
+    include: ["src/**/*.test.{ts,tsx}", "packages/*/src/**/*.test.ts"],
   },
 });

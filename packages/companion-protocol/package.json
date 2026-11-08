@@ -1,0 +1,19 @@
+{
+  "name": "@nova/companion-protocol",
+  "version": "1.0.0",
+  "private": true,
+  "description": "NOVA Companion: shared message types, parsers, encryption and the phone's connection client",
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./crypto": "./src/crypto.ts",
+    "./client": "./src/client.ts",
+    "./state": "./src/state.ts"
+  },
+  "dependencies": {
+    "@noble/ciphers": "2.4.0",
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0"
+  }
+}

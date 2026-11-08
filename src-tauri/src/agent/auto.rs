@@ -34,6 +34,9 @@ const LONGEST_PROMPT: usize = 2000;
 /// A step on a schedule runs right at its time. A question to NOVA, such as a morning
 /// briefing, still counts when the PC came on a little later.
 const STEPS_LATE_MINUTES: u32 = 2;
+/// Decided 2026-11-08: a check for the phone every 10 minutes, at most 12 times.
+const AI_CHECK_MINUTES: u32 = 10;
+const AI_CHECK_CALLS: u32 = 12;
 const PROMPT_LATE_MINUTES: u32 = 120;
 
 /// What a routine may do without asking each time. Nothing here deletes, reads
@@ -83,6 +86,9 @@ pub enum Condition {
     /// The browser's downloads in the Downloads folder are finished.
     DownloadsDone,
     NewVideo { channel_id: String, channel: String },
+    /// NOVA Companion: NOVA looks at the screen every few minutes and asks the AI,
+    /// for a phone that asked; it gives up after `calls_left` checks.
+    AiCheck { question: String, device_id: String, every_minutes: u32, calls_left: u32 },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -104,6 +110,9 @@ pub struct Watcher {
     /// The newest video seen, for `NewVideo`.
     #[serde(default)]
     pub seen: Option<String>,
+    /// NOVA Companion: the paired phone that asked, told too when it happens.
+    #[serde(default)]
+    pub notify_device: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -401,6 +410,7 @@ fn holds<R: Runtime>(app: &AppHandle<R>, condition: &Condition, look: &mut Look)
         Condition::DownloadsDone => partial_downloads() == 0,
         // Asked apart from the others, see `tick`.
         Condition::NewVideo { .. } => false,
+        Condition::AiCheck { .. } => return None,
     })
 }
 
@@ -444,6 +454,12 @@ pub fn checked_watcher<R: Runtime>(app: &AppHandle<R>, what: &str, input: &Value
             seen = youtube::channel_videos(&channel_id, &channel)?.first().map(|video| video.id.clone());
             Condition::NewVideo { channel_id, channel }
         }
+        "ai_check" => {
+            // Each check costs an AI call, so only a phone's request starts one, with a cap.
+            let phone = super::phone(app).ok_or("ai_check only works for requests from the phone. Use another kind of watch.")?;
+            let question: String = text("target")?.chars().take(300).collect();
+            Condition::AiCheck { question, device_id: phone.device_id, every_minutes: AI_CHECK_MINUTES, calls_left: AI_CHECK_CALLS }
+        }
         _ => return Err("Unknown thing to watch".into()),
     };
     let routine = match input["routine"].as_str().map(str::trim).filter(|name| !name.is_empty()) {
@@ -460,7 +476,8 @@ pub fn checked_watcher<R: Runtime>(app: &AppHandle<R>, what: &str, input: &Value
         Condition::DownloadsDone if done_already => return Err("No browser download is running in the Downloads folder right now. NOVA can't see other launchers' downloads this way; for games use game_ready.".into()),
         _ => {}
     }
-    Ok(Watcher { id: storage::new_id("watch"), say: say.to_string(), condition, repeat: input["repeat"].as_bool().unwrap_or(false), routine, armed: !holds_now, seen })
+    let notify_device = super::phone(app).map(|phone| phone.device_id);
+    Ok(Watcher { id: storage::new_id("watch"), say: say.to_string(), condition, repeat: input["repeat"].as_bool().unwrap_or(false), routine, armed: !holds_now, seen, notify_device })
 }
 
 pub fn condition_words(condition: &Condition) -> String {
@@ -475,6 +492,7 @@ pub fn condition_words(condition: &Condition) -> String {
         Condition::ProgramEnds { program } => format!("{program} ends"),
         Condition::DownloadsDone => "Browser downloads finished".into(),
         Condition::NewVideo { channel, .. } => format!("New video from {channel}"),
+        Condition::AiCheck { question, .. } => format!("Check for the phone: {question}"),
     }
 }
 
@@ -557,6 +575,8 @@ pub async fn media_played_clear<R: Runtime>(app: AppHandle<R>) -> Result<(), Str
 struct Memory {
     over_limit: HashMap<String, u32>,
     channels_asked: HashMap<String, Instant>,
+    /// When each AI check last asked.
+    checks_asked: HashMap<String, Instant>,
 }
 
 fn sustained(watcher: &Watcher, holds_now: bool, memory: &mut Memory) -> bool {
@@ -603,7 +623,7 @@ fn tick<R: Runtime>(app: &AppHandle<R>, memory: &mut Memory) {
     let videos = new_videos(&snapshot.watchers, memory);
     let mut look = Look::default();
     let readings: HashMap<String, bool> = snapshot.watchers.iter().filter_map(|watcher| Some((watcher.id.clone(), holds(app, &watcher.condition, &mut look)?))).collect();
-    let mut fired: Vec<(String, Option<String>)> = Vec::new();
+    let mut fired: Vec<(String, Option<String>, Option<String>)> = Vec::new();
     let changed = change(app, |automation| {
         for routine in automation.routines.iter_mut().filter(|routine| due.iter().any(|d| d.id == routine.id)) {
             routine.last_run = Some(now.date.clone());
@@ -611,13 +631,13 @@ fn tick<R: Runtime>(app: &AppHandle<R>, memory: &mut Memory) {
         automation.watchers.retain_mut(|watcher| {
             if let Some((id, title)) = videos.get(&watcher.id) {
                 watcher.seen = Some(id.clone());
-                fired.push((format!("{} {title}", watcher.say), watcher.routine.clone()));
+                fired.push((format!("{} {title}", watcher.say), watcher.routine.clone(), watcher.notify_device.clone()));
                 return watcher.repeat;
             }
             let Some(reading) = readings.get(&watcher.id) else { return true };
             let holds_now = sustained(watcher, *reading, memory);
             if step_watcher(watcher, holds_now) {
-                fired.push((watcher.say.clone(), watcher.routine.clone()));
+                fired.push((watcher.say.clone(), watcher.routine.clone(), watcher.notify_device.clone()));
                 return watcher.repeat;
             }
             true
@@ -628,7 +648,10 @@ fn tick<R: Runtime>(app: &AppHandle<R>, memory: &mut Memory) {
         return;
     }
     let all = load(app).routines;
-    for (say, routine) in fired {
+    for (say, routine, device) in fired {
+        if let Some(device) = device {
+            crate::companion::tasks::notify(app, &device, crate::companion::protocol::NoticeKind::Watch, &say, None);
+        }
         crate::assistant::announce(app, say);
         if let Some(routine) = routine.and_then(|name| all.iter().find(|known| known.name == name).cloned()) {
             due.push(routine);
@@ -636,6 +659,54 @@ fn tick<R: Runtime>(app: &AppHandle<R>, memory: &mut Memory) {
     }
     for routine in due {
         run_alone(app, &routine);
+    }
+    start_ai_check(app, &snapshot.watchers, memory);
+    crate::companion::tasks::tick(app);
+}
+
+/// NOVA Companion: starts one due AI check per tick, while NOVA is free.
+fn start_ai_check<R: Runtime>(app: &AppHandle<R>, watchers: &[Watcher], memory: &mut Memory) {
+    if super::busy(app) {
+        return;
+    }
+    for watcher in watchers {
+        let Condition::AiCheck { question, device_id, every_minutes, .. } = &watcher.condition else { continue };
+        let asked = memory.checks_asked.entry(watcher.id.clone()).or_insert_with(Instant::now);
+        if asked.elapsed() < Duration::from_secs(u64::from(*every_minutes) * 60) {
+            continue;
+        }
+        *asked = Instant::now();
+        crate::companion::tasks::start_check(app, watcher.id.clone(), question.clone(), device_id.clone());
+        return;
+    }
+}
+
+/// The answer of an AI check: it happened (NOVA says so and stops), or one check fewer is left.
+pub fn finish_check<R: Runtime>(app: &AppHandle<R>, id: &str, happened: bool) {
+    let mut outcome: Option<(String, String, bool)> = None;
+    let _ = change(app, |automation| {
+        let Some(index) = automation.watchers.iter().position(|w| w.id == id) else { return Ok(()) };
+        let say = automation.watchers[index].say.clone();
+        let Condition::AiCheck { question, device_id, calls_left, .. } = &mut automation.watchers[index].condition else { return Ok(()) };
+        *calls_left = calls_left.saturating_sub(1);
+        if happened {
+            outcome = Some((say, device_id.clone(), false));
+        } else if *calls_left == 0 {
+            outcome = Some((format!("Ich habe aufgehört zu prüfen: {question}"), device_id.clone(), true));
+        }
+        if outcome.is_some() {
+            automation.watchers.remove(index);
+        }
+        Ok(())
+    });
+    use crate::companion::protocol::NoticeKind;
+    match outcome {
+        Some((say, device, false)) => {
+            crate::companion::tasks::notify(app, &device, NoticeKind::Watch, &say, None);
+            crate::assistant::announce(app, say);
+        }
+        Some((text, device, true)) => crate::companion::tasks::notify(app, &device, NoticeKind::CheckStopped, &text, None),
+        None => {}
     }
 }
 
@@ -677,7 +748,7 @@ mod tests {
     use super::*;
 
     fn watcher(condition: Condition, armed: bool) -> Watcher {
-        Watcher { id: "w".into(), say: "Fertig".into(), condition, repeat: false, routine: None, armed, seen: None }
+        Watcher { id: "w".into(), say: "Fertig".into(), condition, repeat: false, routine: None, armed, seen: None, notify_device: None }
     }
 
     #[test]

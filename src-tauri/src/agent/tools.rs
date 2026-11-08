@@ -527,12 +527,12 @@ pub fn definitions() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "watch",
-            description: "Keep an eye on something in the background and say so when it happens, also during a game, as long as NOVA runs: game_ready (a game finished downloading or updating), game_update (a game needs an update; reliable for Steam, Epic only shows it once its launcher starts updating), cpu_above and memory_above (percent, lasting a minute), temperature_above (celsius, only where the PC reports it), disk_below (GB free on the Windows drive), program_starts, program_ends, downloads_done (browser downloads in the Downloads folder), new_video (a YouTube channel, asked every half hour). With repeat it goes on after the first time. A routine can run when it happens, e.g. when Fortnite starts.",
+            description: "Keep an eye on something in the background and say so when it happens, also during a game, as long as NOVA runs: game_ready (a game finished downloading or updating), game_update (a game needs an update; reliable for Steam, Epic only shows it once its launcher starts updating), cpu_above and memory_above (percent, lasting a minute), temperature_above (celsius, only where the PC reports it), disk_below (GB free on the Windows drive), program_starts, program_ends, downloads_done (browser downloads in the Downloads folder), new_video (a YouTube channel, asked every half hour), ai_check (only for requests from the phone and only when nothing else fits: NOVA looks at the screen every 10 minutes, at most 12 times; target is the yes/no question, e.g. 'Is the download in the open window finished?'). With repeat it goes on after the first time. A routine can run when it happens, e.g. when Fortnite starts.",
             schema: json!({
                 "type": "object",
                 "properties": {
                     "action": { "type": "string", "enum": ["start", "list", "stop"] },
-                    "what": { "type": "string", "enum": ["game_ready", "game_update", "cpu_above", "memory_above", "temperature_above", "disk_below", "program_starts", "program_ends", "downloads_done", "new_video"] },
+                    "what": { "type": "string", "enum": ["game_ready", "game_update", "cpu_above", "memory_above", "temperature_above", "disk_below", "program_starts", "program_ends", "downloads_done", "new_video", "ai_check"] },
                     "target": string("The game, program or YouTube channel."),
                     "value": { "type": "number", "description": "The limit, for what has one." },
                     "say": string("What NOVA says when it happens, a short sentence in the user's language, e.g. 'Fortnite ist fertig geladen.' For new_video the title follows it."),

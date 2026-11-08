@@ -1,0 +1,43 @@
+{
+  "expo": {
+    "name": "NOVA Companion",
+    "slug": "nova-companion",
+    "scheme": "novacompanion",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#07070C",
+    "newArchEnabled": true,
+    "android": {
+      "package": "dev.nova.companion",
+      "softwareKeyboardLayoutMode": "resize",
+      "permissions": ["CAMERA", "RECORD_AUDIO", "USE_BIOMETRIC", "POST_NOTIFICATIONS", "ACCESS_WIFI_STATE", "ACCESS_NETWORK_STATE", "CHANGE_WIFI_MULTICAST_STATE"],
+      "blockedPermissions": ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION"]
+    },
+    "ios": {
+      "bundleIdentifier": "dev.nova.companion",
+      "infoPlist": {
+        "NSLocalNetworkUsageDescription": "NOVA Companion verbindet sich in deinem WLAN mit NOVA auf deinem PC.",
+        "NSBonjourServices": ["_nova-companion._tcp"],
+        "NSAppTransportSecurity": { "NSAllowsLocalNetworking": true }
+      }
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-background-task",
+      ["expo-camera", { "cameraPermission": "NOVA Companion nutzt die Kamera nur, um den Kopplungscode auf deinem PC zu scannen.", "recordAudioAndroid": false }],
+      ["expo-local-authentication", { "faceIDPermission": "Mit Face ID gibst du Aktionen auf deinem PC frei." }],
+      ["expo-notifications", { "color": "#8B5CF6" }],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Damit du NOVA Aufträge diktieren kannst.",
+          "speechRecognitionPermission": "Damit dein Handy dein Diktat in Text umwandelt."
+        }
+      ],
+      "./plugins/local-network"
+    ],
+    "experiments": { "typedRoutes": true }
+  }
+}
