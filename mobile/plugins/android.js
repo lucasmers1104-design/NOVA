@@ -1,7 +1,17 @@
 // Android build settings the app needs, applied during `expo prebuild` (EAS runs it).
 const fs = require("node:fs");
 const path = require("node:path");
-const { withAndroidManifest, withDangerousMod } = require("expo/config-plugins");
+const { withAndroidManifest, withDangerousMod, withGradleProperties } = require("expo/config-plugins");
+
+// One CPU architecture: arm64 covers practically every phone from the last years
+// and keeps the APK small enough for GitHub (all four made it 122 MB).
+function withArm64Only(config) {
+  return withGradleProperties(config, (mod) => {
+    mod.modResults = mod.modResults.filter((item) => !(item.type === "property" && item.key === "reactNativeArchitectures"));
+    mod.modResults.push({ type: "property", key: "reactNativeArchitectures", value: "arm64-v8a" });
+    return mod;
+  });
+}
 
 // The phone talks to the PC over ws:// inside the home network. Android blocks
 // plain-text connections in release builds unless the app allows them. That is fine
@@ -35,4 +45,4 @@ function withRoomKept(config) {
   ]);
 }
 
-module.exports = (config) => withRoomKept(withLocalNetwork(config));
+module.exports = (config) => withArm64Only(withRoomKept(withLocalNetwork(config)));
