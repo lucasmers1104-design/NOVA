@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.11.2 — 2026-11-08
 
 ### Added
 - **NOVA Companion**, NOVA on your phone (Android first): ask NOVA AI from your phone and get the answer as text, with a screenshot if you want one. „Öffne Fortnite, ich komme gleich“ runs now, as soon as the PC is on, or at a time you set; a time missed while the PC was off is made up within two hours. „Sag Bescheid, wenn der Download fertig ist“ tells your phone too, and when nothing NOVA can watch directly fits, NOVA looks at the screen every 10 minutes, at most 12 times.

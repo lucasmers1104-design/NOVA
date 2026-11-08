@@ -566,7 +566,7 @@ pub fn tick<R: Runtime>(app: &AppHandle<R>) {
             }
         }
     }
-    if std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(false, |d| d.as_secs() % 3600 < 15) {
+    if std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).is_ok_and(|d| d.as_secs() % 3600 < 15) {
         delete_screenshots(app, Some(KEEP_SCREENSHOTS));
     }
     try_run_next(app);

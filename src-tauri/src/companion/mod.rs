@@ -460,7 +460,7 @@ async fn companion_allow_candidates<R: Runtime>(app: AppHandle<R>) -> CommandRes
         let (apps, _) = app.state::<crate::apps::AppCatalog>().scanned(false)?;
         let mut list: Vec<Candidate> = apps.iter().map(|a| Candidate { kind: policy::AllowedKind::App, id: a.id.clone(), name: a.name.clone() }).collect();
         list.extend(crate::agent::games::library().into_iter().map(|g| Candidate { kind: policy::AllowedKind::Game, id: g.link, name: g.name }));
-        list.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        list.sort_by_key(|c| c.name.to_lowercase());
         Ok(list)
     })
     .await

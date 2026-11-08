@@ -41,7 +41,17 @@ function fail(message) {
 function refuseWhatMustStayPrivate() {
   const listed = (args) => spawnSync("git", args, { cwd: root, encoding: "utf8" }).stdout?.split("\n").filter(Boolean) ?? [];
   const files = [...listed(["ls-files"]), ...listed(["ls-files", "--others", "--exclude-standard"])];
-  const secret = files.filter((file) => /\.(novaplugin|key)$/i.test(file) || /(^|\/)(nova-private|developer-analytics)(\/|$)/i.test(file));
+  // Plugins NOVA offers publicly (Plugins → Available) are listed in releases/plugins/catalog.json;
+  // any other package, and anything named like the private plugin, stays out.
+  const catalog = (() => {
+    try {
+      return JSON.parse(readFileSync(join(root, "releases", "plugins", "catalog.json"), "utf8")).plugins.map((p) => `releases/plugins/${p.file}`);
+    } catch {
+      return [];
+    }
+  })();
+  const published = (file) => catalog.includes(file) && !/developer-analytics/i.test(file);
+  const secret = files.filter((file) => (/\.(novaplugin|key)$/i.test(file) && !published(file)) || /(^|\/)(nova-private|developer-analytics)(\/|$)/i.test(file));
   if (secret.length > 0) fail(`These must not be in the public repository:\n  ${secret.join("\n  ")}`);
 }
 refuseWhatMustStayPrivate();

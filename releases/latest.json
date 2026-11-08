@@ -1,11 +1,11 @@
 {
-  "version": "1.11.1",
-  "notes": "- The statistics question came back after updates although you had already answered it. NOVA read your answer only at the end of its start, and the window could ask before that. Your answer is now read first, and NOVA never asks before it has read it.",
-  "pub_date": "2026-11-08T01:54:12.817Z",
+  "version": "1.11.2",
+  "notes": "- NOVA Companion, NOVA on your phone (Android first): ask NOVA AI from your phone and get the answer as text, with a screenshot if you want one. „Öffne Fortnite, ich komme gleich“ runs now, as soon as the PC is on, or at a time you set; a time missed while the PC was off is made up within two hours. „Sag Bescheid, wenn der Download fertig ist“ tells your phone too, and when nothing NOVA can watch directly fits, NOVA looks at the screen every 10 minutes, at most 12 times.\n- NOVA Companion is a plugin: install it from Plugins → Available. Its page “Phone” has a QR code to get the Android app, turns the connection on, pairs a phone by QR code (you confirm in NOVA's own window), shows and removes paired phones, lets you choose the apps and games a phone may start without your fingerprint, keeps phone screenshots for 7 days if you want, and shows the log of tasks from phones.\n- Plugins → Available: NOVA's own plugin list, next to the releases on your update source. NOVA checks each download against the list and the plugin's signature before the usual install dialog.\n- Approvals on the phone: when a task from the phone wants to change something on the PC, the phone asks for your fingerprint, and the PC shows a notification. Settings, keys, saved routines, account changes and working websites never run from the phone.\n- The Routines page also shows checks NOVA runs for your phone.",
+  "pub_date": "2026-11-08T22:01:00.067Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSNTJic1Z1TU1yN2krU0ZMQnYzY2NoVGduTXlFQktOVTFKZ2V6K0JlNEpabmJ3NHh1aWtBM0hBU0dlMllKZ1lBaGRnR25PWWlIQ09ScGFZUEpqSlc1SmRQTUErYWhqNXdFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0MTAyODUyCWZpbGU6Tk9WQV8xLjExLjFfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjEuMTEuMQprMTFRT2tiZFJvZzdOMFFYcXpvb2xTQmRiaFUvMGVwak5oSkhCcFI4V3NubWtRM001ellZMjBIaER1aW1pQnVqVHBMYVhyWmFHSTNFc1F4QThWMEpCZz09Cg==",
-      "url": "https://raw.githubusercontent.com/lucasmers1104-design/NOVA/main/releases/NOVA_1.11.1_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSNTJic1Z1TU1yN3F3WXczZjIxRFQzL0l5RmVWY2FNL1hEQ285TDZZb2sxRkdXa3ZLTnh3aFV0L2Z2SW1NcXhucmZpKzV0L3JsVkdyeHdpR2p5Y1BWZTVBU2hmOWp5RndrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0MTc1MjYwCWZpbGU6Tk9WQV8xLjExLjJfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjEuMTEuMgptQithT1kyMlcwQTh5YUh3WHQ2bmRTK05WdGNCeTZDMnRxZytpNHMyVTl3ZytsbUgrbk9LYVNYK1REVTh4b2ZkWWR5T1BJL0NBcFRQemxzOXVXS0xCZz09Cg==",
+      "url": "https://raw.githubusercontent.com/lucasmers1104-design/NOVA/main/releases/NOVA_1.11.2_x64-setup.exe"
     }
   }
 }
