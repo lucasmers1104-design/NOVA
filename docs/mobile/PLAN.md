@@ -1,6 +1,6 @@
 # NOVA Companion — Plan für die mobile App
 
-Stand: 2026-11-08 · Status: C0 bis C6 gebaut, APK-Build offen (kein Android-SDK auf diesem PC) · Basis: NOVA 1.11.1
+Stand: 2026-11-11 · Status: C0 bis C6 gebaut, APK über EAS; App 1.2 (Audit, Design-System, Berechtigungen, Signatur, Play Protect) in Abschnitt 11 · Basis: NOVA 1.11.1, erweitert für 1.12
 
 Die App ist ein Auftragskanal zu NOVA AI auf dem PC. Das Handy ist ein dünner Client: Es schickt Aufträge und Freigaben, es zeigt Antworten, Screenshots und Benachrichtigungen. Die KI-Logik, die Schlüssel und das Protokoll bleiben auf dem PC.
 
@@ -316,3 +316,144 @@ NOVA Companion kommt als Plugin aus der Plugin-Liste (Plugins → Available). Pl
 - SECURITY: „Handy koppeln?“ beantwortet NOVAs eigenes Fenster (`PairDialog.tsx`, Befehl `companion_pair_decide`), nie das Plugin.
 - Die Android-App liegt als `releases/NOVA-Companion.apk` (nur arm64, rund 40 MB) neben den PC-Installern; die Plugin-Seite zeigt dafür einen QR-Code.
 - Ohne Plugin: kein Server, keine Handy-Aufträge. Gekoppelte Geräte bleiben gespeichert und funktionieren wieder, wenn das Plugin zurückkommt.
+
+## 10. NOVA 1.12 / App 1.1 (2026-11-09)
+
+- **Nova Island**: neue Nachrichten `phone.notification`, `phone.call` (Handy → PC) und `call.action` (PC → Handy), mit Fixtures in TS und Rust. Der PC zeigt sie nur auf Nova Island (`island.rs`) und speichert nichts. Siehe [docs/island/PLAN.md](../island/PLAN.md).
+- **Android-Modul `mobile/modules/nova-bridge`** (Kotlin): NotificationListenerService (Zugriff erteilt der Nutzer in Android), Anruferkennung über die Anruf-Benachrichtigung (`CATEGORY_CALL`), Annehmen/Ablehnen über deren CallStyle-Aktionen oder `TelecomManager` mit `ANSWER_PHONE_CALLS`, APK-Installation über Androids Installer.
+- **Ohne WLAN**: Ursache bei Kabel-PCs war die Windows-Firewall im Profil „Öffentlich“. `companion/network.rs` prüft das (INetFwPolicy2, nur lesend) und legt auf Klick per UAC eine Regel an: nur NOVA, nur TCP auf dem Companion-Port, nur `localsubnet`. USB-Tethering funktioniert als Weg ganz ohne WLAN; die App nimmt zusätzlich von Hand eingetragene PC-Adressen (nur private IPv4).
+- **App-Updates**: `releases/companion.json` (von `scripts/companion-release.mjs`), Prüfung in `packages/companion-protocol/src/app.ts` (gleiches Repository, HTTPS, SHA-256), Installation über Android.
+- Entscheidung 1 (nur LAN) bleibt; der Relay ist weiterhin offen.
+
+## 11. App 1.2 (2026-11-11): Audit, Design-System, Berechtigungen, Signatur, Play Protect
+
+Version `1.2.0`, `versionCode 3`. Kein Eingriff ins Protokoll: Die App 1.2 spricht mit jedem NOVA ab 1.12, und eine App 1.1 mit demselben PC ebenso.
+
+### 11.1 Was neu ist
+
+- **Audit**: [AUDIT-1.12.md](AUDIT-1.12.md) mit 52 Befunden und ihrem Status. Offen bleiben Nr. 25 (Weiterleitung nach Neustart des Handys) und Nr. 34 (Rückmeldung einer fehlgeschlagenen Anruf-Aktion); Nr. 16 ist am Handy entschärft, die Ursache liegt am Desktop.
+- **Design-System**: Tokens in `mobile/src/theme.ts` (zwei Paletten mit denselben Namen, Abstände, Radien, Typo-Skala in Inter, Elevation, Blur, Motion), Bausteine in `mobile/src/ui/` (Button, IconButton, Card, ListRow, Switch, Sheet, Toast, EmptyState, ErrorState, Skeleton, Badge, Avatar, SegmentedControl, TextField, dazu Press, Screen, TabScene, OfflineBanner). `mobile/src/ui.tsx` gibt es nicht mehr.
+- **Bildschirme**: Onboarding in drei Schritten (`pair.tsx`), Start mit Latenz, Schloss, Schnellaktionen, Mediensteuerung und „Heute“, Chat mit Kopieren und „Noch einmal senden“, Aufgaben mit Wischen und „Rückgängig“, Freigabe mit Gefahrenstufe, gruppierte Einstellungen mit Update-Ablauf.
+- **Was die App bewusst nicht vortäuscht**: Schnellaktionen und Medientasten sind fertige Aufträge an NOVA AI (das Protokoll kennt nur `task.create`), das steht dabei. „Ausblenden“ einer erledigten Aufgabe gilt nur am Handy. Anrufe annehmen geht nur, wenn das Handy es kann; die Einstellungen zeigen den Stand.
+- **Tests**: `cd mobile && npm test` (Vitest; `src/logic.test.ts`, `src/store.test.ts`). Die Jest-Erwähnung in Abschnitt 5 ist damit überholt.
+
+Neue Abhängigkeiten (alle über `npx expo install`):
+
+| Paket | Wofür |
+| --- | --- |
+| `react-native-reanimated`, `react-native-worklets` | Press-Animation, Tab-Pille, Schalter, Skeleton; Worklets ist die Laufzeit von Reanimated 4 |
+| `react-native-gesture-handler` | Wischen in der Aufgabenliste |
+| `expo-haptics` | Haptik (abschaltbar) |
+| `expo-blur` | Blur hinter der Tab-Leiste (ab Android 12; darunter dieselbe Leiste deckend) |
+| `expo-image` | Screenshots im Chat |
+| `expo-font`, `@expo-google-fonts/inter` | Inter in drei Schnitten (Regular, SemiBold, Bold), rund 1 MB in der APK |
+| `expo-clipboard` | Kopieren per Long-Press |
+| `expo-system-ui` | Damit `userInterfaceStyle: "automatic"` auf Android gilt |
+| `vitest` (nur Entwicklung) | Tests |
+
+Abschnitt 6 nannte eine Blur-Bibliothek als „bewusst weggelassen“; mit 1.2 ist `expo-blur` für die Tab-Leiste dazugekommen.
+
+### 11.2 Berechtigungen und ihre Begründung
+
+Ziel: nur, was eine Funktion wirklich braucht. Jede heikle Berechtigung weniger ist ein Signal weniger für Play Protect und für den Nutzer. Die Liste der App steht in `mobile/app.json` (`android.permissions`), die des eigenen Moduls mit Kommentar in `mobile/modules/nova-bridge/android/src/main/AndroidManifest.xml`, der Rest kommt aus den Manifesten der Bibliotheken.
+
+| Berechtigung | Woher | Wofür | Wann gefragt |
+| --- | --- | --- | --- |
+| `INTERNET` | Expo, Bibliotheken | WebSocket zum PC im Heimnetz, Update-Manifest und APK von GitHub | nie (normal) |
+| `ACCESS_NETWORK_STATE`, `ACCESS_WIFI_STATE`, `CHANGE_WIFI_MULTICAST_STATE` | `react-native-zeroconf` | mDNS-Suche nach dem PC (Multicast-Sperre des WLAN-Chips lösen) | nie (normal) |
+| `CAMERA` | `app.json` | QR-Code beim Koppeln, sonst nie | im Schritt „Verbinden“ |
+| `RECORD_AUDIO` | `app.json` | Diktat über die Spracherkennung des Handys | beim ersten Diktat oder im Schritt „Berechtigungen“ |
+| `USE_BIOMETRIC`, `USE_FINGERPRINT` | `expo-local-authentication` | Freigaben an Fingerabdruck oder Gesicht binden; `USE_FINGERPRINT` nur für Android 7 bis 8.1 | nie (normal) |
+| `POST_NOTIFICATIONS` | `app.json` | „Neue Freigabe“, „Auftrag fertig“ (ohne Inhalt) | im Schritt „Berechtigungen“, nicht mehr beim Start |
+| `VIBRATE` | `expo-haptics` | Haptik | nie (normal) |
+| `RECEIVE_BOOT_COMPLETED`, `WAKE_LOCK`, `FOREGROUND_SERVICE` | WorkManager (`expo-background-task`, `expo-task-manager`) | Hintergrund-Abruf nach einem Neustart wieder einplanen. Einen eigenen Foreground-Service hat die App nicht | nie (normal) |
+| `REQUEST_INSTALL_PACKAGES` | `nova-bridge` | Das geladene und geprüfte Update an Androids Installer übergeben | Android fragt beim ersten Update („Aus dieser Quelle zulassen“) |
+| `ANSWER_PHONE_CALLS` | `nova-bridge` | Anruf von Nova Island aus annehmen oder beenden, wenn die Telefon-App keine eigenen Tasten anbietet | nur auf Tippen in Einstellungen → Anrufe |
+| `BIND_NOTIFICATION_LISTENER_SERVICE` (am Dienst) | `nova-bridge` | Benachrichtigungen und Anrufe an Nova Island. Kein Dialog: Der Nutzer schaltet den Zugriff in Androids Einstellungen selbst ein | vom Nutzer in Android |
+| `<queries>` MAIN/LAUNCHER (keine Berechtigung) | `nova-bridge` | Name und Icon der App, die eine Benachrichtigung schickt. Bewusst nicht `QUERY_ALL_PACKAGES` | nie |
+
+Was ein Build wirklich anfordert, zeigt erst die fertige APK, weil Gradle die Manifeste aller Bibliotheken zusammenführt. Gemessen an der veröffentlichten `releases/NOVA-Companion.apk` (Build 1.0.0, `npm run apk:info`) standen dort 35 Berechtigungen, darunter 21, die keine Funktion der App trägt. Sie sind jetzt herausgenommen (`android.blockedPermissions` in `app.json`):
+
+| Herausgenommen | Kam von | Warum unnötig |
+| --- | --- | --- |
+| `SYSTEM_ALERT_WINDOW` („über anderen Apps einblenden“) | React Native (für Entwickler-Einblendungen) | Die App blendet nichts über andere Apps. Für Play Protect die auffälligste der Liste |
+| `READ_EXTERNAL_STORAGE`, `WRITE_EXTERNAL_STORAGE` | `expo-file-system`, `expo-image` | Die App schreibt nur in ihren eigenen Speicher |
+| `com.google.android.c2dm.permission.RECEIVE` | `expo-notifications` (Firebase) | Kein Push-Dienst, so entschieden (Abschnitt 8) |
+| `com.google.android.finsky.permission.BIND_GET_INSTALL_REFERRER_SERVICE` | `expo-application` | Die App fragt nie, woher sie installiert wurde |
+| `READ_APP_BADGE` und 15 Berechtigungen fremder Launcher (Samsung, Huawei, HTC, Sony, Oppo …) | `expo-notifications` (ShortcutBadger) | Die App setzt keine Zahl aufs App-Symbol |
+| `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION` | vorsorglich | Die App braucht keinen Standort |
+
+Aus `app.json` gestrichen, weil doppelt: die ausgeschriebenen Dubletten von `CAMERA`, `RECORD_AUDIO`, `USE_BIOMETRIC`, `USE_FINGERPRINT` und die Netzwerk-Berechtigungen, die `react-native-zeroconf` selbst mitbringt.
+
+`android:usesCleartextTraffic="true"` bleibt (`mobile/plugins/android.js`): `ws://` im Heimnetz ist nötig, und Androids Netzwerk-Konfiguration kann private Adressbereiche nicht als Ausnahme ausdrücken. Der Inhalt ist Ende-zu-Ende verschlüsselt.
+
+Geprüft mit `npx expo config --type introspect` (zeigt das Manifest der App nach allen Plugins, mit 23 `tools:node="remove"`-Einträgen). **Nicht geprüft**, weil es dafür einen Build braucht: dass Gradle die Einträge wie erwartet entfernt und dass danach nichts fehlt. Nach dem nächsten EAS-Build `npm run apk:info -- pfad/zur/neuen.apk` ausführen und die Liste mit der Tabelle oben vergleichen.
+
+**Heikel bleiben** aus Sicht von Play Protect drei Dinge, und alle drei tragen eine Funktion: der Benachrichtigungszugriff, `REQUEST_INSTALL_PACKAGES` und `ANSWER_PHONE_CALLS`. Wer die Warnungen weiter senken will, kann `ANSWER_PHONE_CALLS` streichen (dann geht Annehmen nur noch über die Tasten der Telefon-App, Android 12+) und den Selbst-Updater durch den Play-Testkanal ersetzen (11.5 c).
+
+### 11.3 Signatur: ein Schlüssel für alle Builds
+
+In-App-Updates setzen voraus, dass jede APK mit demselben Schlüssel signiert ist. Sonst lehnt Android ab („App nicht installiert, da das Paket in Konflikt mit einem vorhandenen Paket steht“), und es bleibt nur Deinstallieren und neu Koppeln.
+
+Ergebnis der Prüfung am 2026-11-11, ohne Build und ohne Anmeldung (die EAS-Sitzung `lucasx77` war auf dem PC schon vorhanden):
+
+- `mobile/eas.json` hat ein Profil (`preview`) und keine lokalen Zugangsdaten (`credentials.json` gibt es nicht). EAS nimmt dann den Keystore, den es selbst für das Projekt `nova-companion` / `dev.nova.companion` verwahrt, bei jedem Build denselben. Das ist jetzt ausdrücklich festgeschrieben: `"credentialsSource": "remote"`.
+- `eas build:list` zeigt fünf fertige Android-Builds im Profil `preview`: vier mit 1.0.0 (versionCode 1, 2026-11-08) und einen mit 1.1.0 (versionCode 2, 2026-11-09).
+- Die `releases/NOVA-Companion.apk` in diesem Ordner ist **Build 1.0.0 (versionCode 1)**, nicht 1.1.0: Sie enthält weder das Modul `nova-bridge` noch den Updater, und `releases/companion.json` gibt es hier nicht. Der Build 1.1.0 existiert auf EAS, wurde aber nicht nach `releases/` übernommen (oder dieser Ordner ist älter als das Repository). Wer die App über den QR-Code am PC installiert, bekommt also 1.0.0.
+- Diese APK trägt das Zertifikat mit SHA-256 `B6:57:40:0A:B0:86:04:E0:4B:4D:FB:E2:E8:27:B5:2F:A0:08:87:93:02:67:9A:CD:7D:F8:E9:98:33:B2:B5:38` (Signaturschema v2, Aussteller `C=US`, wie EAS es erzeugt).
+- **Geprüft am 2026-11-11 mit dem Build 1.2.0 (versionCode 3, EAS-Build `4fe0dd3a`):** Die fertige APK trägt genau diesen Fingerabdruck (`npm run apk:info` gegen `releases/NOVA-Companion.apk`: „Gleicher Schlüssel“). EAS meldete beim Bau „Using Keystore from configuration: Build Credentials GkbJ_qgXjU (default)“. Android nimmt 1.2.0 also als Update von 1.0.0 an.
+- **Nicht geprüft:** dass auch der Build 1.1.0 ihn trägt; dessen APK liegt nicht auf dem PC. Da 1.0.0 und 1.2.0 denselben Schlüssel haben und EAS nur auf ausdrückliche Auswahl einen neuen erzeugt, spricht alles dafür.
+- Die APK 1.2.0 fordert 16 Berechtigungen an (1.0.0: 35); die gesperrten Bibliotheks-Berechtigungen sind also wirklich draußen.
+
+So wird es bei jedem Release sicher:
+
+```bash
+cd mobile
+npm run apk:info -- pfad/zur/neuen.apk ../releases/NOVA-Companion.apk
+```
+
+`mobile/scripts/apk-info.mjs` liest Version, Zertifikat und Berechtigungen direkt aus der APK (kein Android-SDK, kein Java nötig) und endet mit Fehler, wenn die neue APK anders signiert ist als die veröffentlichte. Vor `npm run release:companion` ausführen.
+
+Zwei Dinge, die nur du tun kannst:
+
+1. Einmal `npx eas-cli credentials -p android` öffnen und den SHA-256-Fingerabdruck des Keystores mit dem oben vergleichen.
+2. Dort den Keystore herunterladen und sicher ablegen (nicht im Repository). Geht er auf EAS verloren oder wird dort ein neuer erzeugt, kann keine installierte App mehr aktualisiert werden.
+
+### 11.4 Was der Nutzer von Play Protect sieht, und was die App dazu sagt
+
+Bei einer APK von außerhalb des Play Stores kann Play Protect zwei Dinge zeigen: „App-Scan empfohlen“ (Google hat die App noch nie gesehen und bietet an, sie zum Prüfen hochzuladen) oder „Unsichere App blockiert“ (mit „Weitere Details“ → „Trotzdem installieren“). Die App zeigt deshalb vor jedem Update ein Blatt mit drei Bildern (Einstellungen → Updates → „Installieren“). Der QR-Code für die Erstinstallation am PC sollte denselben Hinweis tragen (Plugin-Seite, Desktop).
+
+Dazu kommt seit Android 13 die „Eingeschränkte Einstellung“: Für Apps aus einer Datei ist der Benachrichtigungszugriff ausgegraut, bis der Nutzer in der App-Info über das Drei-Punkte-Menü „Eingeschränkte Einstellungen zulassen“ wählt. Onboarding und Einstellungen erklären den Weg und öffnen die App-Info.
+
+### 11.5 Drei Wege zu weniger Warnungen
+
+**a) Die APK bei Google zur Prüfung einreichen (Play-Protect-Einspruch).** Kostet nichts, braucht kein Entwicklerkonto.
+
+1. Die APK bauen, die veröffentlicht werden soll, und ihre SHA-256 notieren (`releases/companion.json` nennt sie, sonst `certutil -hashfile NOVA-Companion.apk SHA256`).
+2. Googles Formular „Play Protect Appeals“ ausfüllen: <https://support.google.com/googleplay/android-developer/contact/protectappeals>. Verlangt werden Paketname (`dev.nova.companion`), die APK oder ein Link darauf, die Warnung, die erschien (Screenshot), und eine Erklärung, was die App tut und warum sie ihre Berechtigungen braucht. Abschnitt 11.2 ist dafür geschrieben; auf Englisch übersetzen.
+3. Googles Leitfaden für Entwickler vorher lesen: <https://developers.google.com/android/play-protect/warning-dev-guidance>.
+4. Die Antwort kommt per E-Mail, meist nach einigen Tagen. Eine Freigabe gilt für diesen Schlüssel und dieses Verhalten; ein Update mit neuen heiklen Berechtigungen kann erneut auffallen.
+
+Zusätzlich hilft jeder Nutzer, der bei „App-Scan empfohlen“ auf „App scannen“ tippt: Google kennt die App danach.
+
+Beide Adressen stammen aus meinem Wissensstand und sind von hier aus nicht geprüft; vor dem Einreichen einmal im Browser öffnen.
+
+**b) Googles Entwickler-Verifizierung für Apps außerhalb des Play Stores.** Google hat im August 2025 angekündigt, dass Android auf zertifizierten Geräten nur noch Apps installiert, deren Paketname und Signaturschlüssel bei einem verifizierten Entwickler registriert sind, auch beim Sideloading. Angekündigter Fahrplan: Registrierung für alle ab März 2026, Pflicht ab September 2026 zuerst in Brasilien, Indonesien, Singapur und Thailand, weltweit ab 2027. Für Entwickler ohne Play-Konto gibt es dafür eine eigene „Android Developer Console“, daneben eine kostenlose Kontoart für Schüler und Hobby-Entwickler mit begrenzter Verbreitung; im November 2025 kündigte Google außerdem einen Weg an, auf dem erfahrene Nutzer unverifizierte Apps auf eigenes Risiko installieren können.
+
+Was das für NOVA Companion heißt:
+
+- In Deutschland ändert sich nach dem angekündigten Fahrplan bis 2027 nichts. Danach lässt sich die APK auf zertifizierten Geräten nur noch installieren, wenn `dev.nova.companion` mit dem Schlüssel aus 11.3 registriert ist, oder über den Weg für erfahrene Nutzer.
+- Die Registrierung verlangt eine geprüfte Identität (Name, Anschrift, Ausweis) und den Nachweis, dass du den Signaturschlüssel besitzt. Der Keystore aus 11.3 muss dafür in deiner Hand sein: noch ein Grund, ihn jetzt zu sichern.
+- Die Verifizierung ersetzt Play Protect nicht. Eine registrierte App kann weiterhin gewarnt werden; (a) bleibt sinnvoll.
+
+Das ist der Stand der Ankündigungen, wie ich ihn kenne. Fahrplan und Bedingungen haben sich seit der Ankündigung mehrfach bewegt: vor einer Entscheidung auf <https://developer.android.com/developer-verification> nachsehen.
+
+**c) Interner Testkanal im Play Store.** Der sauberste Weg für einen festen Kreis von Nutzern.
+
+- Braucht ein Play-Console-Konto (einmalig 25 US-Dollar, Identitätsprüfung). Im internen Test bis zu 100 Tester über eine E-Mail-Liste; sie installieren über einen Link aus dem Play Store. Der interne Kanal braucht die sonst für neue Konten vorgeschriebene Testphase mit zwölf Testern nicht.
+- Vorteile: keine Play-Protect-Warnung für unbekannte Apps, keine „Eingeschränkte Einstellung“ beim Benachrichtigungszugriff, Updates kommen über den Play Store.
+- Preis: ein zweites Build-Profil mit App-Bundle (`"buildType": "app-bundle"`), und der Selbst-Updater samt `REQUEST_INSTALL_PACKAGES` muss in dieser Variante raus (Play erlaubt diese Berechtigung nur Apps, deren Kernfunktion das Installieren ist, und liefert Updates selbst).
+- **Achtung Signatur:** Play signiert standardmäßig mit einem eigenen Schlüssel. Eine so verteilte App ist für Android eine andere als die per APK installierte: Wer wechselt, muss deinstallieren und neu koppeln. Vermeiden lässt sich das nur, wenn beim Anlegen der App in der Play Console der vorhandene EAS-Keystore als App-Signaturschlüssel hochgeladen wird.
+- Auch im internen Test gelten die Play-Richtlinien. Der Benachrichtigungszugriff und `ANSWER_PHONE_CALLS` müssen im Store-Eintrag und in der Datenschutzerklärung erklärt sein.
+
+Empfehlung: jetzt (a) einreichen und den Keystore sichern; (c) erst, wenn der Nutzerkreis über Bekannte hinauswächst; (b) im Blick behalten.

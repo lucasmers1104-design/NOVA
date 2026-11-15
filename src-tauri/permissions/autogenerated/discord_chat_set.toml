@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-discord-chat-set"
+description = "Enables the discord_chat_set command without any pre-configured scope."
+commands.allow = ["discord_chat_set"]
+
+[[permission]]
+identifier = "deny-discord-chat-set"
+description = "Denies the discord_chat_set command without any pre-configured scope."
+commands.deny = ["discord_chat_set"]

@@ -3,6 +3,7 @@
 
 import type {
   AgentState,
+  CallState,
   Handshake,
   Media,
   Notice,
@@ -19,7 +20,7 @@ import type {
   TaskSummary,
   Tier,
 } from "./messages";
-import { MAX_TASK_CHARS, PROTOCOL_VERSION } from "./messages";
+import { MAX_ICON_CHARS, MAX_PHOTO_CHARS, MAX_TASK_CHARS, PROTOCOL_VERSION } from "./messages";
 
 export type Parsed<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -137,10 +138,51 @@ export function parsePhoneMessage(value: unknown): Parsed<PhoneMessage> {
         if (!Array.isArray(ids) || ids.length > 100) throw new Invalid("ids is not a list");
         return { type, ...base(o), ids: ids.map((each, i) => id({ [i]: each }, String(i))) };
       }
+      case "phone.notification":
+        return {
+          type,
+          ...base(o),
+          notifId: key(o, "notifId"),
+          app: key(o, "app"),
+          appName: str(o, "appName", 100, 1),
+          title: str(o, "title", 200),
+          text: str(o, "text", 1000),
+          icon: picture(o, "icon", MAX_ICON_CHARS),
+          posted: int(o, "posted"),
+        };
+      case "phone.call":
+        return {
+          type,
+          ...base(o),
+          callId: key(o, "callId"),
+          state: oneOf(o, "state", CALL_STATES),
+          name: nullableStr(o, "name", 100),
+          number: nullableStr(o, "number", 40),
+          photo: picture(o, "photo", MAX_PHOTO_CHARS),
+          canAnswer: bool(o, "canAnswer"),
+          canDecline: bool(o, "canDecline"),
+        };
       default:
         throw new Invalid("unknown message type");
     }
   });
+}
+
+const CALL_STATES: readonly CallState[] = ["ringing", "active", "ended"];
+const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
+/** Android's notification keys and package names: printable, no spaces. */
+const PRINTABLE = /^[\x21-\x7e]{1,200}$/;
+
+function key(o: Obj, name: string): string {
+  const value = str(o, name, 200, 1);
+  if (!PRINTABLE.test(value)) throw new Invalid(`${name} is not valid`);
+  return value;
+}
+
+function picture(o: Obj, name: string, max: number): string | null {
+  const value = nullableStr(o, name, max);
+  if (value !== null && !BASE64.test(value)) throw new Invalid(`${name} is not base64`);
+  return value;
 }
 
 function media(value: unknown): Media | null {
@@ -230,6 +272,8 @@ export function parsePcMessage(value: unknown): Parsed<PcMessage> {
         };
       case "device.revoked":
         return { type, ...base(o) };
+      case "call.action":
+        return { type, ...base(o), callId: key(o, "callId"), action: oneOf(o, "action", ["accept", "decline"] as const) };
       default:
         throw new Invalid("unknown message type");
     }

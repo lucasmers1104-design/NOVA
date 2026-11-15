@@ -33,3 +33,10 @@ coverage/
 # Built by scripts/build-helpers.mjs
 src-tauri/binaries/
 tools/*/target/
+
+# Private: the Discord relay is its own private repository (nova-relay), the invite plugin and
+# signed packages for hand installs stay on the owner's PC, work orders stay local.
+server/relay/
+plugins/relay-invite/
+dist-plugins/
+docs/prompts/

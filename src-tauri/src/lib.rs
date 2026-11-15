@@ -1,5 +1,6 @@
 mod agent;
 mod ai;
+mod app_icons;
 mod apps;
 mod assistant;
 mod capture;
@@ -7,10 +8,13 @@ mod companion;
 mod credentials;
 mod desktop;
 mod developer;
+mod discord;
+mod relay;
 mod documents;
 mod files;
 mod finder;
 mod http;
+mod island;
 mod live;
 mod media;
 mod plugins;
@@ -21,6 +25,8 @@ mod storage;
 mod system;
 mod backdrop;
 mod online_voice;
+mod performance;
+mod reminders;
 mod scan;
 mod telemetry;
 mod tts;
@@ -41,6 +47,11 @@ pub fn speech_probe(request: &str) -> i32 {
     speech::probe::run(request)
 }
 
+/// `nova.exe --speech-helper <role>`: runs NOVA's speech models for the app (see `speech::helper`).
+pub fn speech_helper() -> i32 {
+    speech::helper::server::run()
+}
+
 pub fn run() {
     tauri::Builder::default()
         // A second launch focuses the running instance instead of opening another window.
@@ -50,7 +61,7 @@ pub fn run() {
                 // Visibility is NOVA's decision (tray / background start), not a restored state.
                 .with_state_flags(StateFlags::all() & !StateFlags::VISIBLE)
                 // The assistant windows are placed by NOVA, relative to the screen they're on.
-                .with_denylist(&[assistant::DOT_LABEL, assistant::PANEL_LABEL])
+                .with_denylist(&[assistant::DOT_LABEL, assistant::PANEL_LABEL, island::ISLAND_LABEL])
                 .build(),
         )
         .plugin(tauri_plugin_dialog::init())
@@ -66,6 +77,7 @@ pub fn run() {
                 .build(),
         )
         .manage(assistant::AssistantState::default())
+        .manage(island::IslandState::default())
         .manage(agent::AgentState::default())
         .manage(companion::CompanionState::default())
         .manage(finder::FinderState::default())
@@ -78,6 +90,7 @@ pub fn run() {
         .manage(apps::AppCatalog::default())
         .manage(ai::ChatRequests::default())
         .manage(desktop::DesktopState::default())
+        .manage(performance::PerformanceState::default())
         .manage(updates::PendingUpdate::default())
         .manage(telemetry::TelemetryState::default())
         .manage(plugins::PluginState::default())
@@ -98,10 +111,12 @@ pub fn run() {
             };
             let close_to_tray = desktop::load_preferences(&database);
             let assistant_prefs = assistant::load_prefs(&database);
+            let island_prefs = island::load_prefs(&database);
             agent::init(app.handle(), agent::load_prefs(&database));
             let finder_prefs = finder::load_prefs(&database);
             let wake_prefs = wake::load_prefs(&database);
             let speech_prefs = speech::load_prefs(&database);
+            let performance_prefs = performance::load_prefs(&database);
             app.state::<desktop::DesktopState>().close_to_tray.store(close_to_tray, Ordering::Relaxed);
             app.manage(database);
             // Saved decisions first: creating the tray and the assistant's windows lets the
@@ -113,14 +128,19 @@ pub fn run() {
 
             // Launched by "Start with Windows": stay in the background if the user chose
             // close-to-tray or the background assistant.
-            let background_start = std::env::args().any(|arg| arg == desktop::BACKGROUND_FLAG);
-            if background_start && (close_to_tray || assistant_prefs.background || assistant_prefs.enabled) {
+            let background_start = std::env::args().any(|arg| arg == desktop::BACKGROUND_FLAG) && (close_to_tray || assistant_prefs.background || assistant_prefs.enabled || island_prefs.enabled);
+            if background_start {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.hide();
                     desktop::set_page_visible(&window, false);
                 }
             }
+            performance::init(app.handle(), performance_prefs);
+            desktop::init(app.handle(), background_start);
+            // The island's mode decides whether the dot gets a window, so it comes first.
+            island::init(app.handle(), island_prefs);
             assistant::init(app.handle(), assistant_prefs);
+            island::start(app.handle());
             finder::init(app.handle(), finder_prefs);
             speech::init(app.handle(), speech_prefs);
             wake::init(app.handle(), wake_prefs);
@@ -134,19 +154,11 @@ pub fn run() {
         })
         .on_window_event(|window, event| match (window.label(), event) {
             ("main", WindowEvent::CloseRequested { api, .. }) => {
-                let app = window.app_handle();
-                let to_tray = window.state::<desktop::DesktopState>().close_to_tray.load(Ordering::Relaxed);
+                // To the tray (hidden, and unless the user keeps it, ended a moment later), or NOVA quits.
                 api.prevent_close();
-                if to_tray || assistant::runs_in_background(app) {
-                    let _ = window.hide();
-                    if let Some(main) = app.get_webview_window("main") {
-                        desktop::set_page_visible(&main, false);
-                    }
-                } else {
-                    // Quit for real: the assistant windows would otherwise keep NOVA alive.
-                    app.exit(0);
-                }
+                desktop::on_main_close_requested(window);
             }
+            ("main", WindowEvent::Destroyed) => desktop::on_main_destroyed(window.app_handle()),
             // Minimized: stop rendering and polling until it's restored.
             ("main", WindowEvent::Resized(_)) => {
                 if let (Ok(minimized), Some(main)) = (window.is_minimized(), window.app_handle().get_webview_window("main")) {
@@ -162,6 +174,11 @@ pub fn run() {
             (assistant::DOT_LABEL, WindowEvent::CloseRequested { api, .. }) => api.prevent_close(),
             (assistant::DOT_LABEL, WindowEvent::Moved(position)) => assistant::on_dot_moved(window.app_handle(), *position),
             (assistant::PANEL_LABEL, WindowEvent::Moved(position)) => assistant::on_panel_moved(window.app_handle(), *position),
+            (assistant::PANEL_LABEL, WindowEvent::Destroyed) => assistant::on_panel_destroyed(window.app_handle()),
+            // The island goes away through its settings, and Windows doesn't get to move it.
+            (island::ISLAND_LABEL, WindowEvent::CloseRequested { api, .. }) => api.prevent_close(),
+            (island::ISLAND_LABEL, WindowEvent::Moved(position)) => island::on_moved(window.app_handle(), *position),
+            (island::ISLAND_LABEL, WindowEvent::ScaleFactorChanged { .. }) => island::on_rescaled(window.app_handle()),
             _ => {}
         })
         .invoke_handler(tauri::generate_handler![
@@ -196,6 +213,7 @@ pub fn run() {
             apps::app_shortcut_remove,
             media::media_state,
             media::media_artwork,
+            media::media_app_icon,
             media::media_control,
             media::media_volume,
             media::media_volume_set,
@@ -234,6 +252,11 @@ pub fn run() {
             files::files_open,
             files::files_reveal,
             desktop::desktop_set_close_to_tray,
+            desktop::desktop_main_ready,
+            performance::performance_status,
+            performance::performance_configure,
+            performance::performance_memory,
+            assistant::assistant_panel_retire,
             desktop::autostart_get,
             desktop::autostart_set,
             updates::update_check,
@@ -309,6 +332,17 @@ pub fn run() {
             replay::replay_install,
             replay::replay_open_folder,
             replay::replay_discord_set,
+            discord::discord_bot_status,
+            discord::discord_chat_set,
+            discord::discord_bot_set,
+            discord::discord_bot_check,
+            relay::relay_status,
+            relay::relay_set,
+            relay::relay_check,
+            relay::relay_channels,
+            relay::relay_link,
+            relay::relay_unlink,
+            relay::relay_aliases_set,
             telemetry::telemetry_status,
             telemetry::telemetry_decide,
             telemetry::telemetry_track,
@@ -325,9 +359,26 @@ pub fn run() {
             plugins::plugins_set_permission,
             plugins::plugin_call,
             plugins::plugin_report_crash,
+            island::island_ready,
+            island::island_resize,
+            island::island_meter,
+            island::island_call_action,
+            island::island_listen,
+            island::island_status,
+            island::island_configure,
+            island::island_preview,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running NOVA");
+        .build(tauri::generate_context!())
+        .expect("error while running NOVA")
+        .run(|app, event| {
+            // With the main window closed for real, no window may be left (no dot, no
+            // island): NOVA still stays in the tray if that is what closing means.
+            if let tauri::RunEvent::ExitRequested { code: None, api, .. } = event {
+                if desktop::stays_in_background(app) {
+                    api.prevent_exit();
+                }
+            }
+        });
 }
 
 #[cfg(test)]
@@ -346,6 +397,7 @@ mod tests {
         let build = include_str!("../build.rs");
         let main = include_str!("../capabilities/default.json");
         let assistant = include_str!("../capabilities/assistant.json");
+        let island = include_str!("../capabilities/island.json");
         // Split here so this test doesn't find its own markers first.
         let handlers = names_between(lib, concat!("generate_handler", "!["), "])");
         let declared = names_between(build, "commands(&[", "])");
@@ -353,7 +405,7 @@ mod tests {
         for command in &handlers {
             assert!(declared.contains(command), "{command} is missing from build.rs");
             let permission = format!("\"allow-{}\"", command.replace('_', "-"));
-            assert!(main.contains(&permission) || assistant.contains(&permission), "{command} is allowed in no capability file");
+            assert!(main.contains(&permission) || assistant.contains(&permission) || island.contains(&permission), "{command} is allowed in no capability file");
         }
         for command in &declared {
             assert!(handlers.contains(command), "build.rs declares {command}, which doesn't exist");

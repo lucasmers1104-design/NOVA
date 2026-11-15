@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-discord-bot-check"
+description = "Enables the discord_bot_check command without any pre-configured scope."
+commands.allow = ["discord_bot_check"]
+
+[[permission]]
+identifier = "deny-discord-bot-check"
+description = "Denies the discord_bot_check command without any pre-configured scope."
+commands.deny = ["discord_bot_check"]

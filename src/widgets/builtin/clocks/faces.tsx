@@ -1,12 +1,15 @@
+import type { CSSProperties } from "react";
 import { cn } from "@/lib/cn";
 import { type ClockParts, handAngles, type WallClock } from "./time";
 import { wordClockLanguage, wordClockText } from "./words";
 
 /** Thin and large, nothing but the time. Sized by the caller through `className`. */
-export function MinimalFace({ clock, showSeconds, className }: { clock: ClockParts; showSeconds: boolean; className?: string }) {
+export function MinimalFace({ clock, showSeconds, className, font }: { clock: ClockParts; showSeconds: boolean; className?: string; font?: CSSProperties }) {
   return (
     <p className="flex items-baseline whitespace-nowrap tabular-nums" aria-label={`Current time ${clock.time}`}>
-      <span className={cn("leading-none font-extralight tracking-tight text-fg", className)}>{clock.time}</span>
+      <span className={cn("leading-none font-extralight tracking-tight text-fg", className)} style={font}>
+        {clock.time}
+      </span>
       {showSeconds && <span className="ml-1.5 text-xl font-extralight text-fg-subtle">{clock.seconds}</span>}
       {clock.period && <span className="ml-1.5 text-sm font-light text-fg-subtle">{clock.period}</span>}
     </p>
@@ -96,6 +99,32 @@ export function FlipFace({ clock, showSeconds, size }: { clock: ClockParts; show
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Liquid glass numerals, as on a phone's lock screen: clear glyphs with a bright upper edge and a
+ * breath of the accent color low down (`.clock-glass` in index.css).
+ */
+export function GlassFace({ clock, showSeconds, className, font }: { clock: ClockParts; showSeconds: boolean; className?: string; font?: CSSProperties }) {
+  return (
+    <p className="flex items-baseline whitespace-nowrap tabular-nums" aria-label={`Current time ${clock.time}`}>
+      <span className={cn("clock-glass leading-none font-semibold tracking-tight", className)} style={font}>
+        {clock.time}
+      </span>
+      {showSeconds && <span className="ml-1.5 text-xl font-light text-fg-subtle">{clock.seconds}</span>}
+      {clock.period && <span className="ml-1.5 text-sm font-medium text-fg-subtle">{clock.period}</span>}
+    </p>
+  );
+}
+
+/** Hours over minutes, tall and tight; minutes in the accent color. */
+export function StackedFace({ clock, className, font }: { clock: ClockParts; className?: string; font?: CSSProperties }) {
+  return (
+    <p className={cn("flex flex-col items-end leading-[0.84] font-bold tracking-tighter tabular-nums", className)} style={font} aria-label={`Current time ${clock.time}`}>
+      <span className="text-fg">{clock.hour}</span>
+      <span className="text-accent-text">{clock.minute}</span>
+    </p>
   );
 }
 

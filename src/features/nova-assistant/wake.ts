@@ -58,31 +58,31 @@ export const testWake = (on: boolean) => callNative<WakeStatus>("wake_test", { o
 export const setSpeaking = (speaking: boolean) => void callNative<void>("wake_set_speaking", { speaking }).catch(() => {});
 
 export const NOT_A_CLAP: Record<NotAClap, string> = {
-  noSuddenStart: "didn't start suddenly",
-  tooLong: "kept going, like a voice or music",
-  tooShort: "a click, too short for a clap",
-  tooDull: "too dull, like a knock",
-  tooMuffled: "too muffled",
-  tonal: "rang like a tone or a glass",
+  noSuddenStart: "kein plötzlicher Anfang",
+  tooLong: "hielt an, wie eine Stimme oder Musik",
+  tooShort: "ein Klick, zu kurz für ein Klatschen",
+  tooDull: "zu dumpf, wie ein Klopfen",
+  tooMuffled: "zu gedämpft",
+  tonal: "klang wie ein Ton oder ein Glas",
 };
 
 export const PAUSE_LABELS: Record<WakePause, string> = {
-  muted: "Paused from the dot's menu — the microphone is off",
-  dictation: "Paused while you dictate",
-  speaking: "Paused while NOVA speaks",
-  locked: "Paused while the PC is locked",
-  fullscreen: "Paused while a presentation or fullscreen app runs",
+  muted: "Pausiert über das Menü des Punkts: Das Mikrofon ist aus",
+  dictation: "Pausiert, solange du diktierst",
+  speaking: "Pausiert, solange NOVA spricht",
+  locked: "Pausiert, solange der PC gesperrt ist",
+  fullscreen: "Pausiert, solange eine Präsentation oder Vollbild-App läuft",
 };
 
-/** One line describing a listener's state. */
+/** One line describing a listener's state, for Settings. */
 export function listenerLabel(listener: WakeListener): string {
   switch (listener.state) {
     case "off":
-      return "Off";
+      return "Aus";
     case "starting":
-      return "Starting…";
+      return "Startet …";
     case "listening":
-      return "Listening";
+      return "Hört zu";
     case "paused":
       return PAUSE_LABELS[listener.reason];
     case "unavailable":
@@ -90,26 +90,29 @@ export function listenerLabel(listener: WakeListener): string {
   }
 }
 
-/** Describes a heard event for the test log, or null for events it doesn't list. */
+/** How sure Windows was about what it heard. */
+const CONFIDENCE = { high: "sicher", medium: "mittel", low: "unsicher", rejected: "abgelehnt" } as const;
+
+/** Describes a heard event for the test log in Settings, or null for events it doesn't list. */
 export function describeHeard(heard: Heard): { text: string; tone: "good" | "muted" | "warn" } | null {
   switch (heard.kind) {
     case "level":
       return null;
     case "phrase":
       return heard.accepted
-        ? { text: `Heard “Hey NOVA” (${heard.confidence} confidence) — NOVA would open`, tone: "good" }
-        : { text: `Heard “${heard.text}” (${heard.confidence}) — ignored`, tone: "muted" };
+        ? { text: `„Hey NOVA“ gehört (${CONFIDENCE[heard.confidence]}): NOVA würde sich öffnen`, tone: "good" }
+        : { text: `„${heard.text}“ gehört (${CONFIDENCE[heard.confidence]}): ignoriert`, tone: "muted" };
     case "clap":
-      return { text: `Clap (${Math.round(heard.levelDb)} dB)`, tone: "muted" };
+      return { text: `Klatschen (${Math.round(heard.levelDb)} dB)`, tone: "muted" };
     case "notAClap":
-      return { text: `Sharp sound, not a clap: ${NOT_A_CLAP[heard.reason]}`, tone: "muted" };
+      return { text: `Scharfes Geräusch, kein Klatschen: ${NOT_A_CLAP[heard.reason]}`, tone: "muted" };
     case "notADouble":
-      return { text: heard.reason === "uneven" ? "Two claps, but one was much louder — ignored" : "Claps with other sound around them — ignored", tone: "warn" };
+      return { text: heard.reason === "uneven" ? "Zweimal geklatscht, aber einmal viel lauter: ignoriert" : "Klatschen mit anderen Geräuschen drumherum: ignoriert", tone: "warn" };
     case "double":
-      if (heard.veto === "typing") return { text: "Double clap while typing or clicking — ignored", tone: "warn" };
-      if (heard.veto === "speakers") return { text: "Double clap from the speakers — ignored", tone: "warn" };
-      if (heard.veto === "paused") return { text: "Double clap while paused — ignored", tone: "warn" };
-      return { text: "Double clap — NOVA would open", tone: "good" };
+      if (heard.veto === "typing") return { text: "Doppelklatschen beim Tippen oder Klicken: ignoriert", tone: "warn" };
+      if (heard.veto === "speakers") return { text: "Doppelklatschen aus den Lautsprechern: ignoriert", tone: "warn" };
+      if (heard.veto === "paused") return { text: "Doppelklatschen während einer Pause: ignoriert", tone: "warn" };
+      return { text: "Doppelklatschen: NOVA würde sich öffnen", tone: "good" };
   }
 }
 

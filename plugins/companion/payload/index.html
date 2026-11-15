@@ -7,90 +7,191 @@
   </head>
   <body>
     <main>
-      <header>
-        <img src="icon.svg" alt="" width="44" height="44" />
-        <div>
-          <h1>NOVA Companion</h1>
-          <p class="muted">Ask NOVA AI from your phone, start apps and approve changes with your fingerprint. Messages stay encrypted between your phone and this PC; the AI and its keys stay here.</p>
+      <header class="hero">
+        <div class="hero-mark" aria-hidden="true">
+          <img src="icon.svg" alt="" width="40" height="40" />
         </div>
+        <div class="hero-text">
+          <p class="eyebrow">NOVA Companion</p>
+          <h1>Your phone, connected to NOVA</h1>
+          <p class="muted">Ask NOVA AI from your phone, start apps, approve changes with your fingerprint, and see your phone's notifications and calls on Nova Island. Everything stays end-to-end encrypted between your phone and this PC.</p>
+          <div class="chips" id="hero-chips"></div>
+        </div>
+        <label class="switch switch--large" title="Phone connection">
+          <input type="checkbox" id="enabled" aria-label="Phone connection" />
+          <span></span>
+        </label>
       </header>
 
-      <section class="card" aria-labelledby="app-title">
-        <h2 id="app-title"><span class="step">1</span> Get the app</h2>
-        <div class="split">
-          <img id="app-qr" class="qr" alt="QR code to download NOVA Companion for Android" hidden />
-          <div>
-            <p>Scan the code with your Android phone's camera and open the download to install NOVA Companion. Android asks once whether your browser may install apps.</p>
-            <p class="muted small" id="app-url"></p>
-          </div>
-        </div>
-      </section>
+      <p class="banner banner--warning" id="error" role="alert" hidden></p>
 
-      <section class="card" aria-labelledby="link-title">
-        <div class="row">
-          <div>
-            <h2 id="link-title"><span class="step">2</span> Phone connection</h2>
-            <p class="muted" id="link-text">Loading…</p>
+      <div class="grid">
+        <section class="card card--accent" aria-labelledby="pair-title">
+          <div class="card-head">
+            <span class="tile tile--violet" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2v2h-2zM18 18h2v2h-2zM14 18h2v2h-2zM18 14h2v2h-2z" /></svg>
+            </span>
+            <div>
+              <h2 id="pair-title">Pair a phone</h2>
+              <p class="muted small" id="link-text">Loading…</p>
+            </div>
           </div>
-          <label class="switch"><input type="checkbox" id="enabled" aria-label="Phone connection" /><span></span></label>
-        </div>
-        <p class="warning" id="error" hidden></p>
-      </section>
+          <div class="pairing" id="pairing" hidden>
+            <div class="qr-frame">
+              <img id="pair-qr" class="qr" alt="Pairing code for NOVA Companion" />
+              <svg class="ring" viewBox="0 0 100 100" aria-hidden="true"><rect x="1.5" y="1.5" width="97" height="97" rx="13" pathLength="100" id="ring" /></svg>
+            </div>
+            <div class="pairing-text">
+              <p id="countdown"></p>
+              <p class="muted small">Open NOVA Companion on your phone and scan it. NOVA asks you in its own window before the phone is paired. Only scan it with your own phone.</p>
+              <button type="button" class="ghost" id="pair-cancel">Cancel</button>
+            </div>
+          </div>
+          <div class="pair-idle" id="pair-idle">
+            <p class="muted">The code works once, for two minutes.</p>
+            <button type="button" id="pair">Show code</button>
+          </div>
+        </section>
 
-      <section class="card" aria-labelledby="pair-title">
-        <div class="row">
-          <div>
-            <h2 id="pair-title"><span class="step">3</span> Pair a phone</h2>
-            <p class="muted">Open NOVA Companion on your phone and scan this code. It works once, for two minutes, and NOVA asks you in its own window before the phone is paired.</p>
+        <section class="card" aria-labelledby="app-title">
+          <div class="card-head">
+            <span class="tile tile--cyan" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M8 2h8a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" /><path d="M11 18h2" /></svg>
+            </span>
+            <div>
+              <h2 id="app-title">Get the app</h2>
+              <p class="muted small" id="app-version">Android</p>
+            </div>
           </div>
-          <button type="button" id="pair">Show code</button>
+          <div class="split">
+            <img id="app-qr" class="qr qr--small" alt="QR code to download NOVA Companion for Android" hidden />
+            <div class="stack">
+              <p>Scan it with your phone's camera and open the download. Android asks once whether your browser may install apps.</p>
+              <p class="muted small">From version 1.1 the app updates itself from the same place as NOVA. </p>
+              <p class="subtle small break" id="app-url"></p>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <section class="card" aria-labelledby="net-title">
+        <div class="card-head card-head--row">
+          <span class="tile" id="net-tile" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M5 12.5a10 10 0 0 1 14 0" /><path d="M8.5 16a5 5 0 0 1 7 0" /><path d="M2 9a15 15 0 0 1 20 0" /><path d="M12 19.5h.01" /></svg>
+          </span>
+          <div class="grow">
+            <h2 id="net-title">Network</h2>
+            <p class="small" id="net-verdict">Not checked yet.</p>
+            <p class="small verdict-ok" id="net-result" role="status" hidden></p>
+          </div>
+          <button type="button" class="ghost" id="net-check">Check network</button>
         </div>
-        <div class="split" id="pairing" hidden>
-          <img id="pair-qr" class="qr" alt="Pairing code for NOVA Companion" />
-          <div>
-            <p id="countdown"></p>
-            <button type="button" class="ghost" id="pair-cancel">Cancel</button>
+        <div class="net-actions" id="net-actions" hidden>
+          <button type="button" id="net-allow">Allow NOVA in the firewall</button>
+          <button type="button" class="ghost" id="net-settings">Network settings</button>
+          <p class="muted small">Windows asks for administrator rights. The rule lets in only NOVA, only on its port, and only from your local network.</p>
+        </div>
+        <div class="ways">
+          <div class="way">
+            <span class="way-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12.5a10 10 0 0 1 14 0" /><path d="M8.5 16a5 5 0 0 1 7 0" /><path d="M12 19.5h.01" /></svg></span>
+            <div>
+              <h3>Same WLAN</h3>
+              <p class="muted small">PC and phone in the same home network.</p>
+            </div>
           </div>
+          <div class="way">
+            <span class="way-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 9h3v6H4z" /><path d="M7 12h4a3 3 0 0 1 3 3v2a3 3 0 0 0 3 3h3" /><path d="M16 6h5v4a2.5 2.5 0 0 1-5 0z" /></svg></span>
+            <div>
+              <h3>PC on a LAN cable</h3>
+              <p class="muted small">Works when the cable goes to the router your phone's WLAN comes from. If the network is “Public”, allow NOVA above.</p>
+            </div>
+          </div>
+          <div class="way">
+            <span class="way-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v15" /><path d="m9 6 3-3 3 3" /><path d="M7 11v2l5 3 5-3V9" /><circle cx="12" cy="19" r="2" /></svg></span>
+            <div>
+              <h3>USB cable, no WLAN</h3>
+              <p class="muted small">Plug the phone in, turn on “USB tethering” on the phone, then show a new code here.</p>
+            </div>
+          </div>
+        </div>
+        <div class="addresses" id="addresses" hidden>
+          <p class="eyebrow">This PC is reachable at</p>
+          <ul class="chips" id="address-list"></ul>
         </div>
       </section>
 
       <section class="card" aria-labelledby="devices-title">
-        <h2 id="devices-title">Paired phones</h2>
-        <ul id="devices" class="list"></ul>
-        <p class="muted" id="no-devices">No phone is paired yet.</p>
+        <div class="card-head card-head--row">
+          <span class="tile tile--green" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M8 2h8a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" /><path d="m9 12 2 2 4-4" /></svg>
+          </span>
+          <div class="grow">
+            <h2 id="devices-title">Paired phones</h2>
+            <p class="muted small" id="devices-summary"></p>
+          </div>
+        </div>
+        <ul id="devices" class="devices"></ul>
+        <p class="empty" id="no-devices">No phone is paired yet. Show a code above and scan it with NOVA Companion.</p>
       </section>
 
+      <div class="grid">
+        <section class="card" aria-labelledby="island-title">
+          <div class="card-head">
+            <span class="tile tile--violet" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M7 4h10a4 4 0 0 1 0 8H7a4 4 0 0 1 0-8z" /><path d="M4 17h16" /><path d="M7 20h10" /></svg>
+            </span>
+            <div>
+              <h2 id="island-title">Notifications and calls on Nova Island</h2>
+            </div>
+          </div>
+          <p class="muted">In the app, open Settings and turn on “Benachrichtigungen an den PC” and “Anrufe an den PC”. WhatsApp and every other app then show at the top of your screen. Answer and decline appear only when your phone can really do them. Choose what the island shows in NOVA under Settings → Nova Island.</p>
+        </section>
+
+        <section class="card" aria-labelledby="shots-title">
+          <div class="card-head card-head--row">
+            <span class="tile tile--slate" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z" /><path d="m4 16 5-5 4 4 3-3 4 4" /></svg>
+            </span>
+            <div class="grow">
+              <h2 id="shots-title">Keep phone screenshots</h2>
+              <p class="muted small">Off: they go to the phone and aren't stored here. On: also kept on this PC for 7 days.</p>
+            </div>
+            <label class="switch"><input type="checkbox" id="keep" aria-label="Keep phone screenshots" /><span></span></label>
+          </div>
+        </section>
+      </div>
+
       <section class="card" aria-labelledby="allow-title">
-        <h2 id="allow-title">Start without fingerprint</h2>
-        <p class="muted">Apps and games a phone may start right away. Everything else that changes something on this PC needs your fingerprint on the phone; settings, keys, saved routines, accounts and purchases never work from the phone.</p>
+        <div class="card-head">
+          <span class="tile tile--amber" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z" /></svg>
+          </span>
+          <div>
+            <h2 id="allow-title">Start without fingerprint</h2>
+            <p class="muted small">Apps and games a phone may start right away. Everything else that changes this PC needs your fingerprint on the phone; settings, keys, saved routines, accounts and purchases never work from the phone.</p>
+          </div>
+        </div>
         <form id="allow-form" class="inline">
-          <input id="allow-input" list="candidates" placeholder="App or game" aria-label="App or game" autocomplete="off" />
+          <input id="allow-input" list="candidates" placeholder="Add an app or game" aria-label="App or game" autocomplete="off" />
           <datalist id="candidates"></datalist>
           <button type="submit">Add</button>
         </form>
-        <ul id="allowlist" class="chips" aria-label="Apps phones may start"></ul>
-      </section>
-
-      <section class="card" aria-labelledby="shots-title">
-        <div class="row">
-          <div>
-            <h2 id="shots-title">Keep phone screenshots</h2>
-            <p class="muted">Off: screenshots go to the phone and are not stored on this PC. On: NOVA also keeps them here for 7 days.</p>
-          </div>
-          <label class="switch"><input type="checkbox" id="keep" aria-label="Keep phone screenshots" /><span></span></label>
-        </div>
+        <ul id="allowlist" class="chips chips--removable" aria-label="Apps phones may start"></ul>
       </section>
 
       <section class="card" aria-labelledby="log-title">
-        <div class="row">
-          <div>
+        <div class="card-head card-head--row">
+          <span class="tile tile--slate" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M9 6h11" /><path d="M9 12h11" /><path d="M9 18h11" /><path d="M4 6h.01" /><path d="M4 12h.01" /><path d="M4 18h.01" /></svg>
+          </span>
+          <div class="grow">
             <h2 id="log-title">Tasks from phones</h2>
-            <p class="muted">Stays on this PC. Each step NOVA took is also in NOVA AI's action history, marked “Phone”.</p>
+            <p class="muted small">Stays on this PC. Each step NOVA took is also in NOVA AI's action history, marked “Phone”.</p>
           </div>
           <button type="button" class="ghost" id="log-toggle">Show</button>
         </div>
         <div id="log" hidden>
-          <ul id="log-list" class="list"></ul>
+          <ul id="log-list" class="log"></ul>
           <button type="button" class="ghost" id="log-clear">Clear finished tasks</button>
         </div>
       </section>

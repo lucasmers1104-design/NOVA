@@ -21,12 +21,13 @@
         "minHeight": 680,
         "center": true,
         "decorations": false,
-        "shadow": true,
-        "backgroundColor": "#090B12"
+        "transparent": true,
+        "shadow": false,
+        "backgroundColor": "#00000000"
       }
     ],
     "security": {
-      "csp": "default-src 'self' ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost data: blob: https://i.ytimg.com; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; frame-src http://novaplugin.localhost"
+      "csp": "default-src 'self' ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost data: blob: https://i.ytimg.com https://cdn.discordapp.com; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; frame-src http://novaplugin.localhost"
     }
   },
   "bundle": {

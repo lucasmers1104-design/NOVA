@@ -13,5 +13,6 @@
   { "type": "notices", "id": "p-12", "ts": 1762600000000, "items": [{ "id": "n1", "kind": "watch", "text": "Fortnite ist fertig.", "taskId": null, "ts": 1762600000000 }, { "id": "n2", "kind": "taskDone", "text": "Auftrag fertig", "taskId": "t-1", "ts": 1762600000000 }] },
   { "type": "tasks", "id": "p-13", "ts": 1762600000000, "items": [{ "taskId": "t-3", "text": "Starte Spotify", "state": "scheduled", "runAt": "2026-11-08 18:30", "createdAt": 1762600000000 }] },
   { "type": "error", "id": "p-14", "ts": 1762600000000, "code": "busy", "message": "NOVA is busy", "replyTo": "t-1" },
-  { "type": "device.revoked", "id": "p-15", "ts": 1762600000000 }
+  { "type": "device.revoked", "id": "p-15", "ts": 1762600000000 },
+  { "type": "call.action", "id": "p-16", "ts": 1762600000000, "callId": "0|com.google.android.dialer|1|null|10045", "action": "decline" }
 ]

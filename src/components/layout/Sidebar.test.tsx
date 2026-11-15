@@ -13,11 +13,13 @@ describe("Sidebar", () => {
     useUi.setState({ route: "home", paletteOpen: false });
   });
 
-  it("renders every navigation section", () => {
+  it("renders every navigation section, Media and Files only once shown again", () => {
     renderWithQuery(<Sidebar />);
-    for (const item of NAV_ITEMS) {
+    for (const item of NAV_ITEMS.filter((i) => i.id !== "media" && i.id !== "files")) {
       expect(screen.getByRole("button", { name: item.label })).toBeInTheDocument();
     }
+    expect(screen.queryByRole("button", { name: "Media" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Files" })).not.toBeInTheDocument();
   });
 
   it("marks the active route and navigates on click", async () => {
@@ -49,7 +51,7 @@ describe("Sidebar", () => {
     expect(aside).toHaveAttribute("data-collapsed", "true");
     expect(useSettings.getState().sidebarCollapsed).toBe(true);
     // Collapsed items stay accessible by name and gain tooltips.
-    expect(screen.getByRole("button", { name: "Media" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Discord" })).toBeInTheDocument();
     expect(screen.getAllByRole("tooltip").length).toBeGreaterThan(0);
 
     await userEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));

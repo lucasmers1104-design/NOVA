@@ -2,7 +2,7 @@
 export type DotCorner = "bottomRight" | "bottomLeft" | "topRight" | "topLeft";
 /** Where the dot lives until it is dragged: in the taskbar or a desktop corner. */
 export type DotPlacement = "taskbar" | "corner";
-export type DotStyle = "glass" | "orb" | "solid" | "ring";
+export type DotStyle = "glass" | "orb" | "solid" | "ring" | "liquid" | "pearl" | "halo" | "mono" | "aura";
 
 /** Mirrors `DotLook` in src-tauri/src/assistant.rs. */
 export interface DotLook {
@@ -47,6 +47,8 @@ export interface AssistantStatus {
   shortcutError: string | null;
   defaultShortcut: string;
   panelOpen: boolean;
+  /** Nova Island carries the dot ("Island only"), so the dot has no window of its own. */
+  inIsland?: boolean;
 }
 
 export type AssistantPrefsUpdate = Pick<AssistantStatus, "enabled" | "placement" | "corner" | "look" | "shortcut" | "background" | "hideInFullscreen">;
@@ -73,6 +75,8 @@ export interface PanelView {
   open: boolean;
   origin: DotCorner;
   wake: WakeCall | null;
+  /** The conversation of the panel before this one, which was ended for being idle. */
+  snapshot: string | null;
 }
 
 /** Everything NOVA AI can be doing; drives the dot, the header and the screen reader. */
@@ -252,6 +256,8 @@ export const ASSISTANT_EVENTS = {
   notice: "assistant://notice",
   /** → panel (already open): "Hey NOVA" or a double clap. */
   wake: "assistant://wake",
+  /** → panel (closed for a while): end yourself if nothing is under way, to give your memory back. */
+  retire: "assistant://retire",
   /** → everyone: wake listening status changed. */
   wakeStatus: "wake://status",
   /** → main: what the wake listener heard (only during a test). */

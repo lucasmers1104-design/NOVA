@@ -10,6 +10,12 @@
   { "type": "approval.answer", "id": "a-1", "ts": 1, "requestId": "r-1", "approved": true, "proof": "short" },
   { "type": "settings.set", "id": "x", "ts": 1, "key": "nova.assistant.agent" },
   { "type": "notices.ack", "id": "n-2", "ts": 1, "ids": "x1" },
+  { "type": "phone.notification", "id": "pn-1", "ts": 1, "notifId": "has space", "app": "com.whatsapp", "appName": "WhatsApp", "title": "", "text": "", "icon": null, "posted": 1 },
+  { "type": "phone.notification", "id": "pn-1", "ts": 1, "notifId": "k", "app": "com.whatsapp", "appName": "", "title": "", "text": "", "icon": null, "posted": 1 },
+  { "type": "phone.notification", "id": "pn-1", "ts": 1, "notifId": "k", "app": "com.whatsapp", "appName": "WhatsApp", "title": "", "text": "", "icon": "<svg onload=x>", "posted": 1 },
+  { "type": "phone.call", "id": "pc-1", "ts": 1, "callId": "c", "state": "dialing", "name": null, "number": null, "photo": null, "canAnswer": false, "canDecline": false },
+  { "type": "phone.call", "id": "pc-1", "ts": 1, "callId": "c", "state": "ringing", "name": null, "number": null, "photo": null, "canAnswer": "yes", "canDecline": false },
+  { "type": "call.action", "id": "ca-1", "ts": 1, "callId": "c", "action": "accept" },
   { "id": "s-1", "ts": 1 },
   "status.get",
   null

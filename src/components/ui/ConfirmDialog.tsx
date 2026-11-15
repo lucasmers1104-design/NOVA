@@ -6,12 +6,14 @@ interface ConfirmDialogProps {
   title: string;
   description: string;
   confirmLabel: string;
+  /** What the way out says; the German pages pass "Abbrechen". */
+  cancelLabel?: string;
   danger?: boolean;
   onConfirm: () => void;
   onClose: () => void;
 }
 
-export function ConfirmDialog({ open, title, description, confirmLabel, danger, onConfirm, onClose }: ConfirmDialogProps) {
+export function ConfirmDialog({ open, title, description, confirmLabel, cancelLabel = "Cancel", danger, onConfirm, onClose }: ConfirmDialogProps) {
   return (
     <Dialog
       open={open}
@@ -21,7 +23,7 @@ export function ConfirmDialog({ open, title, description, confirmLabel, danger, 
       footer={
         <>
           <Button size="sm" variant="ghost" onClick={onClose} data-autofocus>
-            Cancel
+            {cancelLabel}
           </Button>
           <Button
             size="sm"

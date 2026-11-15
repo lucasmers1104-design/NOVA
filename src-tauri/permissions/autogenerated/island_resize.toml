@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-island-resize"
+description = "Enables the island_resize command without any pre-configured scope."
+commands.allow = ["island_resize"]
+
+[[permission]]
+identifier = "deny-island-resize"
+description = "Denies the island_resize command without any pre-configured scope."
+commands.deny = ["island_resize"]

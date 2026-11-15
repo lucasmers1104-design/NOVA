@@ -5,6 +5,7 @@
 
 pub mod crypto;
 mod mdns;
+pub mod network;
 pub mod policy;
 pub mod protocol;
 pub mod queue;
@@ -50,6 +51,8 @@ pub const EVENT_PAIR_REQUEST: &str = "companion://pair-request";
 const DEFAULT_SOURCE: &str = "lucasmers1104-design/NOVA";
 /// The phone app, next to NOVA's own installers in releases/.
 const APK_FILE: &str = "NOVA-Companion.apk";
+/// What the phone app checks for updates (scripts/companion-release.mjs writes it).
+const RELEASE_FILE: &str = "companion.json";
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -234,7 +237,16 @@ fn add_conn<R: Runtime>(app: &AppHandle<R>, device_id: &str) -> (u64, mpsc::Rece
 }
 
 fn remove_conn<R: Runtime>(app: &AppHandle<R>, id: u64) {
-    lock(&state(app).conns).retain(|c| c.id != id);
+    let gone = {
+        let mut conns = lock(&state(app).conns);
+        let device = conns.iter().find(|c| c.id == id).map(|c| c.device_id.clone());
+        conns.retain(|c| c.id != id);
+        // Only once the phone's last connection is closed: a reconnect opens the new one first.
+        device.filter(|device| !conns.iter().any(|c| &c.device_id == device))
+    };
+    if let Some(device_id) = gone {
+        crate::island::phone_gone(app, &device_id);
+    }
     changed(app);
 }
 
@@ -624,15 +636,31 @@ async fn companion_clear_log<R: Runtime>(app: AppHandle<R>) -> CommandResult<()>
     Ok(())
 }
 
-/// Where the phone app is offered: next to the releases of NOVA's update source.
-fn app_download<R: Runtime>(app: &AppHandle<R>) -> CommandResult<serde_json::Value> {
+fn update_source<R: Runtime>(app: &AppHandle<R>) -> String {
     let settings = app.state::<Database>().with(|c| storage::kv_get(c, "nova.settings")).ok().flatten();
-    let source = settings
+    settings
         .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
         .and_then(|value| value["state"]["updateSource"].as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string))
-        .unwrap_or_else(|| DEFAULT_SOURCE.into());
-    let url = crate::updates::manifest_url(&source)?.join(APK_FILE).map_err(|e| e.to_string())?;
+        .unwrap_or_else(|| DEFAULT_SOURCE.into())
+}
+
+/// Where the phone app is offered: next to the releases of NOVA's update source.
+fn app_download<R: Runtime>(app: &AppHandle<R>) -> CommandResult<serde_json::Value> {
+    let url = crate::updates::manifest_url(&update_source(app))?.join(APK_FILE).map_err(|e| e.to_string())?;
     Ok(serde_json::json!({ "url": url.as_str(), "svg": qr_svg(url.as_str())? }))
+}
+
+/// The newest phone app on the update source (releases/companion.json), for the page "Phone".
+/// `null` when it can't be read: the page then just doesn't show a version.
+async fn app_release<R: Runtime>(app: &AppHandle<R>) -> Option<serde_json::Value> {
+    let url = crate::updates::manifest_url(&update_source(app)).ok()?.join(RELEASE_FILE).ok()?;
+    let response = crate::http::client().get(url).timeout(Duration::from_secs(8)).send().await.ok()?.error_for_status().ok()?;
+    let bytes = crate::http::read_limited(response, 16 * 1024).await.ok()?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    let version = value["version"].as_str().filter(|v| v.len() <= 20 && v.bytes().all(|b| b.is_ascii_digit() || b == b'.'))?;
+    let notes = value["notes"].as_str().unwrap_or_default().chars().take(600).collect::<String>();
+    let published = value["published"].as_str().unwrap_or_default().chars().take(40).collect::<String>();
+    Some(serde_json::json!({ "version": version, "notes": notes, "published": published }))
 }
 
 /// Everything the NOVA Companion plugin's page asks for. plugins.rs checked that the
@@ -659,6 +687,21 @@ pub async fn plugin_call<R: Runtime>(app: &AppHandle<R>, method: &str, params: &
         "companion.log" => json(companion_log(app).await?),
         "companion.clearLog" => json(companion_clear_log(app).await?),
         "companion.app" => app_download(&app),
+        "companion.appRelease" => json(app_release(&app).await),
+        "companion.network" => {
+            let port = config(&app).port;
+            json(tauri::async_runtime::spawn_blocking(move || network::check(port)).await.map_err(|e| e.to_string())?)
+        }
+        // Windows asks for administrator rights; nothing changes without the user's yes there.
+        "companion.allowFirewall" => {
+            let port = config(&app).port;
+            let owner = app.get_webview_window("main").and_then(|window| window.hwnd().ok()).map(|hwnd| hwnd.0 as isize);
+            json(tauri::async_runtime::spawn_blocking(move || network::allow(port, owner)).await.map_err(|e| e.to_string())??)
+        }
+        "companion.networkSettings" => {
+            crate::shell::open_system_link("ms-settings:network-status")?;
+            json(())
+        }
         _ => Err("Unknown method".into()),
     }
 }

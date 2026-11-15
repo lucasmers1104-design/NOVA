@@ -1,0 +1,480 @@
+/* Nova Island: the pill, wherever it is drawn. The island's window (island.html, with
+ * island-window.css for the page around it) and Island Studio's stage both use this
+ * file, so everything hangs on `.island-stage` and nothing on the page.
+ *
+ * The looks come in as CSS variables on `.island-stage` (look.ts); the values here are
+ * the defaults of a first paint.
+ * Performance: nothing animates while the island rests. Transitions run on size
+ * changes; the orb moves only while NOVA works and the bars only while music plays. */
+
+/* The window's 10 px of shadow room (island.rs PAD) around the pill. */
+.island-stage {
+  --island-scale: 1;
+  --island-radius: 22px;
+  --island-radius-open: 30px;
+  --island-morph: 520ms;
+  --island-enter: 340ms;
+  --island-leave: 260ms;
+  --island-spring: cubic-bezier(0.32, 1.18, 0.4, 1);
+  --island-ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --accept: #30d158;
+  --decline: #ff453a;
+  box-sizing: border-box;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  width: 100%;
+  height: 100%;
+  padding: 10px;
+  font-size: 13px;
+  line-height: 1.3;
+  font-feature-settings: "cv11", "ss01";
+  user-select: none;
+}
+/* The same box model on the island's bare page and inside NOVA's main window. */
+.island-stage *,
+.island-stage *::before,
+.island-stage *::after {
+  box-sizing: border-box;
+}
+.island-stage[data-anchor="left"] { justify-content: flex-start; }
+.island-stage[data-anchor="right"] { justify-content: flex-end; }
+
+/* ---------------------------------------------------------------------------
+ * The pill and its designs
+ * ------------------------------------------------------------------------- */
+
+.island {
+  --bg: #000;
+  --fg: #f5f5f7;
+  --muted: rgb(255 255 255 / 0.62);
+  --subtle: rgb(255 255 255 / 0.42);
+  --rim: rgb(255 255 255 / 0.07);
+  --well: rgb(255 255 255 / 0.1);
+  --control: rgb(255 255 255 / 0.1);
+  --control-hover: rgb(255 255 255 / 0.18);
+  --shadow: 0 10px 28px -6px rgb(0 0 0 / 0.55), 0 2px 6px rgb(0 0 0 / 0.35);
+  zoom: var(--island-scale, 1);
+  position: relative;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+  color: var(--fg);
+  background: var(--bg);
+  border-radius: var(--island-radius);
+  box-shadow: var(--shadow), inset 0 0 0 1px var(--rim);
+  cursor: default;
+  outline: none;
+  transform-origin: 50% 0;
+  /* Per axis, IslandView sets the curve: the spring while it grows, the plain ease
+   * while it shrinks (no overshoot below the closed size; see morphCurves in look.ts). */
+  transition:
+    width var(--island-morph) var(--island-curve-w, var(--island-spring)),
+    height var(--island-morph) var(--island-curve-h, var(--island-spring)),
+    border-radius var(--island-morph) var(--island-ease),
+    transform 220ms var(--island-ease),
+    box-shadow 220ms ease,
+    background-color 300ms ease;
+}
+.island[data-open="true"],
+.island[data-ringing] {
+  border-radius: var(--island-radius-open);
+}
+/* From the pointer state Rust reports, not :hover: once the pointer leaves, the window
+ * gets no more mouse events, and :hover would stay stuck. IslandView leaves it off on a
+ * pill just closed under the pointer, so the lift never pulses into the collapse. */
+.island[data-hovered]:not([data-open="true"]) {
+  transform: scale(1.025);
+}
+.island:focus-visible {
+  box-shadow: var(--shadow), inset 0 0 0 2px var(--nova-accent-text);
+}
+
+/* A light pane (the white design, or a light background of your own) takes dark ink. */
+.island[data-tone="light"] {
+  --fg: #111216;
+  --muted: rgb(17 18 22 / 0.62);
+  --subtle: rgb(17 18 22 / 0.45);
+  --rim: rgb(0 0 0 / 0.08);
+  --well: rgb(0 0 0 / 0.08);
+  --control: rgb(0 0 0 / 0.06);
+  --control-hover: rgb(0 0 0 / 0.12);
+  color-scheme: light;
+}
+.island[data-theme="white"] {
+  --bg: #fbfbfd;
+  --shadow: 0 10px 28px -8px rgb(0 0 0 / 0.28), 0 2px 6px rgb(0 0 0 / 0.12);
+}
+
+/* Windows can't blur the desktop behind a rounded, transparent window, so glass is
+ * a tinted pane the desktop shows through, lit by the accent from one corner. No
+ * backdrop-filter: it would do nothing in the island's window and blur Island Studio's
+ * stage, which would then promise a look the desktop can't keep. */
+.island[data-theme="glass"] {
+  --bg: rgb(20 20 30 / 0.58);
+  --rim: rgb(255 255 255 / 0.2);
+  --control: rgb(255 255 255 / 0.12);
+  --control-hover: rgb(255 255 255 / 0.22);
+  background-image:
+    radial-gradient(130% 160% at 0% 0%, color-mix(in srgb, var(--nova-accent) 34%, transparent), transparent 55%),
+    radial-gradient(120% 140% at 100% 100%, color-mix(in srgb, var(--nova-accent) 16%, transparent), transparent 60%),
+    linear-gradient(180deg, rgb(255 255 255 / 0.1), rgb(255 255 255 / 0.02));
+  box-shadow: var(--shadow), inset 0 0 0 1px var(--rim), inset 0 1px 0 rgb(255 255 255 / 0.28);
+}
+
+/* Your own material (Island Studio): color, opacity, a matt veil, rim and shadow. */
+.island[data-theme="custom"] {
+  --bg: var(--island-bg, #000);
+  --rim: var(--island-rim, rgb(255 255 255 / 0.12));
+  --shadow: var(--island-shadow, 0 10px 28px -6px rgb(0 0 0 / 0.55));
+  background-image: var(--island-veil, none);
+}
+/* The veil's grain: what makes a see-through pane read as frosted rather than tinted. */
+.island[data-theme="custom"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.55 0'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: var(--island-grain, 0);
+  mix-blend-mode: overlay;
+  pointer-events: none;
+}
+
+/* Island Studio: where a dragged chip would land, and the island as a target for the dot. */
+.island[data-slot-hint]::before {
+  content: "";
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  width: 40%;
+  z-index: 2;
+  border-radius: inherit;
+  border: 1.5px dashed var(--nova-accent-text);
+  background: color-mix(in srgb, var(--nova-accent) 26%, transparent);
+  pointer-events: none;
+}
+.island[data-slot-hint="left"]::before { left: 3px; }
+.island[data-slot-hint="right"]::before { right: 3px; }
+.island[data-drop-hint] {
+  box-shadow: var(--shadow), inset 0 0 0 2px var(--nova-accent-text), 0 0 26px -2px var(--nova-accent);
+}
+
+/* One layer per view, laid out at its final size from the start: the pill grows or
+ * shrinks around it (overflow hidden), so nothing reflows while it morphs. */
+.island-layer {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  box-sizing: border-box;
+  transform: translateX(-50%);
+}
+.island-stage[data-anchor="left"] .island-layer { left: 0; transform: none; }
+.island-stage[data-anchor="right"] .island-layer { left: auto; right: 0; transform: none; }
+.island-layer[data-open="true"] {
+  align-items: stretch;
+  padding: 18px 20px 16px;
+}
+/* What was replaced fades out on top of the morph instead of vanishing. */
+.island-layer[data-leaving] {
+  pointer-events: none;
+  animation: island-out var(--island-leave) var(--island-ease) both;
+}
+@keyframes island-out {
+  to { opacity: 0; filter: blur(4px); }
+}
+
+.island-main {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  animation: island-in var(--island-enter) var(--island-ease) both;
+}
+.island-main > * { flex: 1; min-width: 0; }
+/* Opening: the pill leads, the content follows once there is room for it. */
+.island-layer[data-open="true"] .island-main {
+  align-items: stretch;
+  animation-delay: calc(var(--island-enter) * 0.26);
+}
+.island-idle {
+  display: grid;
+  place-items: center;
+  color: var(--subtle);
+}
+.island-sparkle {
+  width: 15px;
+  height: 15px;
+  color: var(--nova-accent-text);
+  opacity: 0.85;
+}
+.island[data-tone="light"] .island-sparkle { color: var(--nova-accent); }
+
+.island-secondary {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  flex-shrink: 0;
+  animation: island-in var(--island-enter) var(--island-ease) both;
+}
+
+@keyframes island-in {
+  from { opacity: 0; filter: blur(5px); transform: scale(0.94); }
+  to { opacity: 1; filter: blur(0); transform: none; }
+}
+@keyframes island-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes island-drop {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: none; }
+}
+.island [data-drop] { animation: island-drop calc(var(--island-enter) * 1.24) var(--island-spring) both; }
+
+/* The motion style "minimal": content only fades, nothing blurs, scales or drops in. */
+.island-stage[data-motion-style="minimal"] .island-main,
+.island-stage[data-motion-style="minimal"] .island-secondary,
+.island-stage[data-motion-style="minimal"] .island [data-drop] {
+  animation-name: island-fade;
+}
+.island-stage[data-motion-style="minimal"] .island-layer[data-leaving] {
+  animation-name: island-fade;
+  animation-direction: reverse;
+}
+
+/* The closed pill's side slots (Island Studio → slots). */
+.island-slot { display: grid; place-items: center; flex-shrink: 0; }
+.island-slot-text { font-size: 11.5px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; }
+.island-ring { display: block; transform: rotate(-90deg); }
+.island-ring-track { stroke: var(--well); }
+.island-ring-value { stroke: var(--nova-accent-text); transition: stroke-dashoffset 480ms linear; }
+.island[data-tone="light"] .island-ring-value { stroke: var(--nova-accent); }
+.island-ring[data-spinning] { animation: island-ring-spin 0.9s linear infinite; }
+@keyframes island-ring-spin {
+  from { transform: rotate(-90deg); }
+  to { transform: rotate(270deg); }
+}
+
+/* ---------------------------------------------------------------------------
+ * Shared pieces
+ * ------------------------------------------------------------------------- */
+
+.island-row { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.island-row--top { align-items: flex-start; gap: 12px; }
+.island-line { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12.5px; }
+.island-line b { font-weight: 600; }
+.island-stack { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.island-title { font-size: 14.5px; font-weight: 650; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.island-body { font-size: 12.5px; color: var(--fg); opacity: 0.9; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.island-clamp { -webkit-line-clamp: 3; }
+.island-muted { color: var(--muted); }
+.island-subtle { color: var(--subtle); font-size: 11.5px; }
+.island-ellipsis { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.island-open { display: flex; flex-direction: column; gap: 12px; min-width: 0; height: 100%; box-sizing: border-box; }
+
+.island-art { flex-shrink: 0; border-radius: 7px; object-fit: cover; background: var(--well); }
+.island-row--top .island-art { border-radius: 12px; box-shadow: 0 6px 18px -6px rgb(0 0 0 / 0.6); }
+.island-art--empty { display: grid; place-items: center; color: var(--nova-accent-text); }
+.island-art--empty svg { width: 55%; height: 55%; }
+
+.island-app { flex-shrink: 0; border-radius: 7px; object-fit: cover; }
+.island-app--known { display: grid; place-items: center; }
+.island-app--letter { display: grid; place-items: center; font-weight: 700; color: #fff; background: linear-gradient(135deg, var(--nova-accent), #22d3ee); }
+
+.island-controls { display: flex; align-items: center; justify-content: center; gap: 14px; }
+.island-controls--start { justify-content: flex-start; gap: 8px; margin-top: auto; }
+.island-control-spacer { width: 34px; }
+.island-control {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 50%;
+  color: var(--fg);
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 160ms ease, transform 160ms var(--island-ease), color 160ms ease;
+}
+.island-control:hover { background: var(--control-hover); }
+.island-control:active { transform: scale(0.9); }
+.island-control[data-tone="accent"] { background: var(--control); }
+.island-controls .island-control:first-child[data-tone="accent"] { color: var(--nova-accent-text); background: transparent; }
+.island-control[data-tone="accept"] { width: 42px; height: 42px; color: #fff; background: var(--accept); }
+.island-control[data-tone="decline"] { width: 42px; height: 42px; color: #fff; background: var(--decline); }
+.island-control[data-tone="accept"]:hover { background: color-mix(in srgb, var(--accept) 85%, #fff); }
+.island-control[data-tone="decline"]:hover { background: color-mix(in srgb, var(--decline) 85%, #fff); }
+.island-control:focus-visible,
+.island-pill-button:focus-visible,
+.island-dot:focus-visible { outline: 2px solid var(--nova-accent-text); outline-offset: 2px; }
+
+.island-pill-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 13px;
+  border: 0;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg);
+  background: var(--control);
+  cursor: pointer;
+  transition: background-color 160ms ease, transform 160ms var(--island-ease);
+}
+.island-pill-button:hover { background: var(--control-hover); }
+.island-pill-button:active { transform: scale(0.96); }
+.island-pill-button[data-tone="accent"] { color: #fff; background: var(--nova-accent); }
+
+.island-track { position: relative; flex: 1; height: 4px; border-radius: 4px; background: var(--well); overflow: hidden; }
+.island-track i { position: absolute; inset: 0 auto 0 0; border-radius: inherit; background: var(--fg); transition: width 480ms linear; }
+.island-track i[data-high] { background: #ff9f0a; }
+.island-progress { display: flex; align-items: center; gap: 10px; font-variant-numeric: tabular-nums; }
+
+/* ---------------------------------------------------------------------------
+ * Music: bars that follow the output's real level
+ * ------------------------------------------------------------------------- */
+
+.island-bars { display: inline-flex; align-items: center; gap: 2.5px; height: 16px; flex-shrink: 0; }
+.island-bars i {
+  display: block;
+  width: 3px;
+  height: calc(3px + var(--level, 0) * 13px * var(--w));
+  border-radius: 2px;
+  background: var(--nova-accent-text);
+  transition: height 80ms linear;
+}
+.island-bars[data-large] { height: 26px; gap: 3.5px; }
+.island-bars[data-large] i { width: 4px; height: calc(4px + var(--level, 0) * 22px * var(--w)); }
+.island-bars[data-playing="false"] i { height: 3px; opacity: 0.5; }
+.island[data-tone="light"] .island-bars i { background: var(--nova-accent); }
+
+.island-lyrics {
+  /* The lines' offsetTop counts from here, not from the layer around cover and controls. */
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+  mask-image: linear-gradient(transparent, #000 22%, #000 78%, transparent);
+  margin: 0;
+  padding: 8px 0;
+}
+.island-lyrics p { margin: 0 0 6px; font-size: 14px; font-weight: 650; color: var(--subtle); transition: color 300ms ease; }
+.island-lyrics p[data-current="true"] { color: var(--fg); }
+.island-lyrics p[data-past="true"] { color: var(--muted); opacity: 0.6; }
+p.island-lyrics { flex: 0; font-weight: 500; }
+
+/* ---------------------------------------------------------------------------
+ * Calls
+ * ------------------------------------------------------------------------- */
+
+.island-call { display: flex; align-items: center; gap: 12px; width: 100%; }
+.island-caller { flex-shrink: 0; border-radius: 50%; object-fit: cover; }
+.island-caller--initials { display: grid; place-items: center; font-weight: 650; color: #fff; background: linear-gradient(160deg, #8e8e93, #48484a); }
+.island-call-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.island-hint { max-width: 90px; text-align: right; }
+.island[data-ringing] .island-caller { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accept) 60%, transparent); animation: island-ring 1.6s ease-out infinite; }
+@keyframes island-ring {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accept) 55%, transparent); }
+  70%, 100% { box-shadow: 0 0 0 10px transparent; }
+}
+.island-live { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; color: #fff; background: var(--accept); flex-shrink: 0; }
+.island-live-text { color: var(--accept); font-variant-numeric: tabular-nums; font-weight: 600; font-size: 12px; }
+
+/* ---------------------------------------------------------------------------
+ * System
+ * ------------------------------------------------------------------------- */
+
+.island-system { display: flex; justify-content: center; gap: 14px; font-variant-numeric: tabular-nums; font-weight: 600; font-size: 12px; }
+.island-system span, .island-meter-foot span, .island-meter-label { display: inline-flex; align-items: center; gap: 5px; }
+.island-system svg, .island-meter-foot svg, .island-meter-label svg { color: var(--muted); }
+.island-meters { gap: 9px; justify-content: center; }
+.island-meter { display: grid; grid-template-columns: 62px 1fr 64px; align-items: center; gap: 10px; font-size: 12px; }
+.island-meter-value { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+.island-meter-foot { display: flex; gap: 16px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.island-indicator-text { font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--muted); }
+
+/* ---------------------------------------------------------------------------
+ * NOVA AI: the orb and the integrated dot
+ * ------------------------------------------------------------------------- */
+
+.island-orb {
+  --orb: 22px;
+  position: relative;
+  display: block;
+  flex-shrink: 0;
+  width: var(--orb);
+  height: var(--orb);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 34% 30%, rgb(255 255 255 / 0.85), transparent 28%),
+    radial-gradient(circle at 50% 55%, color-mix(in srgb, var(--nova-accent) 70%, #22d3ee), var(--nova-accent) 62%, color-mix(in srgb, var(--nova-accent) 55%, #000));
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.12), 0 0 12px -2px var(--nova-accent);
+  transform: scale(calc(1 + var(--voice, 0) * 0.18));
+  transition: transform 120ms linear;
+}
+.island-orb::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+}
+.island-orb[data-state="thinking"]::after,
+.island-orb[data-state="processing"]::after,
+.island-orb[data-state="searching"]::after,
+.island-orb[data-state="analyzingScreen"]::after,
+.island-orb[data-state="executing"]::after,
+.island-orb[data-state="activating"]::after {
+  border-top-color: var(--nova-accent-text);
+  border-right-color: color-mix(in srgb, var(--nova-accent-text) 40%, transparent);
+  animation: island-spin 0.9s linear infinite;
+}
+.island-orb[data-state="listening"]::after { border-color: #22d3ee; opacity: calc(0.4 + var(--voice, 0)); }
+.island-orb[data-state="error"] { filter: grayscale(0.6) sepia(0.6) hue-rotate(-30deg); }
+@keyframes island-spin { to { transform: rotate(1turn); } }
+
+.island-dot {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  margin-left: -6px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: transform 160ms var(--island-ease);
+}
+.island-dot:hover { transform: scale(1.12); }
+.island-dot:active { transform: scale(0.92); }
+
+/* ---------------------------------------------------------------------------
+ * Less motion when asked for (Windows or Settings → Appearance → Motion)
+ * ------------------------------------------------------------------------- */
+
+:root[data-motion="reduced"] .island,
+:root[data-motion="reduced"] .island * {
+  transition-duration: 1ms !important;
+  animation-duration: 1ms !important;
+  animation-iteration-count: 1 !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) .island,
+  :root:not([data-motion="full"]) .island * {
+    transition-duration: 1ms !important;
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

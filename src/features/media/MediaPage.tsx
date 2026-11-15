@@ -8,6 +8,7 @@ import { cn } from "@/lib/cn";
 import { useSettings } from "@/stores/settings";
 import { WidgetFrame } from "@/widgets/WidgetFrame";
 import {
+  centeredScrollTop,
   currentLine,
   type MediaState,
   sourceAppName,
@@ -155,7 +156,7 @@ function Lyrics({ state }: { state: MediaState }) {
     const box = list.current;
     const line = box?.children[current];
     // Only inside the list: the page itself stays where it is.
-    if (box && line instanceof HTMLElement) box.scrollTo({ top: line.offsetTop - box.clientHeight / 2 + line.clientHeight / 2, behavior: "smooth" });
+    if (box && line instanceof HTMLElement) box.scrollTo({ top: centeredScrollTop(box, line), behavior: "smooth" });
   }, [current]);
   const synced = lines?.some((line) => line.atMs !== null) ?? false;
   return (

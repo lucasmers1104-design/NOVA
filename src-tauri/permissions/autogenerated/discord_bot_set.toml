@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-discord-bot-set"
+description = "Enables the discord_bot_set command without any pre-configured scope."
+commands.allow = ["discord_bot_set"]
+
+[[permission]]
+identifier = "deny-discord-bot-set"
+description = "Denies the discord_bot_set command without any pre-configured scope."
+commands.deny = ["discord_bot_set"]

@@ -327,7 +327,7 @@ fn month_start_millis() -> i64 {
 
 /// The name the user entered in Settings. The Windows account name is no
 /// substitute: it often isn't what people are called.
-fn user_name<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
+pub(crate) fn user_name<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
     let settings = app.state::<Database>().with(|c| storage::kv_get(c, "nova.settings")).ok().flatten()?;
     let document = serde_json::from_str::<Value>(&settings).ok()?;
     document["state"]["displayName"].as_str().map(str::trim).filter(|n| !n.is_empty()).map(str::to_string)
@@ -1194,7 +1194,7 @@ pub async fn media_play(service: String, query: String) -> CommandResult<String>
             return Ok(video.title);
         }
         crate::media::platform::pause_all(Some("spotify"))?;
-        spotify::play(query, spotify::Kind::Song)
+        spotify::play(query, spotify::Kind::Song).map(|played| played.track)
     })
     .await
     .map_err(|e| e.to_string())?

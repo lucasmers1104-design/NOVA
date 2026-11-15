@@ -1,0 +1,38 @@
+{
+  "enabled": true,
+  "theme": "black",
+  "mode": "dotAndIsland",
+  "dotInIsland": true,
+  "anchor": "center",
+  "offset": 0,
+  "monitor": null,
+  "look": {
+    "scale": 100,
+    "radius": 22,
+    "closedHeight": 38,
+    "background": "#000000",
+    "opacity": 100,
+    "frost": 40,
+    "border": "fine",
+    "shadow": 60,
+    "accent": null
+  },
+  "motion": { "style": "springy", "speed": 100 },
+  "slots": {
+    "music": { "left": "cover", "right": "visualizer" },
+    "call": { "left": "appIcon", "right": "remaining" },
+    "ai": { "left": "aiStatus", "right": "none" },
+    "notification": { "left": "appIcon", "right": "none" },
+    "system": { "left": "none", "right": "none" }
+  },
+  "order": ["calls", "ai", "notifications", "music", "system"],
+  "callsFirst": true,
+  "autoMinimize": true,
+  "minimizeAfter": 6,
+  "notificationSeconds": 8,
+  "hideInFullscreen": true,
+  "modules": { "music": true, "notifications": true, "calls": true, "system": false, "ai": true },
+  "hidePreviews": false,
+  "showCallerNumber": true,
+  "presets": []
+}

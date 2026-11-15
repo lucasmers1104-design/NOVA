@@ -13,8 +13,23 @@ const tool = (id: string, state: ToolItem["state"] = "done"): ToolItem => ({ id,
 describe("finding a setting", () => {
   it("knows settings by their name and by the words people use", () => {
     expect(searchSettings("auto mode")[0]?.section).toBe("assistant-brain");
-    expect(searchSettings("stimme").map((s) => s.label)).toContain("Voice");
+    expect(searchSettings("stimme").map((s) => s.label)).toContain("Stimme");
     expect(searchSettings("klatschen")[0]?.section).toBe("wake");
+    // The labels are German now; the English names they used to have still lead to them.
+    expect(searchSettings("voice").map((s) => s.label)).toContain("Stimme");
+    expect(searchSettings("accent color")[0]).toMatchObject({ label: "Akzentfarbe", section: "appearance" });
+    expect(searchSettings("keyboard shortcut").map((s) => s.section)).toEqual(["assistant", "shortcuts"]);
+    expect(searchSettings("start with windows")[0]?.label).toBe("Mit Windows starten");
+  });
+
+  it("puts the best fit first", () => {
+    // A name that starts with the word, before names that merely contain it.
+    expect(searchSettings("ecken").map((s) => s.label).slice(0, 2)).toEqual(["Ecken", "Mit „Hey NOVA“ wecken"]);
+    expect(searchSettings("glas")[0]?.label).toBe("Glasstärke");
+    // German builds words from parts: a part still finds the whole.
+    expect(searchSettings("bild").map((s) => s.label)).toContain("Windows-Hintergrundbild zeigen");
+    // A hyphenated name is found by each of its words.
+    expect(searchSettings("modus")[0]?.label).toBe("Auto-Modus");
     expect(searchSettings("  ")).toEqual([]);
     expect(searchSettings("gibt es nicht")).toEqual([]);
   });

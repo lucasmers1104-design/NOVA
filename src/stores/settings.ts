@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { CUSTOMIZABLE_ROUTES, type RouteId, WORKSPACE_ORDERABLE_ROUTES } from "@/app/navigation";
+import { CUSTOMIZABLE_ROUTES, HIDDEN_BY_DEFAULT, migrateNavigation, type RouteId, WORKSPACE_ORDERABLE_ROUTES } from "@/app/navigation";
 import { type AccentSetting, DEFAULT_ACCENT, isAccentSetting } from "@/design/accent";
 import { type BackdropGradient, DEFAULT_BACKDROP_DIM, DEFAULT_CORNER_SCALE, DEFAULT_GLASS_OPACITY, isUiFont, MAX_BACKDROP_BLUR, MAX_BACKDROP_DIM, MAX_CORNER_SCALE, MAX_GLASS_OPACITY, MIN_GLASS_OPACITY, sanitizeGradient, type UiFont } from "@/design/backdrop";
 import { isHexColor, normalizeHex } from "@/design/color";
@@ -93,6 +93,8 @@ interface SettingsActions {
   setTitleBarClock: (clock: TitleBarClock) => void;
   setRefreshInterval: (ms: RefreshIntervalMs) => void;
   moveNavItem: (id: RouteId, direction: -1 | 1) => void;
+  /** The whole order at once, as a dragged list hands it over. */
+  setNavOrder: (order: readonly RouteId[]) => void;
   setNavHidden: (id: RouteId, hidden: boolean) => void;
   resetNavigation: () => void;
   setSystemNotifications: (enabled: boolean) => void;
@@ -129,7 +131,7 @@ export function defaultSettings(): Settings {
     titleBarClock: "off",
     refreshIntervalMs: 2000,
     navOrder: [...WORKSPACE_ORDERABLE_ROUTES],
-    navHidden: [],
+    navHidden: [...HIDDEN_BY_DEFAULT],
     systemNotifications: true,
     closeToTray: false,
     weatherPlace: null,
@@ -270,9 +272,15 @@ export const useSettings = create<Settings & SettingsActions>()(
           [order[from], order[to]] = [order[to]!, order[from]!];
           return { navOrder: order };
         }),
+      setNavOrder: (order) =>
+        set(() => {
+          // Only sections that can be ordered, each once; one that is missing keeps its usual place at the end.
+          const known = [...new Set(order.filter((id) => WORKSPACE_ORDERABLE_ROUTES.includes(id)))];
+          return { navOrder: [...known, ...WORKSPACE_ORDERABLE_ROUTES.filter((id) => !known.includes(id))] };
+        }),
       setNavHidden: (id, hidden) =>
         set((s) => ({ navHidden: hidden ? [...new Set([...s.navHidden, id])] : s.navHidden.filter((h) => h !== id) })),
-      resetNavigation: () => set({ navOrder: [...WORKSPACE_ORDERABLE_ROUTES], navHidden: [] }),
+      resetNavigation: () => set({ navOrder: [...WORKSPACE_ORDERABLE_ROUTES], navHidden: [...HIDDEN_BY_DEFAULT] }),
       setSystemNotifications: (systemNotifications) => set({ systemNotifications }),
       setCloseToTray: (closeToTray) => set({ closeToTray }),
       setWeatherPlace: (weatherPlace) => set({ weatherPlace }),
@@ -313,7 +321,17 @@ export const useSettings = create<Settings & SettingsActions>()(
     }),
     {
       name: SETTINGS_STORAGE_KEY,
-      version: 1,
+      // 2 (1.13): NOVA Island and Discord took the places of Media and Files, which are hidden.
+      version: 2,
+      migrate: (persisted, version) => {
+        if (version >= 2 || typeof persisted !== "object" || persisted === null) return persisted as Settings;
+        const raw = persisted as Record<string, unknown>;
+        if (!Array.isArray(raw.navOrder)) return { ...raw, navHidden: [...HIDDEN_BY_DEFAULT] } as unknown as Settings;
+        const order = routeList(raw.navOrder, [...WORKSPACE_ORDERABLE_ROUTES]) ?? [];
+        const hidden = routeList(raw.navHidden, CUSTOMIZABLE_ROUTES) ?? [];
+        const next = migrateNavigation(order, hidden);
+        return { ...raw, navOrder: next.order, navHidden: next.hidden } as unknown as Settings;
+      },
       // SQLite in the desktop app (see lib/persistence.ts). Hydration is
       // asynchronous, so main.tsx awaits `rehydrate()` before the first render.
       storage: createJSONStorage(() => nativeStorage),

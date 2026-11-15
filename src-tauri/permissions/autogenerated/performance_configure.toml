@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-performance-configure"
+description = "Enables the performance_configure command without any pre-configured scope."
+commands.allow = ["performance_configure"]
+
+[[permission]]
+identifier = "deny-performance-configure"
+description = "Denies the performance_configure command without any pre-configured scope."
+commands.deny = ["performance_configure"]

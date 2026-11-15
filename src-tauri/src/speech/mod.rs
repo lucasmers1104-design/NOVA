@@ -1,9 +1,13 @@
 //! NOVA's own speech engines: voices and offline speech recognition running
-//! inside NOVA on ONNX Runtime — on the processor or, where it is measurably
-//! faster, on the graphics card through DirectML (NVIDIA, AMD and Intel
-//! alike). Everything is downloaded on demand and checked before it runs.
+//! on ONNX Runtime — on the processor or, where it is measurably faster, on
+//! the graphics card through DirectML (NVIDIA, AMD and Intel alike).
+//! Everything is downloaded on demand and checked before it runs.
 //!
-//! Every way of speaking has a fallback: an in-process voice falls back to
+//! The models don't run inside NOVA itself but in speech processes of its
+//! own (see `helper`), which end when they have been idle: that is the only
+//! way the runtime's memory goes back to Windows.
+//!
+//! Every way of speaking has a fallback: NOVA's own engine falls back to
 //! piper.exe (the 1.4 engine), and that to a Windows voice in the panel.
 //! Speech recognition stays with Windows unless the user picks the offline
 //! recognizer, and falls back to Windows when that isn't ready.
@@ -12,6 +16,7 @@ pub mod bench;
 pub mod catalog;
 pub mod download;
 pub mod hardware;
+pub mod helper;
 pub mod kokoro;
 pub mod phonemize;
 pub mod piper;
@@ -23,7 +28,7 @@ pub mod wav;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -32,6 +37,7 @@ use tauri::{AppHandle, Emitter, Manager, Runtime};
 use crate::storage::{self, Database};
 use bench::{BackendPref, Cache, Mode};
 use catalog::{Engine, Item, Kind};
+use helper::{CallError, Helper, VoiceSpec};
 use runtime::Device;
 use wav::Pcm;
 
@@ -40,7 +46,7 @@ type CommandResult<T> = Result<T, String>;
 const PREFS_KEY: &str = "nova.assistant.speech";
 const EVENT_STATUS: &str = "speech://status";
 const EVENT_BENCH: &str = "speech://bench";
-/// Two failures in a row and the in-process voice rests until NOVA restarts.
+/// Two failures in a row and NOVA's own engine rests until NOVA restarts.
 const FAILURE_LIMIT: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -90,11 +96,24 @@ impl TtsEngine for piper::Piper {
     }
 }
 
-struct Loaded<E: ?Sized> {
+/// The voice NOVA's speech process holds.
+struct LoadedVoice {
     /// Which item on which device.
     key: (String, Device),
-    engine: Box<E>,
     last_used: Instant,
+}
+
+/// NOVA's speech processes: one for the voice, one for recognition, so each
+/// ends after its own idle time and a crash of one leaves the other alone.
+pub(crate) struct Helpers {
+    pub(crate) voice: Arc<Helper>,
+    pub(crate) recognizer: Arc<Helper>,
+}
+
+impl Default for Helpers {
+    fn default() -> Self {
+        Self { voice: Arc::new(Helper::new("voice")), recognizer: Arc::new(Helper::new("recognizer")) }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -109,17 +128,20 @@ pub enum Install {
 #[derive(Default)]
 pub struct SpeechState {
     prefs: Mutex<SpeechPrefs>,
-    tts: Mutex<Option<Loaded<dyn TtsEngine>>>,
+    pub(crate) helpers: Helpers,
+    tts: Mutex<Option<LoadedVoice>>,
     pub(crate) stt: Mutex<Option<stt::LoadedRecognizer>>,
     installing: Mutex<HashMap<String, Install>>,
     failures: AtomicU32,
     hardware: OnceLock<hardware::Report>,
     bench: Mutex<Option<Cache>>,
     benchmarking: AtomicBool,
-    /// The in-process voice is being loaded in the background.
+    /// NOVA's own voice is being loaded in the background.
     voice_loading: AtomicBool,
-    /// DirectML crashed NOVA last time (the sentinel was left behind).
+    /// DirectML took NOVA or its speech process down last time (the sentinel was left behind).
     directml_crashed: AtomicBool,
+    /// DirectML took a speech process down in this run.
+    directml_failed: AtomicBool,
     /// The last engine that spoke, for "now running on".
     last_voice: Mutex<Option<String>>,
 }
@@ -184,18 +206,15 @@ fn runtime_dir<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
     installed_in(&dir, item).then_some(dir)
 }
 
-/// The speech runtime, loaded on first use (if downloaded).
-pub fn runtime<R: Runtime>(app: &AppHandle<R>) -> Option<&'static runtime::Runtime> {
-    runtime::loaded().or_else(|| runtime::get(&runtime_dir(app)?).ok())
-}
-
 fn sentinel<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
     speech_dir(app).ok().map(|d| d.join("directml-pending"))
 }
 
 /// Why DirectML must not be used now, if it mustn't.
 fn directml_blocked<R: Runtime>(app: &AppHandle<R>) -> Option<&'static str> {
-    if state(app).directml_crashed.load(Ordering::SeqCst) {
+    if state(app).directml_failed.load(Ordering::SeqCst) {
+        Some("NOVA's speech process stopped unexpectedly while it used the graphics card")
+    } else if state(app).directml_crashed.load(Ordering::SeqCst) {
         Some("NOVA closed unexpectedly while it last used the graphics card")
     } else {
         None
@@ -209,65 +228,98 @@ pub fn plan<R: Runtime>(app: &AppHandle<R>, item: &str) -> (Device, String) {
     bench::choose(prefs.mode, prefs.backend, prefs.adapter, cache.as_ref(), item, hardware(app), directml_blocked(app))
 }
 
-/// Opens a model on `device`; the first use of DirectML is guarded by a
-/// sentinel file, so a driver crash makes NOVA use the processor next time.
-fn open_guarded<R: Runtime, T>(app: &AppHandle<R>, device: &Device, open: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+/// A speech process died while its model ran on the graphics card: the
+/// processor takes over for the rest of this run.
+pub(crate) fn directml_failed<R: Runtime>(app: &AppHandle<R>) {
+    if !state(app).directml_failed.swap(true, Ordering::SeqCst) {
+        eprintln!("[speech] the speech process stopped while using DirectML; using the processor from now on");
+    }
+}
+
+/// Opens a model on `device` in a speech process. The use of DirectML is
+/// guarded by a sentinel file: a driver that takes the process down leaves it
+/// behind, so the processor is used from now on and after the next start.
+fn open_guarded<R: Runtime, T>(app: &AppHandle<R>, device: &Device, open: impl FnOnce() -> Result<T, CallError>) -> Result<T, String> {
     let guard = device.is_gpu().then(|| sentinel(app)).flatten();
     if let Some(path) = &guard {
         let _ = std::fs::write(path, b"DirectML in use");
     }
     let result = open();
-    if let Some(path) = &guard {
+    if device.is_gpu() && result.as_ref().is_err_and(CallError::gone) {
+        directml_failed(app);
+    } else if let Some(path) = &guard {
         let _ = std::fs::remove_file(path);
     }
-    result
+    result.map_err(String::from)
 }
 
-fn open_voice<R: Runtime>(app: &AppHandle<R>, item: &Item, device: &Device) -> Result<Box<dyn TtsEngine>, String> {
-    let runtime = runtime(app).ok_or("The speech runtime isn't downloaded")?;
+fn voice_spec<R: Runtime>(app: &AppHandle<R>, item: &Item, device: &Device) -> Result<VoiceSpec, String> {
+    let runtime = runtime_dir(app).ok_or("The speech runtime isn't downloaded")?;
     let (model, config) = voice_files(app, item).ok_or("This voice isn't downloaded")?;
-    match item.engine {
-        Engine::Piper => {
-            let espeak = crate::tts::bundle_dir(app).ok_or("eSpeak NG (with NOVA's voice) isn't downloaded")?;
-            if phonemize::helper_path().is_none() {
-                return Err("nova-phonemize.exe is missing".into());
-            }
-            let engine = open_guarded(app, device, || piper::Piper::open(runtime, &model, &config, device, item.speaker, &espeak))?;
-            Ok(Box::new(engine))
-        }
-        Engine::Kokoro => {
-            let espeak = crate::tts::bundle_dir(app).ok_or("eSpeak NG (with NOVA's voice) isn't downloaded")?;
-            let engine = open_guarded(app, device, || kokoro::Kokoro::open(runtime, &model, &config, device, &espeak))?;
-            Ok(Box::new(engine))
-        }
-        _ => Err("Not a voice".into()),
+    if !matches!(item.engine, Engine::Piper | Engine::Kokoro) {
+        return Err("Not a voice".into());
+    }
+    let espeak = crate::tts::bundle_dir(app).ok_or("eSpeak NG (with NOVA's voice) isn't downloaded")?;
+    if item.engine == Engine::Piper && phonemize::helper_path().is_none() {
+        return Err("nova-phonemize.exe is missing".into());
+    }
+    Ok(VoiceSpec { item: item.id.to_string(), engine: item.engine, runtime, model, config, espeak, speaker: item.speaker.map(str::to_string), device: device.clone() })
+}
+
+/// The voice in NOVA's speech process, used like the engines themselves.
+struct RemoteVoice<'a> {
+    helper: &'a Helper,
+    spec: &'a VoiceSpec,
+    /// Why the last sentence failed (and with it, whether the process went away).
+    failure: Option<CallError>,
+}
+
+impl TtsEngine for RemoteVoice<'_> {
+    fn synthesize(&mut self, text: &str, rate: f32) -> Result<Pcm, String> {
+        self.helper.speak(self.spec, text, rate).map_err(|error| {
+            self.failure = Some(error.clone());
+            String::from(error)
+        })
+    }
+    fn device(&self) -> Device {
+        self.spec.device.clone()
     }
 }
 
-/// The in-process engine for `item`, loaded (or reloaded for another device).
+/// NOVA's own engine for `item`, loaded in the speech process (or loaded again for another device).
 fn with_voice<R: Runtime, T>(app: &AppHandle<R>, item: &Item, run: impl FnOnce(&mut dyn TtsEngine) -> Result<T, String>) -> Result<T, String> {
     let (device, _) = plan(app, item.id);
+    let helper = &state(app).helpers.voice;
     let mut slot = lock(&state(app).tts);
     let key = (item.id.to_string(), device.clone());
-    if slot.as_ref().is_none_or(|s| s.key != key) {
+    let spec = voice_spec(app, item, &device)?;
+    if slot.as_ref().is_none_or(|s| s.key != key) || !helper.running() {
         *slot = None;
-        let engine = open_voice(app, item, &device)?;
-        *slot = Some(Loaded { key, engine, last_used: Instant::now() });
+        // A process that held another voice ends first: what it used goes back to Windows.
+        helper.stop();
+        open_guarded(app, &device, || helper.open_voice(&spec))?;
+        *slot = Some(LoadedVoice { key, last_used: Instant::now() });
         ensure_unloader(app);
-        // piper.exe isn't needed while the voice runs in NOVA.
+        // piper.exe isn't needed while the voice runs in NOVA's speech process.
         crate::tts::stop_exe(app);
     }
     let loaded = slot.as_mut().ok_or("No voice")?;
     loaded.last_used = Instant::now();
-    let result = run(loaded.engine.as_mut());
+    let mut voice = RemoteVoice { helper, spec: &spec, failure: None };
+    let result = run(&mut voice);
     if result.is_err() {
         *slot = None;
+        if device.is_gpu() && voice.failure.as_ref().is_some_and(CallError::gone) {
+            directml_failed(app);
+        }
+        // Whatever state it is in, the next sentence gets a fresh process.
+        helper.stop();
     }
     result
 }
 
-/// Whether the in-process engine can speak `item` at all.
-fn in_process_possible<R: Runtime>(app: &AppHandle<R>, item: &Item) -> bool {
+/// Whether NOVA's own engine can speak `item` at all.
+fn own_voice_possible<R: Runtime>(app: &AppHandle<R>, item: &Item) -> bool {
     state(app).failures.load(Ordering::SeqCst) < FAILURE_LIMIT
         && runtime_dir(app).is_some()
         && voice_files(app, item).is_some()
@@ -283,7 +335,7 @@ fn exe_voice<R: Runtime>(app: &AppHandle<R>, item: &Item) -> Option<crate::tts::
     Some(crate::tts::ExeVoice { model, config, speaker })
 }
 
-/// The in-process engine for `item` is in memory (or busy speaking).
+/// NOVA's own engine for `item` is in memory (or busy speaking).
 fn voice_loaded<R: Runtime>(app: &AppHandle<R>, item: &Item) -> bool {
     let speech = state(app);
     if speech.voice_loading.load(Ordering::SeqCst) {
@@ -291,13 +343,13 @@ fn voice_loaded<R: Runtime>(app: &AppHandle<R>, item: &Item) -> bool {
     }
     let (device, _) = plan(app, item.id);
     match speech.tts.try_lock() {
-        Ok(slot) => slot.as_ref().is_some_and(|l| l.key == (item.id.to_string(), device)),
+        Ok(slot) => slot.as_ref().is_some_and(|l| l.key == (item.id.to_string(), device)) && speech.helpers.voice.running(),
         // Someone is speaking with it right now.
         Err(_) => true,
     }
 }
 
-/// Loads the in-process voice in the background (once at a time).
+/// Loads NOVA's own voice in the background (once at a time).
 fn load_in_background<R: Runtime>(app: &AppHandle<R>, item: &'static Item) {
     if state(app).voice_loading.swap(true, Ordering::SeqCst) {
         return;
@@ -315,12 +367,12 @@ fn load_in_background<R: Runtime>(app: &AppHandle<R>, item: &'static Item) {
 pub fn speak<R: Runtime>(app: &AppHandle<R>, voice: Option<&str>, text: &str, rate: f32) -> Result<Vec<u8>, String> {
     let preference = voice.filter(|v| v.starts_with("nova:")).unwrap_or("nova:thorsten");
     let item = catalog::voice(preference).ok_or("Unknown voice")?;
-    // Loading the in-process voice takes a few seconds on a small PC; until
+    // Loading NOVA's own voice takes a few seconds on a small PC; until
     // it is ready, piper.exe (which starts faster) says the first sentences.
-    let bridge = in_process_possible(app, item) && !voice_loaded(app, item) && exe_voice(app, item).is_some();
+    let bridge = own_voice_possible(app, item) && !voice_loaded(app, item) && exe_voice(app, item).is_some();
     if bridge {
         load_in_background(app, item);
-    } else if in_process_possible(app, item) {
+    } else if own_voice_possible(app, item) {
         match with_voice(app, item, |engine| Ok((engine.synthesize(text, rate)?, engine.device()))) {
             Ok((pcm, device)) => {
                 state(app).failures.store(0, Ordering::SeqCst);
@@ -329,9 +381,8 @@ pub fn speak<R: Runtime>(app: &AppHandle<R>, voice: Option<&str>, text: &str, ra
             }
             Err(error) => {
                 let failures = state(app).failures.fetch_add(1, Ordering::SeqCst) + 1;
-                eprintln!("[speech] in-process voice failed ({failures}): {error}");
+                eprintln!("[speech] NOVA's own voice failed ({failures}): {error}");
                 if failures >= FAILURE_LIMIT {
-                    *lock(&state(app).tts) = None;
                     publish(app);
                 }
             }
@@ -356,11 +407,11 @@ pub fn warm_voice<R: Runtime>(app: &AppHandle<R>) {
         // Low resource: load it when the first sentence comes.
         return;
     }
-    let in_process = in_process_possible(app, item);
+    let in_process = own_voice_possible(app, item);
     if in_process && voice_loaded(app, item) {
         return;
     }
-    // piper.exe starts fast and covers the first sentences while the in-process voice loads.
+    // piper.exe starts fast and covers the first sentences while NOVA's own voice loads.
     if let Some(voice) = exe_voice(app, item) {
         crate::tts::warm_exe(app, voice);
     }
@@ -377,9 +428,48 @@ fn keep_alive(mode: Mode) -> Option<Duration> {
     }
 }
 
+/// How long the recognizer stays after a turn: it is the big one (about a gigabyte).
+fn recognizer_keep_alive(mode: Mode) -> Duration {
+    if mode == Mode::Low {
+        Duration::from_secs(20)
+    } else {
+        Duration::from_secs(5 * 60)
+    }
+}
+
+/// Whether something last used `idle` ago has outstayed `limit` (none: it stays).
+fn outstayed(idle: Duration, limit: Option<Duration>) -> bool {
+    limit.is_some_and(|limit| idle >= limit)
+}
+
+/// Ends the speech processes whose models have been idle for too long (how
+/// soon depends on the performance mode), and any that nothing uses any more.
+fn retire_idle<R: Runtime>(app: &AppHandle<R>) {
+    let mode = prefs(app).mode;
+    let speech = state(app);
+    {
+        // Holding the slot keeps a sentence from starting while its process is ended.
+        let mut tts = lock(&speech.tts);
+        if tts.as_ref().is_some_and(|l| outstayed(l.last_used.elapsed(), keep_alive(mode))) {
+            *tts = None;
+        }
+        if tts.is_none() && speech.helpers.voice.unused() {
+            speech.helpers.voice.stop();
+        }
+    }
+    let mut stt = lock(&speech.stt);
+    if stt.as_ref().is_some_and(|l| outstayed(l.last_used.elapsed(), Some(recognizer_keep_alive(mode)))) {
+        *stt = None;
+    }
+    // Not while a turn or "Hey NOVA" has the recognizer: that one counts as in use.
+    if speech.helpers.recognizer.unused() {
+        speech.helpers.recognizer.stop();
+    }
+}
+
 static UNLOADER: AtomicBool = AtomicBool::new(false);
 
-/// Unloads idle models (how soon depends on the performance mode).
+/// Checks every 15 seconds whether a speech process can go.
 fn ensure_unloader<R: Runtime>(app: &AppHandle<R>) {
     if UNLOADER.swap(true, Ordering::SeqCst) {
         return;
@@ -387,21 +477,29 @@ fn ensure_unloader<R: Runtime>(app: &AppHandle<R>) {
     let app = app.clone();
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_secs(15));
-        let mode = prefs(&app).mode;
-        let Some(limit) = keep_alive(mode) else { continue };
-        let speech = state(&app);
-        let mut tts = lock(&speech.tts);
-        if tts.as_ref().is_some_and(|l| l.last_used.elapsed() >= limit) {
-            *tts = None;
-            phonemize::stop();
-        }
-        drop(tts);
-        let stt_limit = if mode == Mode::Low { Duration::from_secs(20) } else { Duration::from_secs(5 * 60) };
-        let mut stt = lock(&speech.stt);
-        if stt.as_ref().is_some_and(|l| l.last_used.elapsed() >= stt_limit) {
-            *stt = None;
-        }
+        retire_idle(&app);
     });
+}
+
+/// Ends both speech processes now: settings, measurements or downloads changed
+/// what should be in memory. The next sentence or turn loads it afresh.
+fn unload_all<R: Runtime>(app: &AppHandle<R>) {
+    let speech = state(app);
+    {
+        // Waits for a sentence in progress instead of cutting it off.
+        let mut tts = lock(&speech.tts);
+        *tts = None;
+        speech.helpers.voice.stop();
+    }
+    *lock(&speech.stt) = None;
+    // "Hey NOVA" or a turn that is using it notices and starts over with a new process.
+    speech.helpers.recognizer.stop();
+}
+
+/// The speech processes that run right now (for the memory readout in Settings).
+pub fn helper_pids<R: Runtime>(app: &AppHandle<R>) -> Vec<u32> {
+    let helpers = &state(app).helpers;
+    [helpers.voice.pid(), helpers.recognizer.pid()].into_iter().flatten().collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -509,12 +607,16 @@ pub fn status<R: Runtime>(app: &AppHandle<R>) -> SpeechStatus {
     SpeechStatus {
         prefs: prefs(app),
         hardware: hardware(app).clone(),
-        runtime: RuntimeStatus {
-            label: catalog::RUNTIME_VERSION,
-            loaded: runtime::loaded().is_some(),
-            error: runtime::load_error(),
-            directml: runtime::loaded().and_then(|r| r.directml.clone()),
-            phonemizer: phonemize::helper_path().is_some(),
+        runtime: {
+            // What the speech processes report: NOVA itself never loads the runtime.
+            let seen = speech.helpers.voice.runtime().or_else(|| speech.helpers.recognizer.runtime());
+            RuntimeStatus {
+                label: catalog::RUNTIME_VERSION,
+                loaded: seen.is_some(),
+                error: speech.helpers.voice.runtime_error().or_else(|| speech.helpers.recognizer.runtime_error()),
+                directml: seen.and_then(|runtime| runtime.directml),
+                phonemizer: phonemize::helper_path().is_some(),
+            }
         },
         items,
         bench_stale: bench.as_ref().is_some_and(|b| b.key != key),
@@ -602,8 +704,8 @@ pub async fn speech_configure<R: Runtime>(app: AppHandle<R>, prefs: SpeechPrefs)
     }
     *lock(&state(&app).prefs) = prefs;
     // The next sentence loads the voice where the new settings say.
-    *lock(&state(&app).tts) = None;
-    *lock(&state(&app).stt) = None;
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || unload_all(&handle)).await.map_err(|e| e.to_string())?;
     let status = status(&app);
     let _ = app.emit(EVENT_STATUS, status.clone());
     Ok(status)
@@ -639,7 +741,7 @@ pub async fn speech_install<R: Runtime>(app: AppHandle<R>, id: String) -> Comman
     Ok(status(&app))
 }
 
-/// Removes a downloaded item. The runtime stays in use until NOVA restarts.
+/// Removes a downloaded item.
 #[tauri::command]
 pub async fn speech_remove<R: Runtime>(app: AppHandle<R>, id: String) -> CommandResult<SpeechStatus> {
     let item = catalog::item(&id).ok_or("Unknown download")?;
@@ -647,19 +749,14 @@ pub async fn speech_remove<R: Runtime>(app: AppHandle<R>, id: String) -> Command
         return Err("Thorsten comes with NOVA's voice and stays".into());
     }
     let dir = item_dir(&speech_dir(&app)?, item);
+    // The speech processes hold these files open; once they have ended nothing does.
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || unload_all(&handle)).await.map_err(|e| e.to_string())?;
     if item.kind == Kind::Runtime {
-        // The DLLs may be loaded: drop the marker now, the folder at the next start.
+        // A measurement may still have the DLLs loaded: the marker goes now, the folder at the next start if need be.
         let _ = std::fs::remove_file(dir.join(MARKER));
-        if runtime::loaded().is_none() {
-            let _ = std::fs::remove_dir_all(&dir);
-        }
+        let _ = std::fs::remove_dir_all(&dir);
     } else {
-        if lock(&state(&app).tts).as_ref().is_some_and(|l| l.key.0 == item.id) {
-            *lock(&state(&app).tts) = None;
-        }
-        if item.kind == Kind::Recognizer {
-            *lock(&state(&app).stt) = None;
-        }
         std::fs::remove_dir_all(&dir).map_err(|e| format!("Couldn't remove {}: {e}", item.label))?;
     }
     lock(&state(&app).installing).remove(item.id);
@@ -695,8 +792,7 @@ pub async fn speech_benchmark<R: Runtime>(app: AppHandle<R>) -> CommandResult<()
             *lock(&state(&handle).bench) = Some(cache);
         }
         // Engines reload where the new measurements say.
-        *lock(&state(&handle).tts) = None;
-        *lock(&state(&handle).stt) = None;
+        unload_all(&handle);
         state(&handle).benchmarking.store(false, Ordering::SeqCst);
         publish(&handle);
     });
@@ -770,7 +866,67 @@ mod tests {
         std::fs::write(dir.join("model.onnx.json"), b"short").unwrap();
         assert!(!installed_in(&dir, item), "a file of the wrong size");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// What a sentence costs with the voice in this process, as before 1.12, and in
+    /// NOVA's speech process, as now. By hand, after `cargo build`: `cargo test --lib --
+    /// --ignored voice_latency --nocapture`, with NOVA_RUNTIME and NOVA_VOICE_DIR set.
+    #[test]
+    #[ignore]
+    fn voice_latency() {
+        let path = |name: &str| std::env::var_os(name).map(PathBuf::from).unwrap_or_else(|| panic!("set {name}"));
+        let (runtime_dir, voice) = (path("NOVA_RUNTIME"), path("NOVA_VOICE_DIR"));
+        let spec = VoiceSpec {
+            item: "thorsten".into(),
+            engine: Engine::Piper,
+            runtime: runtime_dir.clone(),
+            model: voice.join("thorsten.onnx"),
+            config: voice.join("thorsten.onnx.json"),
+            espeak: voice.join("piper"),
+            speaker: None,
+            device: Device::Cpu { threads: 2 },
+        };
+        let sentence = "Ich habe drei Dateien gefunden, die zu deiner Suche passen.";
+        let median = |mut runs: Vec<f64>| {
+            runs.sort_by(f64::total_cmp);
+            runs[runs.len() / 2]
+        };
+        let timed = |speak: &mut dyn FnMut() -> Pcm| median((0..10).map(|_| (Instant::now(), speak()).0.elapsed().as_secs_f64() * 1000.0).collect());
+
+        let opened = Instant::now();
+        let mut piper = piper::Piper::open(runtime::get(&runtime_dir).unwrap(), &spec.model, &spec.config, &spec.device, None, &spec.espeak).unwrap();
+        piper.synthesize("Ja.", 1.0).unwrap();
+        println!("in-process: ready after {:>6.0} ms", opened.elapsed().as_secs_f64() * 1000.0);
+        println!("in-process: sentence in {:>6.1} ms (median of 10)", timed(&mut || piper.synthesize(sentence, 1.0).unwrap()));
+        drop(piper);
+        phonemize::stop();
+
+        // The test runs from target/debug/deps; the app's exe is one folder up.
+        let exe = std::env::current_exe().unwrap().parent().unwrap().parent().unwrap().join("nova.exe");
+        let helper = Helper::with_program("voice", exe);
+        let opened = Instant::now();
+        helper.open_voice(&spec).unwrap();
+        helper.speak(&spec, "Ja.", 1.0).unwrap();
+        println!("helper:     ready after {:>6.0} ms", opened.elapsed().as_secs_f64() * 1000.0);
+        println!("helper:     sentence in {:>6.1} ms (median of 10)", timed(&mut || helper.speak(&spec, sentence, 1.0).unwrap()));
+        assert!(helper.runtime().is_some());
+        helper.stop();
+        assert!(!helper.running());
+    }
+
+    #[test]
+    fn speech_processes_end_after_their_idle_time() {
         assert_eq!(keep_alive(Mode::Max), None);
         assert!(keep_alive(Mode::Low) < keep_alive(Mode::Auto));
+        let minutes = |m: u64| Duration::from_secs(m * 60);
+        // The voice: 20 minutes on automatic, 2 on low, never on maximum.
+        assert!(!outstayed(minutes(19), keep_alive(Mode::Auto)));
+        assert!(outstayed(minutes(20), keep_alive(Mode::Auto)));
+        assert!(outstayed(minutes(2), keep_alive(Mode::Low)));
+        assert!(!outstayed(minutes(600), keep_alive(Mode::Max)));
+        // The recognizer goes sooner, in every mode.
+        assert!(outstayed(Duration::from_secs(20), Some(recognizer_keep_alive(Mode::Low))));
+        assert!(!outstayed(minutes(4), Some(recognizer_keep_alive(Mode::Max))));
+        assert!(outstayed(minutes(5), Some(recognizer_keep_alive(Mode::Auto))));
     }
 }

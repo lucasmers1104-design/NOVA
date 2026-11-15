@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-island-listen"
+description = "Enables the island_listen command without any pre-configured scope."
+commands.allow = ["island_listen"]
+
+[[permission]]
+identifier = "deny-island-listen"
+description = "Denies the island_listen command without any pre-configured scope."
+commands.deny = ["island_listen"]

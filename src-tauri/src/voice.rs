@@ -683,6 +683,8 @@ fn listen_offline<R: Runtime>(app: &AppHandle<R>, state: &VoiceState, send: &dyn
     // A recognizer that failed isn't kept: the next turn loads a fresh one.
     if outcome.is_ok() {
         stt::give_back(app, recognizer);
+    } else {
+        stt::discard(app, recognizer);
     }
     let turn = outcome.map_err(VoiceError::from)?;
     report.ready_ms = ready;

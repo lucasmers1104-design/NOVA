@@ -2583,7 +2583,7 @@ dependencies = [
 
 [[package]]
 name = "nova"
-version = "1.11.2"
+version = "1.12.0"
 dependencies = [
  "aes-gcm",
  "base64 0.23.1",
@@ -2613,6 +2613,7 @@ dependencies = [
  "tokio",
  "tungstenite",
  "url",
+ "webview2-com",
  "windows",
  "windows-collections",
  "windows-future",

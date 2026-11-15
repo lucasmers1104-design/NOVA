@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-relay-check"
+description = "Enables the relay_check command without any pre-configured scope."
+commands.allow = ["relay_check"]
+
+[[permission]]
+identifier = "deny-relay-check"
+description = "Denies the relay_check command without any pre-configured scope."
+commands.deny = ["relay_check"]

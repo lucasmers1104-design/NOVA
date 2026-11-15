@@ -1,35 +1,40 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
-import { CircleCheck, Ear, Eraser, Hand, Minus, ShieldCheck, TriangleAlert } from "lucide-react";
+import { CircleCheck, Ear, Eraser, Gamepad2, Hand, MessageCircle, Minus, Play, Square, TriangleAlert, Zap } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { PreviewStage, SegmentedControl, SettingCard, SettingLine } from "@/components/settings-kit";
 import { Button } from "@/components/ui/Button";
-import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { Switch } from "@/components/ui/Switch";
-import { MoreOptions, SettingRow, SettingsSection } from "@/features/settings/SettingsLayout";
+import { MoreOptions, PrivacyNote, SettingsNotice, SettingsSection } from "@/features/settings/SettingsLayout";
 import { cn } from "@/lib/cn";
 import { isDesktop } from "@/lib/native";
-import { ASSISTANT_EVENTS } from "./types";
+import { ASSISTANT_STATUS_KEY, assistantStatus } from "./api";
+import { NovaDot } from "./components/NovaDot";
+import { ASSISTANT_EVENTS, DEFAULT_DOT_LOOK, type DotLook } from "./types";
 import { openVoiceSettings } from "./voice";
 import { type AfterWake, configureWake, describeHeard, type Heard, listenerLabel, testWake, type WakeListener, type WakePrefs, type WakeSensitivity, type WakeStatus, wakeStatus } from "./wake";
 
 export const WAKE_STATUS_KEY = ["wake", "status"] as const;
 
+const TITLE = "Hey NOVA & Klatschen";
+const DESCRIPTION = "Weck NOVA AI, ohne etwas anzufassen: Sag „Hey NOVA“ oder klatsch zweimal.";
+
 const PHRASE_SENSITIVITY = [
-  { value: "strict", label: "Only when clear" },
-  { value: "normal", label: "More forgiving" },
+  { value: "strict", label: "Nur wenn eindeutig" },
+  { value: "normal", label: "Großzügiger" },
 ] as const satisfies readonly { value: WakeSensitivity; label: string }[];
 
 const CLAP_SENSITIVITY = [
-  { value: "strict", label: "Very precise" },
-  { value: "normal", label: "More forgiving" },
+  { value: "strict", label: "Sehr genau" },
+  { value: "normal", label: "Großzügiger" },
 ] as const satisfies readonly { value: WakeSensitivity; label: string }[];
 
 const AFTER_WAKE = [
-  { value: "listen", label: "Listen for my request" },
-  { value: "open", label: "Just open NOVA AI" },
+  { value: "listen", label: "Gleich zuhören" },
+  { value: "open", label: "Nur NOVA AI öffnen" },
 ] as const satisfies readonly { value: AfterWake; label: string }[];
 
-/** Settings → Hey NOVA & double clap. Off until turned on; the listener runs in Rust. */
+/** Settings → Hey NOVA & Klatschen. Off until turned on; the listener runs in Rust. */
 export function WakeSettings() {
   const desktop = isDesktop();
   const client = useQueryClient();
@@ -49,11 +54,10 @@ export function WakeSettings() {
     if (status) configure.mutate({ ...status.prefs, ...patch });
   };
 
-  const description = "Wake NOVA AI hands-free: say “Hey NOVA” or clap twice.";
   if (!desktop) {
     return (
-      <SettingsSection id="wake" title="Hey NOVA & double clap" description={description} icon={Ear}>
-        <p className="text-[13px] text-fg-muted">Available in the NOVA desktop app.</p>
+      <SettingsSection id="wake" title={TITLE} description={DESCRIPTION} icon={Ear}>
+        <SettingsNotice>Das gibt es in der NOVA-Desktop-App.</SettingsNotice>
       </SettingsSection>
     );
   }
@@ -61,76 +65,82 @@ export function WakeSettings() {
   const prefs = status?.prefs;
   const busy = !status || configure.isPending;
   return (
-    <SettingsSection id="wake" title="Hey NOVA & double clap" description={description} icon={Ear}>
-      <SettingRow label="Wake with “Hey NOVA”" description={<ListenerLine listener={status?.phrase} on={prefs?.phrase} onResume={() => update({ muted: false })} />}>
-        <Switch label="Wake with Hey NOVA" checked={prefs?.phrase ?? false} disabled={busy} onChange={(phrase) => update({ phrase })} />
-      </SettingRow>
-      {prefs?.phrase && (
-        <SettingRow label="How sure NOVA must be" description="“Only when clear” ignores anything Windows isn't confident about.">
-          <SegmentedControl label="Hey NOVA sensitivity" value={prefs.phraseSensitivity} options={PHRASE_SENSITIVITY} onChange={(phraseSensitivity) => update({ phraseSensitivity })} />
-        </SettingRow>
-      )}
-      <SettingRow label="Wake with a double clap" description={<ListenerLine listener={status?.clap} on={prefs?.clap} onResume={() => update({ muted: false })} />}>
-        <Switch label="Wake with a double clap" checked={prefs?.clap ?? false} disabled={busy} onChange={(clap) => update({ clap })} />
-      </SettingRow>
-      {prefs?.clap && (
-        <SettingRow
-          label="Clap detection"
-          description="“Very precise” needs two crisp claps a quarter to half a second apart, equally loud, with quiet around them. Talking, music, typing, knocks and single claps never count."
-        >
-          <SegmentedControl label="Clap sensitivity" value={prefs.clapSensitivity} options={CLAP_SENSITIVITY} onChange={(clapSensitivity) => update({ clapSensitivity })} />
-        </SettingRow>
-      )}
-      <SettingRow
-        label="After waking"
-        description={
-          prefs?.afterWake === "listen" && status && !status.dictation ? (
-            <span>
-              Listening needs Windows' online speech recognition, which is off — until then NOVA AI opens ready to type.{" "}
-              <button type="button" className="font-medium text-accent-text hover:underline" onClick={() => openVoiceSettings("privacy-speech")}>
-                Turn it on
-              </button>
-            </span>
-          ) : (
-            "NOVA AI opens next to the dot."
-          )
-        }
-      >
-        <SegmentedControl label="After waking" value={prefs?.afterWake ?? "listen"} options={AFTER_WAKE} onChange={(afterWake) => update({ afterWake })} />
-      </SettingRow>
-      <MoreOptions label="Sound and games">
-      <SettingRow label="Play a sound when NOVA wakes">
-        <Switch label="Play a sound when NOVA wakes" checked={prefs?.chime ?? true} disabled={busy} onChange={(chime) => update({ chime })} />
-      </SettingRow>
-      <SettingRow label="Also in games" description="NOVA also reacts while a game or another fullscreen app runs. It answers by voice, without its window. With a game's sound on loudspeakers it can wake by mistake, and it costs a little performance. Presentations always pause it.">
-        <Switch label="Also in games" checked={prefs?.inGames ?? true} disabled={busy} onChange={(inGames) => update({ inGames })} />
-      </SettingRow>
-      </MoreOptions>
+    <SettingsSection id="wake" title={TITLE} description={DESCRIPTION} icon={Ear}>
       <WakeTest testing={status?.testing ?? false} clap={prefs?.clap ?? false} />
-      <p className="flex items-start gap-2 pt-4 text-[12.5px] leading-relaxed text-fg-muted">
-        <ShieldCheck size={14} className="mt-0.5 shrink-0 text-success" aria-hidden />
-        While one of these is on, the microphone stays open and Windows shows its microphone icon. The sound is checked on this PC as it comes in and is never
-        recorded, saved or sent. “Hey NOVA” is recognized offline by Windows. Listening pauses while the PC is locked.
-      </p>
+
+      <SettingCard title="„Hey NOVA“" description="Windows erkennt die zwei Wörter offline, auf diesem PC." icon={MessageCircle}>
+        <SettingLine label="Mit „Hey NOVA“ wecken" description={<ListenerLine listener={status?.phrase} on={prefs?.phrase} onResume={() => update({ muted: false })} />}>
+          <Switch label="Mit „Hey NOVA“ wecken" checked={prefs?.phrase ?? false} disabled={busy} onChange={(phrase) => update({ phrase })} />
+        </SettingLine>
+        {prefs?.phrase && (
+          <SettingLine label="Wie sicher NOVA sein muss" description="„Nur wenn eindeutig“ überhört alles, bei dem Windows sich nicht sicher ist.">
+            <SegmentedControl label="Wie sicher NOVA sein muss" value={prefs.phraseSensitivity} options={PHRASE_SENSITIVITY} onChange={(phraseSensitivity) => update({ phraseSensitivity })} />
+          </SettingLine>
+        )}
+      </SettingCard>
+
+      <SettingCard title="Doppelklatschen" description="Zweimal kurz und scharf klatschen, etwa eine halbe Sekunde auseinander und gleich laut, dann einen Moment still sein." icon={Hand}>
+        <SettingLine label="Mit Doppelklatschen wecken" description={<ListenerLine listener={status?.clap} on={prefs?.clap} onResume={() => update({ muted: false })} />}>
+          <Switch label="Mit Doppelklatschen wecken" checked={prefs?.clap ?? false} disabled={busy} onChange={(clap) => update({ clap })} />
+        </SettingLine>
+        {prefs?.clap && (
+          <SettingLine label="Klatsch-Erkennung" description="„Sehr genau“ braucht zwei saubere Klatscher im Abstand einer Viertel- bis halben Sekunde, gleich laut und mit Ruhe drumherum. Reden, Musik, Tippen, Klopfen und einzelnes Klatschen zählen nie.">
+            <SegmentedControl label="Klatsch-Erkennung" value={prefs.clapSensitivity} options={CLAP_SENSITIVITY} onChange={(clapSensitivity) => update({ clapSensitivity })} />
+          </SettingLine>
+        )}
+      </SettingCard>
+
+      <SettingCard title="Danach" icon={Zap}>
+        <SettingLine
+          label="Nach dem Wecken"
+          description={
+            prefs?.afterWake === "listen" && status && !status.dictation ? (
+              <span>
+                Zuhören braucht die Online-Spracherkennung von Windows, und die ist aus. Bis dahin öffnet sich NOVA AI bereit zum Tippen.{" "}
+                <button type="button" className="font-medium text-accent-text hover:underline" onClick={() => openVoiceSettings("privacy-speech")}>
+                  Einschalten
+                </button>
+              </span>
+            ) : (
+              "NOVA AI öffnet sich neben dem Punkt."
+            )
+          }
+        >
+          <SegmentedControl label="Nach dem Wecken" value={prefs?.afterWake ?? "listen"} options={AFTER_WAKE} onChange={(afterWake) => update({ afterWake })} />
+        </SettingLine>
+      </SettingCard>
+
+      <MoreOptions title="Ton und Spiele" description="Der Ton beim Wecken, und ob NOVA auch im Spiel zuhört." icon={Gamepad2}>
+        <SettingLine label="Ton beim Wecken" description="Ein kurzer Zweiklang, sobald NOVA wach ist.">
+          <Switch label="Ton beim Wecken" checked={prefs?.chime ?? true} disabled={busy} onChange={(chime) => update({ chime })} />
+        </SettingLine>
+        <SettingLine label="Auch in Spielen" description="NOVA reagiert auch, während ein Spiel oder eine andere Vollbild-App läuft, und antwortet dann nur mit der Stimme, ohne Fenster. Kommt der Spielton aus Lautsprechern, kann es versehentlich aufwachen, und es kostet etwas Leistung. Präsentationen pausieren es immer.">
+          <Switch label="Auch in Spielen" checked={prefs?.inGames ?? true} disabled={busy} onChange={(inGames) => update({ inGames })} />
+        </SettingLine>
+      </MoreOptions>
+
+      <PrivacyNote>
+        Solange eins von beiden an ist, bleibt das Mikrofon offen, und Windows zeigt sein Mikrofon-Symbol. Der Ton wird auf diesem PC geprüft, während er ankommt, und nie aufgenommen, gespeichert oder gesendet. „Hey NOVA“ erkennt Windows offline. Ist der PC gesperrt, pausiert das Zuhören.
+      </PrivacyNote>
     </SettingsSection>
   );
 }
 
 function ListenerLine({ listener, on, onResume }: { listener: WakeListener | undefined; on: boolean | undefined; onResume: () => void }) {
-  if (!listener || !on) return <>Off</>;
+  if (!listener || !on) return <>Aus</>;
   const tone = listener.state === "listening" ? "text-success" : listener.state === "unavailable" ? "text-danger" : "text-fg-muted";
   return (
     <span className={cn("inline-flex flex-wrap items-center gap-x-1.5", tone)} role="status">
       {listener.state === "listening" && <span className="size-1.5 animate-[nova-pulse_2s_ease-in-out_3] rounded-full bg-success" aria-hidden />}
       {listenerLabel(listener)}
       {listener.state === "paused" && listener.reason === "muted" && (
-        <button type="button" className="font-medium text-accent-text hover:underline" onClick={onResume}>
-          Resume
+        <button type="button" data-records className="font-medium text-accent-text hover:underline" onClick={onResume}>
+          Fortsetzen
         </button>
       )}
       {listener.state === "unavailable" && listener.settings && (
         <button type="button" className="font-medium text-accent-text hover:underline" onClick={() => openVoiceSettings(listener.settings!)}>
-          Open settings
+          Einstellungen öffnen
         </button>
       )}
     </span>
@@ -139,6 +149,8 @@ function ListenerLine({ listener, on, onResume }: { listener: WakeListener | und
 
 /** How long a test runs; the listener ends it on the Rust side. */
 const TEST_MS = 120_000;
+/** How long the dot shows that it would have woken. */
+const WOKEN_MS = 1300;
 
 /** "1:05" for 65 seconds. */
 function clock(ms: number): string {
@@ -157,12 +169,22 @@ interface LogLine {
 const TONE_ICON = { good: CircleCheck, muted: Minus, warn: TriangleAlert } as const;
 const TONE_CLASS = { good: "font-medium text-success", muted: "text-fg-muted", warn: "text-warning" } as const;
 
-/** Two minutes of "what NOVA hears", without opening anything. */
+/** The user's own dot, large enough to watch from across the desk, with its ring always shown. */
+function stageLook(look: DotLook | undefined): DotLook {
+  return { ...(look ?? DEFAULT_DOT_LOOK), diameter: 56, idleOpacity: 100, activity: true };
+}
+
+/**
+ * Two minutes of "what NOVA hears", on a stage: the dot follows the microphone and
+ * shows when it would have woken, and nothing opens meanwhile.
+ */
 function WakeTest({ testing, clap }: { testing: boolean; clap: boolean }) {
   const client = useQueryClient();
+  const { data: assistant } = useQuery({ queryKey: ASSISTANT_STATUS_KEY, queryFn: assistantStatus });
   const [level, setLevel] = useState(0);
   const [log, setLog] = useState<LogLine[]>([]);
   const [now, setNow] = useState(0);
+  const [woken, setWoken] = useState(false);
   const next = useRef(0);
   const started = useRef(0);
   const start = useMutation({ mutationFn: testWake, onSuccess: (status) => client.setQueryData(WAKE_STATUS_KEY, status) });
@@ -171,11 +193,13 @@ function WakeTest({ testing, clap }: { testing: boolean; clap: boolean }) {
     if (!testing) {
       setLevel(0);
       setNow(0);
+      setWoken(false);
       started.current = 0;
       return;
     }
     started.current = Date.now();
     setNow(started.current);
+    let calm: ReturnType<typeof setTimeout> | undefined;
     const tick = setInterval(() => setNow(Date.now()), 1000);
     const unlisten = listen<Heard>(ASSISTANT_EVENTS.wakeHeard, (event) => {
       if (event.payload.kind === "level") {
@@ -183,10 +207,17 @@ function WakeTest({ testing, clap }: { testing: boolean; clap: boolean }) {
         return;
       }
       const line = describeHeard(event.payload);
-      if (line) setLog((lines) => [{ id: next.current++, at: Date.now() - started.current, ...line }, ...lines].slice(0, 8));
+      if (!line) return;
+      setLog((lines) => [{ id: next.current++, at: Date.now() - started.current, ...line }, ...lines].slice(0, 8));
+      if (line.tone === "good") {
+        setWoken(true);
+        clearTimeout(calm);
+        calm = setTimeout(() => setWoken(false), WOKEN_MS);
+      }
     });
     return () => {
       clearInterval(tick);
+      clearTimeout(calm);
       void unlisten.then((stop) => stop());
     };
   }, [testing]);
@@ -195,58 +226,67 @@ function WakeTest({ testing, clap }: { testing: boolean; clap: boolean }) {
   useEffect(() => () => void testWake(false).catch(() => {}), []);
 
   const left = TEST_MS - (now - started.current);
+  const latest = log[0];
   return (
-    <div className="mt-3 rounded-[16px] border border-line bg-white/[0.025] p-4">
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        <div className="min-w-0 flex-1 basis-56">
-          <p className="text-[13.5px] font-medium text-fg">
-            Try it
-            {testing && (
-              <span className="ml-2 text-[12px] font-normal text-fg-subtle tabular-nums">
-                {clock(left)} left
-              </span>
-            )}
-          </p>
-          <p className="mt-0.5 text-[12.5px] text-fg-muted">
-            {testing ? "Say “Hey NOVA”, clap twice — or talk and type to see what's ignored. Nothing opens during the test." : "Shows what NOVA hears for two minutes."}
+    <div className="space-y-3">
+      <PreviewStage
+        label="Probelauf: was NOVA hört"
+        backdrop="dusk"
+        height={236}
+        corner={
+          <span className="flex items-center gap-2.5">
+            <Button
+              size="sm"
+              variant={testing ? "secondary" : "primary"}
+              icon={testing ? <Square size={11} aria-hidden /> : <Play size={13} aria-hidden />}
+              onClick={() => {
+                if (!testing) setLog([]);
+                start.mutate(!testing);
+              }}
+            >
+              {testing ? "Stopp" : "Probelauf starten"}
+            </Button>
+            {testing && <span className="rounded-full bg-black/45 px-2 py-0.5 text-[12px] text-white/80 tabular-nums backdrop-blur-md">noch {clock(left)}</span>}
+          </span>
+        }
+      >
+        <div className="flex h-full flex-col items-center justify-center gap-4 px-6 pb-8 text-center">
+          {/* A picture of the dot at work: nothing to click, so it is no stop for the keyboard. */}
+          <div inert className="flex">
+            <NovaDot look={stageLook(assistant?.look)} open={false} state={woken ? "completed" : testing ? "listening" : "idle"} level={Math.min(1, Math.sqrt(level))} onToggle={() => {}} onMenu={() => {}} onDragStart={() => {}} />
+          </div>
+          <p className={cn("max-w-md text-[13px] leading-relaxed", testing && latest ? TONE_CLASS[latest.tone] : "text-white/75")}>
+            {testing ? (latest?.text ?? "Sag „Hey NOVA“ oder klatsch zweimal. Oder rede und tipp, um zu sehen, was überhört wird.") : "Zwei Minuten lang siehst du hier, was NOVA hört. Dabei öffnet sich nichts."}
           </p>
         </div>
-        <Button
-          size="sm"
-          variant={testing ? "secondary" : "primary"}
-          onClick={() => {
-            if (!testing) setLog([]);
-            start.mutate(!testing);
-          }}
-        >
-          {testing ? "Stop" : "Start test"}
-        </Button>
-      </div>
+        {testing && (
+          <div className="absolute inset-x-0 bottom-0 h-1 bg-white/[0.08]" role="meter" aria-label="Mikrofonpegel" aria-valuemin={0} aria-valuemax={1} aria-valuenow={level}>
+            <div className="h-full bg-accent transition-[width] duration-100 ease-out" style={{ width: `${Math.min(100, Math.sqrt(level) * 100)}%` }} />
+          </div>
+        )}
+      </PreviewStage>
+
       {clap && (
-        <p className="mt-2 flex items-start gap-1.5 text-[12px] leading-relaxed text-fg-subtle">
+        <p className="flex items-start gap-1.5 px-1 text-[12px] leading-relaxed text-fg-subtle">
           <Hand size={13} className="mt-0.5 shrink-0" aria-hidden />
-          How to clap: two short, sharp claps with flat hands, about half a second apart and equally loud — then stay quiet for a moment.
+          So klatschst du: zweimal kurz und scharf mit flachen Händen, etwa eine halbe Sekunde auseinander und gleich laut. Dann einen Moment still sein.
         </p>
       )}
-      {testing && (
-        <div className="mt-3">
-          <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.06]" role="meter" aria-label="Microphone level" aria-valuemin={0} aria-valuemax={1} aria-valuenow={level}>
-            <div className="h-full rounded-full bg-accent transition-[width] duration-100 ease-out" style={{ width: `${Math.min(100, Math.sqrt(level) * 100)}%` }} />
-          </div>
-        </div>
-      )}
+
       {(testing || log.length > 0) && (
-        <div className="mt-3">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-[11.5px] font-medium tracking-wide text-fg-subtle uppercase">What NOVA heard</p>
-            {log.length > 0 && (
-              <button type="button" className="flex items-center gap-1 text-[12px] font-medium text-fg-muted hover:text-fg" onClick={() => setLog([])}>
-                <Eraser size={12} aria-hidden /> Clear
-              </button>
-            )}
-          </div>
-          <ol className="mt-1.5 space-y-1" aria-live="polite" aria-label="What NOVA heard">
-            {log.length === 0 && <li className="text-[12px] text-fg-subtle">Listening…</li>}
+        <SettingCard
+          title="Was NOVA gehört hat"
+          description="Das Neueste steht oben."
+          actions={
+            log.length > 0 && (
+              <Button size="sm" variant="ghost" icon={<Eraser size={12} aria-hidden />} onClick={() => setLog([])}>
+                Leeren
+              </Button>
+            )
+          }
+        >
+          <ol className="space-y-1" aria-live="polite" aria-label="Was NOVA gehört hat">
+            {log.length === 0 && <li className="text-[12.5px] text-fg-subtle">NOVA hört zu …</li>}
             {log.map((line) => {
               const Icon = TONE_ICON[line.tone];
               return (
@@ -258,7 +298,7 @@ function WakeTest({ testing, clap }: { testing: boolean; clap: boolean }) {
               );
             })}
           </ol>
-        </div>
+        </SettingCard>
       )}
     </div>
   );

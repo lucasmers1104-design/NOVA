@@ -9,7 +9,8 @@
     ".": "./src/index.ts",
     "./crypto": "./src/crypto.ts",
     "./client": "./src/client.ts",
-    "./state": "./src/state.ts"
+    "./state": "./src/state.ts",
+    "./app": "./src/app.ts"
   },
   "dependencies": {
     "@noble/ciphers": "2.4.0",

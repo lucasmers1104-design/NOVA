@@ -3,8 +3,8 @@ import { uiLocale, useNow } from "@/lib/time";
 import { useSettings } from "@/stores/settings";
 import { useWidgetConfig } from "../config";
 import { WidgetFrame } from "../WidgetFrame";
-import { AnalogFace, FlipFace, MinimalFace, WordsFace } from "./clocks/faces";
-import { type ClockStyle, clockParts, wallClock } from "./clocks/time";
+import { AnalogFace, FlipFace, GlassFace, MinimalFace, StackedFace, WordsFace } from "./clocks/faces";
+import { type ClockFont, type ClockStyle, clockFontStyle, clockParts, wallClock } from "./clocks/time";
 
 export const LOCAL_TIME_ZONE = "local";
 
@@ -57,7 +57,8 @@ export function formatOffset(minutes: number): string {
 }
 
 export function ClockWidget() {
-  const { style, timeZone, showSeconds } = useWidgetConfig<{ style: ClockStyle; timeZone: string; showSeconds: boolean }>();
+  const { style, font, timeZone, showSeconds } = useWidgetConfig<{ style: ClockStyle; font: ClockFont; timeZone: string; showSeconds: boolean }>();
+  const typeface = clockFontStyle(font);
   const use24Hour = useSettings((s) => s.use24HourClock);
   // The word clock only changes per minute, so it never needs second ticks.
   const now = useNow(showSeconds && style !== "words" ? 1000 : 60_000);
@@ -77,10 +78,16 @@ export function ClockWidget() {
 
   const offset = zone && formatOffset(zoneOffsetMinutes(now, zone));
 
-  if (style === "minimal") {
+  if (style === "minimal" || style === "glass" || style === "stacked") {
     return (
       <section aria-label={label} title={label} className="glass flex h-full items-center justify-center overflow-hidden rounded-widget p-5">
-        <MinimalFace clock={clock} showSeconds={showSeconds} className="text-[52px]" />
+        {style === "glass" ? (
+          <GlassFace clock={clock} showSeconds={showSeconds} className="text-[60px]" font={typeface} />
+        ) : style === "stacked" ? (
+          <StackedFace clock={clock} className="text-[46px]" font={typeface} />
+        ) : (
+          <MinimalFace clock={clock} showSeconds={showSeconds} className="text-[52px]" font={typeface} />
+        )}
       </section>
     );
   }
@@ -107,7 +114,9 @@ export function ClockWidget() {
         ) : style === "words" ? (
           <WordsFace wall={wallClock(now, zone)} className="text-[22px]" />
         ) : (
-          <p className="text-[38px] leading-none font-light tracking-tight text-fg tabular-nums">{time}</p>
+          <p className="text-[38px] leading-none font-light tracking-tight text-fg tabular-nums" style={typeface}>
+            {time}
+          </p>
         )}
         <p className="mt-2 flex justify-between gap-3 text-[12px] text-fg-subtle tabular-nums">
           {/* Words round to five minutes, so the exact time stays readable beside them. */}

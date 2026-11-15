@@ -1,15 +1,18 @@
 import { BarChart3, ExternalLink } from "lucide-react";
 import { useId, useState } from "react";
+import { SettingCard, SettingLine } from "@/components/settings-kit";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Switch } from "@/components/ui/Switch";
 import { notifyError } from "@/features/notifications/store";
-import { SettingRow } from "@/features/settings/SettingsLayout";
+import { recordChange } from "@/features/settings/recent";
+import { FIELD } from "@/features/settings/SettingsLayout";
+import { cn } from "@/lib/cn";
 import { callNative } from "@/lib/native";
 import { useRecentEvents, useTelemetryDecision, useTelemetryName, useTelemetryStatus } from "./api";
 
 function when(ms: number): string {
-  return new Date(ms).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
+  return new Date(ms).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" });
 }
 
 /** The switch that withdraws consent, and a view of what actually left this PC. */
@@ -24,74 +27,81 @@ export function TelemetrySettings() {
   const { data: recent } = useRecentEvents(showing);
   if (!status) return null;
 
-  const set = (accepted: boolean) => decide.mutate(accepted, { onError: (error) => notifyError("NOVA couldn't save your decision", error) });
+  // Turning it off is decided in a dialog outside this page, so the change is noted here.
+  const set = (accepted: boolean) => {
+    decide.mutate(accepted, { onError: (error) => notifyError("Deine Entscheidung ließ sich nicht speichern", error) });
+    recordChange("privacy", "Nutzungsstatistik senden");
+  };
   const shownName = name ?? status.displayName ?? "";
 
   return (
-    <div className="mb-4 rounded-[14px] border border-line bg-black/20 p-4">
-      <p className="mb-1 flex items-center gap-2 text-[13px] font-medium text-fg">
-        <BarChart3 size={14} className="text-accent-text" aria-hidden /> Usage statistics
-      </p>
-      <SettingRow
-        label="Send usage statistics"
-        description={status.accepted ? `On since ${status.decidedAt ? when(status.decidedAt) : "you agreed"}. Goes to ${status.host}. Turning this off stops it at once and deletes this PC's data there.` : "Off. NOVA sends no statistics."}
-      >
-        <Switch label="Send usage statistics" checked={status.accepted} disabled={decide.isPending} onChange={(on) => (on ? set(true) : setConfirming(true))} />
-      </SettingRow>
+    <SettingCard title="Nutzungsstatistik" description="Freiwillig, und aus, bis du zustimmst. Was gesendet wird, kannst du dir hier ansehen." icon={BarChart3}>
+      {/* Flipping the switch off only opens the dialog: no change yet. */}
+      <div data-no-record>
+        <SettingLine
+          label="Nutzungsstatistik senden"
+          description={status.accepted ? `An seit ${status.decidedAt ? when(status.decidedAt) : "deiner Zustimmung"}. Geht an ${status.host}. Ausschalten stoppt das sofort und löscht dort die Daten dieses PCs.` : "Aus. NOVA sendet keine Statistik."}
+        >
+          <Switch label="Nutzungsstatistik senden" checked={status.accepted} disabled={decide.isPending} onChange={(on) => (on ? set(true) : setConfirming(true))} />
+        </SettingLine>
+      </div>
       {status.accepted && (
-        <SettingRow label="Name in the statistics" htmlFor={nameId} description="Optional. Without one you are a random id.">
+        <SettingLine label="Name in der Statistik" htmlFor={nameId} description="Freiwillig. Ohne Namen bist du eine zufällige Kennung.">
           <input
             id={nameId}
             value={shownName}
             maxLength={40}
-            placeholder="No name"
+            placeholder="Kein Name"
             onChange={(event) => setName(event.target.value)}
             onBlur={() => {
-              if (name !== null && name !== (status.displayName ?? "")) saveName.mutate(name.trim() || null, { onError: (error) => notifyError("Couldn't save the name", error) });
+              if (name !== null && name !== (status.displayName ?? "")) saveName.mutate(name.trim() || null, { onError: (error) => notifyError("Der Name ließ sich nicht speichern", error) });
               setName(null);
             }}
-            className="h-9 w-56 rounded-control border border-line bg-black/25 px-3 text-[13px] text-fg outline-none select-text placeholder:text-fg-subtle focus:border-line-strong"
+            className={cn(FIELD, "w-56")}
           />
-        </SettingRow>
+        </SettingLine>
       )}
-      {status.lastError && status.accepted && <p className="mt-2 text-[12px] text-warning">Last attempt: {status.lastError}. NOVA tries again by itself.</p>}
-      <div className="mt-3 flex flex-wrap gap-2">
-        {status.accepted && (
-          <Button size="sm" variant="secondary" onClick={() => setShowing((v) => !v)}>
-            {showing ? "Hide what is sent" : "Show what is sent"}
+      <div className="pt-3.5">
+        {status.lastError && status.accepted && <p className="mb-3 text-[12px] text-warning">Letzter Versuch: {status.lastError}. NOVA versucht es von selbst wieder.</p>}
+        <div className="flex flex-wrap gap-2">
+          {status.accepted && (
+            <Button size="sm" variant="secondary" aria-expanded={showing} onClick={() => setShowing((now) => !now)}>
+              {showing ? "Gesendetes ausblenden" : "Zeigen, was gesendet wird"}
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" icon={<ExternalLink size={13} aria-hidden />} onClick={() => void callNative("open_url", { url: status.privacyUrl }).catch((error: unknown) => notifyError("Die Seite ließ sich nicht öffnen", error))}>
+            Datenschutzhinweis
           </Button>
-        )}
-        <Button size="sm" variant="ghost" icon={<ExternalLink size={13} />} onClick={() => void callNative("open_url", { url: status.privacyUrl }).catch((error: unknown) => notifyError("Couldn't open the page", error))}>
-          Privacy notice
-        </Button>
-        {showing && recent && recent.length > 0 && (
-          <Button size="sm" variant="ghost" onClick={() => void navigator.clipboard.writeText(JSON.stringify(recent.map((r) => r.body), null, 2))}>
-            Copy as JSON
-          </Button>
-        )}
-      </div>
-      {showing && (
-        <div className="mt-3 max-h-64 overflow-y-auto rounded-[10px] border border-line bg-black/25 p-2.5 font-mono text-[11px] leading-relaxed text-fg-muted select-text">
-          {recent?.length ? (
-            recent.map((row, index) => (
-              <p key={`${row.at}-${index}`} className="truncate">
-                <span className={row.sentAt ? "text-success" : "text-warning"}>{row.sentAt ? "sent   " : "waiting"}</span> {when(row.at)} {String(row.body.type)} {row.body.name ? String(row.body.name) : ""} {row.body.value ? String(row.body.value) : ""}
-              </p>
-            ))
-          ) : (
-            <p>Nothing yet.</p>
+          {showing && recent && recent.length > 0 && (
+            <Button size="sm" variant="ghost" onClick={() => void navigator.clipboard.writeText(JSON.stringify(recent.map((row) => row.body), null, 2))}>
+              Als JSON kopieren
+            </Button>
           )}
         </div>
-      )}
+        {showing && (
+          <div className="mt-3 max-h-64 overflow-y-auto rounded-[10px] border border-line bg-black/25 p-2.5 font-mono text-[11px] leading-relaxed text-fg-muted select-text">
+            {recent?.length ? (
+              recent.map((row, index) => (
+                <p key={`${row.at}-${index}`} className="truncate">
+                  <span className={row.sentAt ? "text-success" : "text-warning"}>{row.sentAt ? "gesendet" : "wartet  "}</span> {when(row.at)} {String(row.body.type)} {row.body.name ? String(row.body.name) : ""} {row.body.value ? String(row.body.value) : ""}
+                </p>
+              ))
+            ) : (
+              <p>Noch nichts.</p>
+            )}
+          </div>
+        )}
+      </div>
       <ConfirmDialog
         open={confirming}
-        title="Stop sending statistics?"
-        description="NOVA stops at once and deletes the data of this PC on the statistics service. Only totals that can't be linked to you remain."
-        confirmLabel="Stop and delete"
+        title="Keine Statistik mehr senden?"
+        description="NOVA hört sofort auf und löscht die Daten dieses PCs beim Statistik-Dienst. Es bleiben nur Summen, die sich nicht mit dir verbinden lassen."
+        confirmLabel="Stoppen und löschen"
+        cancelLabel="Abbrechen"
         danger
         onClose={() => setConfirming(false)}
         onConfirm={() => set(false)}
       />
-    </div>
+    </SettingCard>
   );
 }

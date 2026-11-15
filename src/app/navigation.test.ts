@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { NAV_ITEMS, resolveSidebar, WORKSPACE_ORDERABLE_ROUTES } from "./navigation";
+import { migrateNavigation, NAV_ITEMS, resolveSidebar, WORKSPACE_ORDERABLE_ROUTES } from "./navigation";
 import { ROUTES } from "./routes";
 
 describe("navigation registry", () => {
@@ -24,9 +24,11 @@ describe("navigation registry", () => {
       "NOVA AI",
       "Productivity",
       "Routines",
+      "NOVA Island",
+      "Discord",
+      "Live Information",
       "Media",
       "Files",
-      "Live Information",
       "Widget Studio",
       "Plugins",
       "Settings",
@@ -35,9 +37,19 @@ describe("navigation registry", () => {
 
   it("applies the user's sidebar order and visibility", () => {
     const groups = resolveSidebar(["media", "system", "apps", "ai", "productivity", "routines", "files", "live"], ["apps", "studio", "plugins"]);
-    expect(groups.workspace.map((i) => i.id)).toEqual(["home", "media", "system", "ai", "productivity", "routines", "files", "live"]);
+    expect(groups.workspace.map((i) => i.id)).toEqual(["home", "media", "system", "ai", "productivity", "routines", "files", "live", "island", "discord"]);
     expect(groups.customize).toEqual([]);
     expect(groups.footer.map((i) => i.id)).toEqual(["settings"]);
+  });
+
+  it("puts Island and Discord where Media and Files were, and hides those two", () => {
+    const next = migrateNavigation(["files", "system", "media", "apps"], ["plugins"]);
+    expect(next.order.slice(0, 4)).toEqual(["discord", "system", "island", "apps"]);
+    expect(next.order).toHaveLength(WORKSPACE_ORDERABLE_ROUTES.length);
+    expect(new Set(next.order).size).toBe(next.order.length);
+    expect(next.hidden).toEqual(["plugins", "media", "files"]);
+    // Running it twice changes nothing more.
+    expect(migrateNavigation(next.order, next.hidden).hidden).toEqual(next.hidden);
   });
 
   it("never hides or moves Home and Settings", () => {

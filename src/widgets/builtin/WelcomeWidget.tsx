@@ -7,11 +7,11 @@ import { NativeUnavailableError } from "@/lib/native";
 import { greetingFor, isoWeek, uiLocale, useNow } from "@/lib/time";
 import { useSettings } from "@/stores/settings";
 import { useWidgetConfig } from "../config";
-import { AnalogFace, FlipFace, MinimalFace, WordsFace } from "./clocks/faces";
-import { type ClockParts, type ClockStyle, clockParts, wallClock } from "./clocks/time";
+import { AnalogFace, FlipFace, GlassFace, MinimalFace, StackedFace, WordsFace } from "./clocks/faces";
+import { type ClockFont, type ClockParts, type ClockStyle, clockFontStyle, clockParts, wallClock } from "./clocks/time";
 
 export function WelcomeWidget() {
-  const { style, showSeconds, showPulse } = useWidgetConfig<{ style: ClockStyle; showSeconds: boolean; showPulse: boolean }>();
+  const { style, font, showSeconds, showPulse } = useWidgetConfig<{ style: ClockStyle; font: ClockFont; showSeconds: boolean; showPulse: boolean }>();
   // The word clock only changes per minute, so it never needs second ticks.
   const now = useNow(showSeconds && style !== "words" ? 1000 : 60_000);
   const profile = useProfile();
@@ -44,9 +44,9 @@ export function WelcomeWidget() {
         )}
       </div>
 
-      <div className={cn("relative flex shrink-0 flex-col items-end text-right", style === "minimal" ? "justify-center" : "justify-between")}>
-        <WelcomeClock style={style} now={now} clock={clock} showSeconds={showSeconds} />
-        {style !== "minimal" && (
+      <div className={cn("relative flex shrink-0 flex-col items-end text-right", style === "minimal" || style === "glass" || style === "stacked" ? "justify-center" : "justify-between")}>
+        <WelcomeClock style={style} font={font} now={now} clock={clock} showSeconds={showSeconds} />
+        {style !== "minimal" && style !== "glass" && style !== "stacked" && (
           <p className="text-[12px] text-fg-subtle tabular-nums">
             {/* Words round to five minutes, so the exact time stays readable beside them. */}
             {style === "words" ? `${clock.time}${clock.period ? ` ${clock.period}` : ""} · ` : ""}
@@ -58,10 +58,15 @@ export function WelcomeWidget() {
   );
 }
 
-function WelcomeClock({ style, now, clock, showSeconds }: { style: ClockStyle; now: Date; clock: ClockParts; showSeconds: boolean }) {
+function WelcomeClock({ style, font, now, clock, showSeconds }: { style: ClockStyle; font?: ClockFont; now: Date; clock: ClockParts; showSeconds: boolean }) {
+  const typeface = clockFontStyle(font);
   switch (style) {
     case "minimal":
-      return <MinimalFace clock={clock} showSeconds={showSeconds} className="text-[76px]" />;
+      return <MinimalFace clock={clock} showSeconds={showSeconds} className="text-[76px]" font={typeface} />;
+    case "glass":
+      return <GlassFace clock={clock} showSeconds={showSeconds} className="text-[84px]" font={typeface} />;
+    case "stacked":
+      return <StackedFace clock={clock} className="text-[64px]" font={typeface} />;
     case "analog":
       return <AnalogFace wall={wallClock(now)} label={clock.time} showSeconds={showSeconds} className="size-[124px]" />;
     case "flip":
@@ -71,7 +76,9 @@ function WelcomeClock({ style, now, clock, showSeconds }: { style: ClockStyle; n
     default:
       return (
         <p className="flex items-baseline tabular-nums" aria-label={`Current time ${clock.time}`}>
-          <span className="text-[60px] leading-none font-extralight tracking-tight text-fg">{clock.time}</span>
+          <span className="text-[60px] leading-none font-extralight tracking-tight text-fg" style={typeface}>
+            {clock.time}
+          </span>
           {showSeconds && <span className="ml-1.5 text-xl font-light text-fg-subtle">{clock.seconds}</span>}
           {clock.period && <span className="ml-1.5 text-sm font-medium text-fg-muted">{clock.period}</span>}
         </p>

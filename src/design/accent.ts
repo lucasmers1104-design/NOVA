@@ -83,12 +83,6 @@ export function resolveAccentColor(setting: AccentSetting): string {
   return ACCENT_PRESETS.find((p) => p.id === setting.id)?.color ?? ACCENT_PRESETS[0]!.color;
 }
 
-export function accentLabel(setting: AccentSetting): string {
-  if (setting.kind === "wallpaper") return "Matches wallpaper";
-  if (setting.kind === "custom") return `Custom ${normalizeHex(setting.color).toUpperCase()}`;
-  return ACCENT_PRESETS.find((p) => p.id === setting.id)?.name ?? "Accent";
-}
-
 export function sameAccent(a: AccentSetting, b: AccentSetting): boolean {
   return resolveAccentColor(a) === resolveAccentColor(b) && a.kind === b.kind;
 }

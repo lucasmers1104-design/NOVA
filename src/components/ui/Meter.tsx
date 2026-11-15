@@ -47,7 +47,7 @@ export function RingGauge({ percent, label, size = 128, thickness = 10, children
       className="relative shrink-0"
       style={{ width: size, height: size }}
     >
-      <svg width={size} height={size} className="-rotate-90" aria-hidden>
+      <svg width={size} height={size} className="-rotate-90 overflow-visible" aria-hidden>
         <circle cx={size / 2} cy={size / 2} r={radius} fill="none" strokeWidth={thickness} className="stroke-white/[0.07]" />
         <motion.circle
           cx={size / 2}

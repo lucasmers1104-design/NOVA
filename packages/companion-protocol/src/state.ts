@@ -122,6 +122,9 @@ export function applyMessage(state: PhoneState, message: PcMessage): PhoneState 
     }
     case "device.revoked":
       return emptyState;
+    // Answered by the phone's call bridge (mobile/src/phone.ts), nothing to show.
+    case "call.action":
+      return state;
   }
 }
 

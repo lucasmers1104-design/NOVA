@@ -6,6 +6,7 @@ import { renderWithQuery } from "@/test/render";
 import type { SpeechStatus } from "./speech/api";
 import { SpeechSettings } from "./SpeechSettings";
 import type { AgentStatus } from "./types";
+import * as voice from "./voice";
 
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => {}), emit: vi.fn(), emitTo: vi.fn() }));
 
@@ -93,13 +94,14 @@ describe("SpeechSettings", () => {
 
   it("shows the real hardware, what runs where and why", async () => {
     renderWithQuery(<SpeechSettings />);
-    expect(await screen.findByText(/i3-6006U CPU @ 2.00GHz · 2 cores, 4 threads · AVX2/)).toBeInTheDocument();
-    expect(screen.getByText(/HD Graphics 520 · 128 MB video memory · driver 24.20.100.6286/)).toBeInTheDocument();
-    expect(screen.getByText(/Also found: Vulkan \(not needed by NOVA\)/)).toBeInTheDocument();
+    const cpu = await screen.findByText(/i3-6006U CPU @ 2.00GHz/);
+    expect(cpu.parentElement).toHaveTextContent(/i3-6006U CPU @ 2.00GHz · 2 Kerne, 4 Threads · AVX2/);
+    expect(screen.getByText("Intel(R) HD Graphics 520").parentElement).toHaveTextContent(/HD Graphics 520 · 128 MB Grafikspeicher · Treiber 24.20.100.6286/);
+    expect(screen.getByText(/Außerdem gefunden: Vulkan \(braucht NOVA nicht\)/)).toBeInTheDocument();
     expect(screen.getByText(/Processor is faster here/)).toBeInTheDocument();
-    expect(screen.getByText(/Last spoke with Thorsten · CPU · 2 threads/)).toBeInTheDocument();
+    expect(screen.getByText(/Zuletzt gesprochen mit Thorsten · CPU · 2 threads/)).toBeInTheDocument();
     // A failed GPU run shows as such, not as a number.
-    expect(screen.getAllByText("didn't work")).toHaveLength(1);
+    expect(screen.getAllByText("ging nicht")).toHaveLength(1);
     expect(screen.getByText("0.16")).toBeInTheDocument();
   });
 
@@ -107,29 +109,53 @@ describe("SpeechSettings", () => {
     const user = userEvent.setup();
     renderWithQuery(<SpeechSettings />);
     const row = (await screen.findByText("Sulafat, warm")).closest("li")!;
-    const use = within(row).getByRole("button", { name: "Use" });
+    const use = within(row).getByRole("button", { name: "Nehmen" });
     expect(use).toBeDisabled();
-    expect(within(row).getByRole("button", { name: "Listen to Sulafat, warm" })).toBeDisabled();
+    expect(within(row).getByRole("button", { name: "Sulafat, warm anhören" })).toBeDisabled();
 
-    const key = screen.getByLabelText("Google Gemini API key");
+    const key = screen.getByLabelText("API-Schlüssel für Google Gemini");
     await user.type(key, "AIza-test-key");
-    await user.click(within(key.closest("form")!).getByRole("button", { name: "Save" }));
+    await user.click(within(key.closest("form")!).getByRole("button", { name: "Speichern" }));
     expect(call).toHaveBeenCalledWith("ai_key_set", { provider: "gemini", key: "AIza-test-key" });
     await waitFor(() => expect(use).toBeEnabled());
 
     await user.click(use);
     expect(call).toHaveBeenCalledWith("assistant_agent_configure", { prefs: expect.objectContaining({ voice: "online:gemini:Sulafat" }) });
-    expect(await within(row).findByText("NOVA's voice")).toBeInTheDocument();
+    expect(await within(row).findByText("NOVAs Stimme")).toBeInTheDocument();
+  });
+
+  it("plays a voice's sample, one at a time, and stops it on a second click", async () => {
+    const samples: (() => void)[] = [];
+    const speak = vi.spyOn(voice, "speak").mockImplementation(() => new Promise<void>((resolve) => samples.push(resolve)));
+    // A new sample, or the stop, ends the one that plays.
+    const stop = vi.spyOn(voice, "stopSpeaking").mockImplementation(() => samples.splice(0).forEach((end) => end()));
+    const user = userEvent.setup();
+    const view = renderWithQuery(<SpeechSettings />);
+    await user.click(await screen.findByRole("button", { name: "Eva anhören" }));
+    // With that voice, whatever NOVA's own voice is right now.
+    expect(speak).toHaveBeenLastCalledWith(expect.stringMatching(/^Hallo, ich bin NOVA/), { ...AGENT.prefs, voice: "nova:eva" }, "test");
+    expect(screen.getByRole("button", { name: "Eva stoppen" })).toBeInTheDocument();
+    expect(agent.prefs.voice).toBe("");
+
+    await user.click(screen.getByRole("button", { name: "Thorsten anhören" }));
+    expect(speak).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ voice: "nova:thorsten" }), "test");
+    await user.click(screen.getByRole("button", { name: "Thorsten stoppen" }));
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole("button", { name: "Thorsten anhören" })).toBeInTheDocument();
+
+    // Leaving the page ends a sample that still plays, and only then.
+    view.unmount();
+    expect(stop).toHaveBeenCalledTimes(1);
   });
 
   it("switches the performance mode and the device", async () => {
     const user = userEvent.setup();
     renderWithQuery(<SpeechSettings />);
-    await user.click(await screen.findByRole("radio", { name: "Low resource" }));
+    await user.click(await screen.findByRole("radio", { name: /^Sparsam/ }));
     expect(call).toHaveBeenCalledWith("speech_configure", { prefs: { ...STATUS.prefs, mode: "low" } });
-    await waitFor(() => expect(screen.getByRole("combobox", { name: "Runs on" })).toBeDisabled());
-    await user.click(screen.getByRole("radio", { name: "Auto" }));
-    const select = await screen.findByRole("combobox", { name: "Runs on" });
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Läuft auf" })).toBeDisabled());
+    await user.click(screen.getByRole("radio", { name: /^Auto\s*Schnell/ }));
+    const select = await screen.findByRole("combobox", { name: "Läuft auf" });
     await waitFor(() => expect(select).toBeEnabled());
     await user.selectOptions(select, "gpu:0");
     expect(call).toHaveBeenLastCalledWith("speech_configure", { prefs: { mode: "auto", backend: "directMl", adapter: 0, stt: "windows" } });
@@ -139,14 +165,16 @@ describe("SpeechSettings", () => {
     const user = userEvent.setup();
     renderWithQuery(<SpeechSettings />);
     const martin = (await screen.findByText("Martin (Kokoro)")).closest("li")!;
-    expect(within(martin).getByText("experimental")).toBeInTheDocument();
-    await user.click(within(martin).getByRole("button", { name: "Download" }));
+    expect(within(martin).getByText("experimentell")).toBeInTheDocument();
+    // Not downloaded yet: nothing to listen to or to choose.
+    expect(within(martin).getByRole("button", { name: "Martin (Kokoro) anhören" })).toBeDisabled();
+    await user.click(within(martin).getByRole("button", { name: "Laden" }));
     expect(call).toHaveBeenCalledWith("speech_install", { id: "martin" });
     const eva = screen.getAllByText("Eva").map((e) => e.closest("li")).find(Boolean)!;
-    await user.click(within(eva).getByRole("button", { name: "Use" }));
+    await user.click(within(eva).getByRole("button", { name: "Nehmen" }));
     expect(call).toHaveBeenCalledWith("assistant_agent_configure", { prefs: { ...AGENT.prefs, voice: "nova:eva" } });
-    expect(screen.getByText(/Downloading … 42 %/)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Measure again" }));
+    expect(screen.getByText(/Wird geladen … 42 %/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Neu messen" }));
     expect(call).toHaveBeenCalledWith("speech_benchmark");
   });
 });

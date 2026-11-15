@@ -13,6 +13,7 @@ import { DEFAULT_UPDATE_SOURCE } from "@/features/updates/store";
 import { useSettings } from "@/stores/settings";
 import { useUi } from "@/stores/ui";
 import { type CatalogItem, type PendingInstall, type PluginInfo, runnable, useCatalog, usePluginAction, usePlugins } from "./api";
+import { pluginIcon } from "./icons";
 import { PluginFrame } from "./PluginFrame";
 
 export default function PluginsPage() {
@@ -182,6 +183,7 @@ function Catalog({ source, busy, onInstall }: { source: string; busy: string | n
 }
 
 function PluginCard({ plugin }: { plugin: PluginInfo }) {
+  const Icon = pluginIcon(plugin);
   const openPage = useUi((s) => s.openPluginPage);
   const setAccent = useSettings((s) => s.setAccent);
   const [removing, setRemoving] = useState(false);
@@ -194,7 +196,7 @@ function PluginCard({ plugin }: { plugin: PluginInfo }) {
     <li className="glass rounded-widget p-5">
       <div className="flex items-start gap-3.5">
         <span className="accent-gradient flex size-11 shrink-0 items-center justify-center rounded-[13px] text-on-accent">
-          <Puzzle size={20} aria-hidden />
+          <Icon size={20} aria-hidden />
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">

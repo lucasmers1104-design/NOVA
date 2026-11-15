@@ -90,16 +90,74 @@ pub fn song_of(title: &str, artist: &str) -> (String, String) {
     }
 }
 
-/// "[01:23.45] text" lines; lines without a time are left out.
+/// "01:23.45" (also "01:23" and "01:23:45") in milliseconds.
+fn lrc_time(tag: &str) -> Option<i64> {
+    let (minutes, seconds) = tag.trim().split_once(':')?;
+    let seconds = seconds.replacen(':', ".", 1).parse::<f64>().ok().filter(|s| s.is_finite() && *s >= 0.0)?;
+    Some(minutes.parse::<i64>().ok()? * 60_000 + (seconds * 1000.0).round() as i64)
+}
+
+/// "[01:23.45] text" lines in time order; a line with several times ("[00:12.00][00:45.00] chorus")
+/// comes at each, and an "[offset:+250]" tag moves all of them (positive means earlier).
+/// Lines without a time are left out.
 fn parse_synced(text: &str) -> Vec<LyricLine> {
-    text.lines()
-        .filter_map(|line| {
-            let (time, rest) = line.strip_prefix('[')?.split_once(']')?;
-            let (minutes, seconds) = time.split_once(':')?;
-            let at = minutes.parse::<u64>().ok()? * 60_000 + (seconds.parse::<f64>().ok()? * 1000.0) as u64;
-            Some(LyricLine { at_ms: Some(at), text: rest.trim().to_string() })
-        })
-        .collect()
+    let mut offset = 0;
+    let mut timed: Vec<(i64, String)> = Vec::new();
+    for line in text.lines() {
+        let mut rest = line.trim();
+        let mut times = Vec::new();
+        while let Some((tag, after)) = rest.strip_prefix('[').and_then(|r| r.split_once(']')) {
+            if let Some(value) = tag.strip_prefix("offset:") {
+                offset = value.trim().parse().unwrap_or(0);
+            } else if let Some(at) = lrc_time(tag) {
+                times.push(at);
+            } else {
+                break;
+            }
+            rest = after;
+        }
+        timed.extend(times.into_iter().map(|at| (at, rest.trim().to_string())));
+    }
+    // Stable: lines at the same time keep their order.
+    timed.sort_by_key(|(at, _)| *at);
+    timed.into_iter().map(|(at, text)| LyricLine { at_ms: Some((at - offset).max(0) as u64), text }).collect()
+}
+
+/// How far an LRCLIB entry's length may be off before its timings belong to another cut.
+const SAME_CUT_MS: u64 = 3_000;
+
+/// How far an LRCLIB entry's length is from what plays; `None` when either is unknown.
+fn length_gap(value: &serde_json::Value, duration_ms: Option<u64>) -> Option<u64> {
+    let entry = value["duration"].as_f64().filter(|s| *s > 0.0)?;
+    Some(((entry * 1000.0).round() as i64 - duration_ms? as i64).unsigned_abs())
+}
+
+/// The lines of one LRCLIB entry. Its timings are only kept when it is as long as what
+/// plays: a radio edit or a video with an intro would run ahead or behind the singer.
+fn lines_of(value: &serde_json::Value, duration_ms: Option<u64>) -> Vec<LyricLine> {
+    let plain = |text: &str| text.lines().map(|line| LyricLine { at_ms: None, text: line.trim().to_string() }).collect::<Vec<_>>();
+    let synced = value["syncedLyrics"].as_str().map(parse_synced).unwrap_or_default();
+    if !synced.is_empty() && length_gap(value, duration_ms).is_none_or(|gap| gap <= SAME_CUT_MS) {
+        return synced;
+    }
+    match value["plainLyrics"].as_str().map(plain) {
+        Some(lines) if !lines.is_empty() => lines,
+        _ => synced.into_iter().map(|line| LyricLine { at_ms: None, ..line }).collect(),
+    }
+}
+
+/// The search result to use: synced and as long as what plays first, then synced, then the
+/// closest length; on a tie LRCLIB's own order.
+fn best_match(results: &[serde_json::Value], duration_ms: Option<u64>) -> Option<&serde_json::Value> {
+    let has = |value: &serde_json::Value, key: &str| value[key].as_str().is_some_and(|text| !text.trim().is_empty());
+    results.iter().filter(|value| has(value, "syncedLyrics") || has(value, "plainLyrics")).min_by_key(|value| {
+        let gap = length_gap(value, duration_ms);
+        (gap.is_some_and(|gap| gap > SAME_CUT_MS), !has(value, "syncedLyrics"), gap.unwrap_or(0))
+    })
+}
+
+fn is_synced(lines: &[LyricLine]) -> bool {
+    lines.iter().any(|line| line.at_ms.is_some())
 }
 
 /// A song's text from LRCLIB, a free public database; asked only when the user
@@ -107,15 +165,8 @@ fn parse_synced(text: &str) -> Vec<LyricLine> {
 async fn lyrics(title: &str, artist: &str, duration_ms: Option<u64>) -> CommandResult<Vec<LyricLine>> {
     let (song, singer) = song_of(title, artist);
     let mut query = vec![("track_name", song.clone()), ("artist_name", singer.clone())];
-    query.extend(duration_ms.map(|ms| ("duration", (ms / 1000).to_string())));
+    query.extend(duration_ms.map(|ms| ("duration", ((ms + 500) / 1000).to_string())));
     let exact = url::Url::parse_with_params("https://lrclib.net/api/get", &query).map_err(|e| e.to_string())?;
-    let found = |value: &serde_json::Value| -> Vec<LyricLine> {
-        let synced = value["syncedLyrics"].as_str().map(parse_synced).unwrap_or_default();
-        if !synced.is_empty() {
-            return synced;
-        }
-        value["plainLyrics"].as_str().map(|text| text.lines().map(|line| LyricLine { at_ms: None, text: line.trim().to_string() }).collect()).unwrap_or_default()
-    };
     let ask = |url: url::Url| async move {
         let response = crate::http::client().get(url).timeout(std::time::Duration::from_secs(10)).send().await.map_err(crate::http::describe)?;
         if response.status() == reqwest::StatusCode::NOT_FOUND {
@@ -124,13 +175,19 @@ async fn lyrics(title: &str, artist: &str, duration_ms: Option<u64>) -> CommandR
         let body = crate::http::read_limited(response, 2 * 1024 * 1024).await?;
         serde_json::from_slice::<serde_json::Value>(&body).map_err(|e| e.to_string())
     };
-    let lines = found(&ask(exact).await?);
-    if !lines.is_empty() {
-        return Ok(lines);
+    let exact = lines_of(&ask(exact).await?, duration_ms);
+    if is_synced(&exact) {
+        return Ok(exact);
     }
-    // The length or the spelling may differ a little.
+    // The length or the spelling may differ a little, or another entry has the timings.
     let wide = url::Url::parse_with_params("https://lrclib.net/api/search", &[("q", format!("{singer} {song}"))]).map_err(|e| e.to_string())?;
-    Ok(ask(wide).await?.as_array().and_then(|results| results.first().map(found)).unwrap_or_default())
+    let results = match ask(wide).await {
+        Ok(results) => results,
+        Err(_) if !exact.is_empty() => return Ok(exact),
+        Err(e) => return Err(e),
+    };
+    let wide = results.as_array().and_then(|results| best_match(results, duration_ms)).map(|value| lines_of(value, duration_ms)).unwrap_or_default();
+    Ok(if is_synced(&wide) || exact.is_empty() { wide } else { exact })
 }
 
 impl MediaState {
@@ -218,6 +275,14 @@ pub(crate) mod platform {
     fn current_session() -> CommandResult<Option<Session>> {
         let manager = Manager::RequestAsync().map_err(err)?.join().map_err(err)?;
         Ok(manager.GetCurrentSession().ok())
+    }
+
+    /// The AppUserModelId of the player Windows shows ("Spotify.exe", "SpotifyAB.SpotifyMusic_…!Spotify").
+    pub fn source_app_id() -> CommandResult<Option<String>> {
+        with_com(false, || {
+            let Some(session) = current_session()? else { return Ok(None) };
+            Ok(session.SourceAppUserModelId().ok().map(|s| s.to_string()).filter(|s| !s.is_empty()))
+        })
     }
 
     pub fn state() -> CommandResult<Option<MediaState>> {
@@ -559,6 +624,9 @@ pub(crate) mod platform {
     pub fn artwork() -> CommandResult<Option<String>> {
         Err(UNSUPPORTED.into())
     }
+    pub fn source_app_id() -> CommandResult<Option<String>> {
+        Err(UNSUPPORTED.into())
+    }
     pub fn control(_: &str) -> CommandResult<()> {
         Err(UNSUPPORTED.into())
     }
@@ -603,6 +671,13 @@ pub async fn media_state() -> CommandResult<Option<MediaState>> {
 #[tauri::command]
 pub async fn media_artwork() -> CommandResult<Option<String>> {
     blocking(platform::artwork).await
+}
+
+/// The logo of the app that plays, as a PNG data URL; `None` when Windows has none for it.
+/// The app is the one Windows reports right now, never a name or path from the webview.
+#[tauri::command]
+pub async fn media_app_icon() -> CommandResult<Option<String>> {
+    blocking(|| Ok(platform::source_app_id()?.and_then(|id| crate::app_icons::source_icon(&id)))).await
 }
 
 #[tauri::command]
@@ -693,6 +768,32 @@ mod tests {
     fn parses_synced_lyrics() {
         let lines = parse_synced("[00:13.13] Erste Zeile\n[01:02.50]\nkeine Zeit\n[kaputt] x");
         assert_eq!(lines, [LyricLine { at_ms: Some(13_130), text: "Erste Zeile".into() }, LyricLine { at_ms: Some(62_500), text: String::new() }]);
+    }
+
+    #[test]
+    fn repeats_lines_with_several_times_in_time_order() {
+        let line = |at: u64, text: &str| LyricLine { at_ms: Some(at), text: text.into() };
+        let lines = parse_synced("[ar:Someone]\n[offset:+500]\n[00:10.00][00:30.00] Refrain\n[00:20.00] Strophe\n[00:40:50] Ende");
+        assert_eq!(lines, [line(9_500, "Refrain"), line(19_500, "Strophe"), line(29_500, "Refrain"), line(40_000, "Ende")]);
+    }
+
+    #[test]
+    fn keeps_timings_only_for_the_same_cut() {
+        let entry = |duration: f64, synced: &str, plain: &str| serde_json::json!({ "duration": duration, "syncedLyrics": synced, "plainLyrics": plain });
+        let radio_edit = entry(180.0, "[00:05.00] a", "a");
+        let album = entry(212.0, "[00:31.00] a", "a");
+        let plain_only = entry(211.0, "", "a");
+        // Playing the album cut (211.5 s): its own timings, not the radio edit's.
+        let results = [radio_edit.clone(), plain_only.clone(), album.clone()];
+        assert_eq!(best_match(&results, Some(211_500)), Some(&album));
+        assert_eq!(lines_of(&album, Some(211_500)), [LyricLine { at_ms: Some(31_000), text: "a".into() }]);
+        // Only another cut is known: its text, but not its timings.
+        assert_eq!(lines_of(&radio_edit, Some(211_500)), [LyricLine { at_ms: None, text: "a".into() }]);
+        assert_eq!(best_match(&[radio_edit.clone(), plain_only.clone()], Some(211_500)), Some(&plain_only));
+        // Length unknown: the first synced one.
+        assert_eq!(best_match(&results, None), Some(&radio_edit));
+        assert_eq!(lines_of(&radio_edit, None), [LyricLine { at_ms: Some(5_000), text: "a".into() }]);
+        assert_eq!(best_match(&[entry(200.0, "", "")], Some(200_000)), None);
     }
 
     /// Against this PC's real mixer: every value is set to what it already is, so nothing

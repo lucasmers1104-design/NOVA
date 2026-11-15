@@ -23,7 +23,7 @@ describe("sanitizeSettings", () => {
   it("repairs navigation preferences", () => {
     const sanitized = sanitizeSettings({ navOrder: ["media", "media", "bogus", "home", "system"], navHidden: ["home", "files", "settings"] });
     expect(sanitized.navOrder?.slice(0, 2)).toEqual(["media", "system"]);
-    expect(sanitized.navOrder).toHaveLength(8);
+    expect(sanitized.navOrder).toHaveLength(10);
     expect(sanitized.navHidden).toEqual(["files"]);
   });
 
@@ -48,12 +48,26 @@ describe("navigation preferences", () => {
     expect(useSettings.getState().navOrder[0]).toBe("apps");
   });
 
+  it("takes a whole new order from a dragged list, and repairs it", () => {
+    useSettings.getState().setNavOrder(["media", "files", "media", "home", "system"]);
+    const order = useSettings.getState().navOrder;
+    // Each section once, Home never, and the ones left out keep their usual order at the end.
+    expect(order.slice(0, 3)).toEqual(["media", "files", "system"]);
+    expect(order).toHaveLength(defaultSettings().navOrder.length);
+    expect(new Set(order).size).toBe(order.length);
+    expect(order).not.toContain("home");
+  });
+
   it("hides, shows and resets sections", () => {
-    useSettings.getState().setNavHidden("media", true);
-    useSettings.getState().setNavHidden("media", true);
-    expect(useSettings.getState().navHidden).toEqual(["media"]);
+    // Media and Files start hidden: NOVA Island and Discord took their places.
+    expect(defaultSettings().navHidden).toEqual(["media", "files"]);
+    useSettings.getState().setNavHidden("live", true);
+    useSettings.getState().setNavHidden("live", true);
+    expect(useSettings.getState().navHidden).toEqual(["media", "files", "live"]);
+    useSettings.getState().setNavHidden("media", false);
+    expect(useSettings.getState().navHidden).toEqual(["files", "live"]);
     useSettings.getState().resetNavigation();
-    expect(useSettings.getState().navHidden).toEqual([]);
+    expect(useSettings.getState().navHidden).toEqual(["media", "files"]);
   });
 });
 

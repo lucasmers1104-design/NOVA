@@ -39,7 +39,7 @@ const RECENT_TURN_MS: i64 = 120_000;
 const PAUSE_MS: i64 = 6 * 3_600_000;
 
 /// NOVA's own pages, the only values a page event may carry.
-const ROUTES: &[&str] = &["home", "system", "apps", "ai", "productivity", "routines", "media", "files", "live", "studio", "plugins", "settings"];
+const ROUTES: &[&str] = &["home", "system", "apps", "ai", "productivity", "routines", "island", "discord", "media", "files", "live", "studio", "plugins", "settings"];
 
 pub fn base_url() -> String {
     #[cfg(debug_assertions)]

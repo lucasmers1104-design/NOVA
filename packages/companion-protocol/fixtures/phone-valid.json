@@ -8,5 +8,9 @@
   { "type": "status.get", "id": "s-1", "ts": 1762600000000 },
   { "type": "notices.get", "id": "n-1", "ts": 1762600000000 },
   { "type": "notices.ack", "id": "n-2", "ts": 1762600000000, "ids": ["x1", "x2"] },
-  { "type": "tasks.list", "id": "l-1", "ts": 1762600000000 }
+  { "type": "tasks.list", "id": "l-1", "ts": 1762600000000 },
+  { "type": "phone.notification", "id": "pn-1", "ts": 1762600000000, "notifId": "0|com.whatsapp|1|null|10123", "app": "com.whatsapp", "appName": "WhatsApp", "title": "Lena", "text": "Kommst du heute noch?", "icon": "iVBORw0KGgo=", "posted": 1762600000000 },
+  { "type": "phone.notification", "id": "pn-2", "ts": 1762600000000, "notifId": "0|com.whatsapp|2|null|10123", "app": "com.whatsapp", "appName": "WhatsApp", "title": "", "text": "", "icon": null, "posted": 1762600000000 },
+  { "type": "phone.call", "id": "pc-1", "ts": 1762600000000, "callId": "0|com.google.android.dialer|1|null|10045", "state": "ringing", "name": "Mama", "number": "+49 170 1234567", "photo": null, "canAnswer": true, "canDecline": true },
+  { "type": "phone.call", "id": "pc-2", "ts": 1762600000000, "callId": "0|com.google.android.dialer|1|null|10045", "state": "ended", "name": null, "number": null, "photo": null, "canAnswer": false, "canDecline": false }
 ]

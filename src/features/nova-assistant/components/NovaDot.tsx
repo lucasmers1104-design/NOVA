@@ -68,14 +68,16 @@ interface NovaDotProps {
   onDragStart: () => void;
   /** Draw it as if pointed at (the Settings preview). */
   hovered?: boolean;
+  /** What a click does where it doesn't open NOVA AI (the Settings preview); replaces the dot's own name. */
+  actionLabel?: string;
 }
 
 /** The floating NOVA dot: click to talk, drag to move, right-click for options. */
-export function NovaDot({ look, open, state = "idle", level = 0, onToggle, onMenu, onDragStart, hovered = false }: NovaDotProps) {
+export function NovaDot({ look, open, state = "idle", level = 0, onToggle, onMenu, onDragStart, hovered = false, actionLabel }: NovaDotProps) {
   const press = useRef<{ x: number; y: number } | null>(null);
   const resting = state === "idle" || state === "completed";
   const breathing = useBreathing(look.breathe && look.glow && !open && resting);
-  const label = open ? "Close NOVA AI" : "Talk to NOVA";
+  const label = actionLabel ?? (open ? "Close NOVA AI" : "Talk to NOVA");
 
   return (
     <button
@@ -100,7 +102,8 @@ export function NovaDot({ look, open, state = "idle", level = 0, onToggle, onMen
         } as CSSProperties
       }
       aria-label={label}
-      aria-expanded={open}
+      // Only the real dot opens something.
+      aria-expanded={actionLabel ? undefined : open}
       title={label}
       onPointerDown={(event) => {
         if (event.button === 0) press.current = { x: event.screenX, y: event.screenY };
@@ -132,12 +135,39 @@ export function NovaDot({ look, open, state = "idle", level = 0, onToggle, onMen
         }
       }}
     >
+      <DotLayers look={look} />
+    </button>
+  );
+}
+
+/** What the dot is drawn from: glow, focus ring, activity ring and the body with its sparkle. */
+function DotLayers({ look }: { look: DotLook }) {
+  return (
+    <>
       {look.glow && <span className="nova-dot__glow" aria-hidden />}
       <span className="nova-dot__ring" aria-hidden />
       <span className="nova-dot__activity" aria-hidden />
       <span className={look.style === "orb" ? "nova-dot__body nova-orb" : "nova-dot__body"} aria-hidden>
         {look.icon && <Sparkle />}
       </span>
-    </button>
+    </>
+  );
+}
+
+/** The dot as a picture of itself at rest, fully shown: for places that show a look without being the dot (Settings' style cards). */
+export function DotPicture({ look }: { look: DotLook }) {
+  return (
+    <span
+      className="nova-dot block"
+      data-style={look.style}
+      data-tinted={look.color !== "accent"}
+      data-light={isLightColor(look.color)}
+      data-glow={look.glow}
+      // The dot's own stylesheet makes it a pointer target; a picture takes the cursor of what it sits in.
+      style={{ "--dot": `${look.diameter}px`, "--dot-color": dotColor(look.color), "--idle": 1, cursor: "inherit" } as CSSProperties}
+      aria-hidden
+    >
+      <DotLayers look={look} />
+    </span>
   );
 }

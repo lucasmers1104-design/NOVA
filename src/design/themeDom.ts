@@ -43,3 +43,9 @@ export function applyTheme(settings: ThemeSettings, root: HTMLElement = document
   root.style.setProperty("--radius-chip", `${9 * corners}px`);
   root.style.setProperty("--font-sans", UI_FONTS[settings.uiFont].stack);
 }
+
+/** Whether motion is reduced right now: by NOVA's own setting, or by Windows while that says "system". */
+export function prefersReducedMotion(root: HTMLElement = document.documentElement): boolean {
+  const setting = root.dataset.motion;
+  return setting === "reduced" || (setting !== "full" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+}

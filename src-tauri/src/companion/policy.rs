@@ -40,7 +40,7 @@ pub fn tier(action: &Action, allowlist: &[AllowedApp]) -> Tier {
         Search(_) | List(_) | SystemInfo | LookAtScreen(_) | ListTasks { .. } | NowPlaying | TaskManager | InstalledPrograms | ListWindows | ListGames
         | GameSettings { .. } | FindJunk | ListInstalledGames | ListTimers | Weather(_) | InternetSpeed | YoutubeSearch(_) | YoutubeChannel(_)
         | YoutubeAbout(_) | ListAudioApps | ListOutputs | ListRoutines | ListWatchers | ListMemory | PcCheck | GameTime | RecentLoad | VirusScanStatus
-        | ReadWebpage(_) => Tier::Free,
+        | ReadWebpage(_) | RelayChannels => Tier::Free,
         // Chosen by the user as free (2026-11-08): music controls, timers, websites.
         Media { .. } | SetTimer { .. } | CancelTimers(_) | OpenUrl(_) => Tier::Free,
         // Calling off a shutdown only makes things safer.
@@ -73,7 +73,7 @@ pub fn tier(action: &Action, allowlist: &[AllowedApp]) -> Tier {
         | UseElement { .. } | SpotifyPlay { .. } | SpotifyPlayFromLibrary(_) | SpotifyLibrary | ChangeGameSettings { .. } | RestoreGameSettings(_)
         | VirusScan(_) | CleanUp { .. } | Uninstall { .. } | Power { .. } | ReadClipboard | CopyToClipboard(_) | YoutubePlay(_) | YoutubeKey(_)
         | SetAudioApp { .. } | SetOutput(_) | RunRoutine(_) | StopWatching(_) | Remember(_) | Forget(_) | Tidy(_) | UndoTidy | ReadFile { .. }
-        | BrowserRead(_) | Clip { .. } | SendClip(_) => Tier::Approve,
+        | BrowserRead(_) | Clip { .. } | SendClip(_) | DiscordSend(_) | RelaySend { .. } | RelayAnnounce { .. } => Tier::Approve,
         // Never from the phone: lasting automation (a setting), changes to the Spotify
         // account, and working websites (buying and signing in can't be ruled out in code).
         SaveRoutine(_) | DeleteRoutine(_) | SpotifyControl(_) | BrowserUse { .. } => Tier::Never,

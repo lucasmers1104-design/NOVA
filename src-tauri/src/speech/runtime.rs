@@ -5,7 +5,9 @@
 //! It is downloaded on demand and loaded by absolute path, together with its
 //! own DirectML.dll, so neither Windows' older DirectML nor any other
 //! onnxruntime.dll on the PC can be picked up instead. Once loaded it stays
-//! loaded until NOVA exits.
+//! loaded until its process exits, and keeps much of the memory it used:
+//! that is why it is only ever loaded in NOVA's speech processes (see
+//! `helper`) and in the measurements' probe processes, never in NOVA itself.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -56,11 +58,6 @@ pub fn folder(speech_dir: &Path) -> PathBuf {
 /// The runtime once it has been loaded in this process.
 pub fn loaded() -> Option<&'static Runtime> {
     RUNTIME.get().and_then(|r| r.as_ref().ok())
-}
-
-/// Why loading failed in this process, if it did.
-pub fn load_error() -> Option<String> {
-    RUNTIME.get().and_then(|r| r.as_ref().err().cloned())
 }
 
 /// Loads the runtime from `dir` (once per process).

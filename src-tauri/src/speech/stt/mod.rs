@@ -7,19 +7,91 @@ pub mod dictation;
 pub mod parakeet;
 pub mod vad;
 
+use std::sync::Arc;
 use std::time::Instant;
 
 use tauri::{AppHandle, Manager, Runtime};
 
 use crate::storage::{self, Database};
 
+use super::helper::{RecognizerSpec, Session};
 use super::runtime::Device;
 use super::{bench, lock, state, SttPref};
 
+/// Turns a phrase (16 kHz mono) into text.
+pub trait Transcriber: Send {
+    fn transcribe(&mut self, audio: &[f32]) -> Result<String, String>;
+}
+
+/// Says how likely each 32 ms of audio is speech.
+pub trait SpeechDetector: Send {
+    fn probability(&mut self, frame: &[f32]) -> Result<f32, String>;
+    fn reset(&mut self);
+}
+
+impl Transcriber for parakeet::Parakeet {
+    fn transcribe(&mut self, audio: &[f32]) -> Result<String, String> {
+        parakeet::Parakeet::transcribe(self, audio)
+    }
+}
+
+impl SpeechDetector for vad::Vad {
+    fn probability(&mut self, frame: &[f32]) -> Result<f32, String> {
+        vad::Vad::probability(self, frame)
+    }
+    fn reset(&mut self) {
+        vad::Vad::reset(self)
+    }
+}
+
+/// Parakeet and the VAD in NOVA's speech process. Two handles on one session,
+/// because a turn transcribes a finished phrase while it keeps listening.
+struct Remote(Arc<Session>);
+
+impl Transcriber for Remote {
+    fn transcribe(&mut self, audio: &[f32]) -> Result<String, String> {
+        self.0.transcribe(audio).map_err(String::from)
+    }
+}
+
+impl SpeechDetector for Remote {
+    fn probability(&mut self, frame: &[f32]) -> Result<f32, String> {
+        self.0.probability(frame).map_err(String::from)
+    }
+    fn reset(&mut self) {
+        // A process that is gone has nothing left to reset.
+        let _ = self.0.reset();
+    }
+}
+
 pub struct Recognizer {
-    pub asr: parakeet::Parakeet,
-    pub vad: vad::Vad,
+    pub asr: Box<dyn Transcriber>,
+    pub vad: Box<dyn SpeechDetector>,
     pub device: Device,
+    /// The speech process it lives in; none for models loaded right here (measurements).
+    session: Option<Arc<Session>>,
+}
+
+impl Recognizer {
+    /// Models loaded in this very process, as the speech process and the measurements do.
+    pub fn in_process(asr: parakeet::Parakeet, vad: vad::Vad, device: Device) -> Self {
+        Self { asr: Box::new(asr), vad: Box::new(vad), device, session: None }
+    }
+
+    pub fn remote(session: Session, device: Device) -> Self {
+        let session = Arc::new(session);
+        Self { asr: Box::new(Remote(session.clone())), vad: Box::new(Remote(session.clone())), device, session: Some(session) }
+    }
+
+    /// Its speech process still runs (always, for models loaded right here).
+    pub fn alive(&self) -> bool {
+        self.session.as_ref().is_none_or(|session| session.alive())
+    }
+
+    /// Its speech process went down by itself while the model ran on the graphics card.
+    fn lost_to_directml(&self) -> bool {
+        self.device.is_gpu() && self.session.as_ref().is_some_and(|session| session.crashed())
+    }
 }
 
 /// The recognizer in memory; taken out while a turn uses it.
@@ -110,12 +182,13 @@ fn free_memory() -> u64 {
 }
 
 fn open<R: Runtime>(app: &AppHandle<R>) -> Result<Recognizer, String> {
-    let runtime = super::runtime(app).ok_or("The speech runtime isn't downloaded")?;
+    let runtime = super::runtime_dir_for(app).ok_or("The speech runtime isn't downloaded")?;
     let dir = super::recognizer_dir(app).ok_or("The offline recognizer isn't downloaded")?;
     let (device, _) = super::plan(app, "parakeet");
-    let asr = super::open_guarded(app, &device, || parakeet::Parakeet::open(runtime, &dir, &device))?;
-    let vad = vad::Vad::open(runtime, &dir.join("silero_vad.onnx"))?;
-    Ok(Recognizer { asr, vad, device })
+    let spec = RecognizerSpec { runtime, dir, device: device.clone() };
+    let helper = &state(app).helpers.recognizer;
+    let session = super::open_guarded(app, &device, || helper.open_recognizer(&spec))?;
+    Ok(Recognizer::remote(session, device))
 }
 
 /// The recognizer for a turn (loaded if needed); give it back afterwards.
@@ -125,7 +198,8 @@ pub fn take<R: Runtime>(app: &AppHandle<R>) -> Result<Recognizer, String> {
     let _loading = lock(&LOADING);
     let mut slot = lock(&state(app).stt);
     if let Some(loaded) = slot.as_mut().filter(|l| l.device == wanted) {
-        if let Some(recognizer) = loaded.recognizer.take() {
+        // One whose speech process ended meanwhile is dropped: a new process loads it again.
+        if let Some(recognizer) = loaded.recognizer.take().filter(Recognizer::alive) {
             return Ok(recognizer);
         }
     }
@@ -136,11 +210,25 @@ pub fn take<R: Runtime>(app: &AppHandle<R>) -> Result<Recognizer, String> {
 /// Held while the recognizer loads.
 static LOADING: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// A turn failed: its recognizer isn't kept, the next turn loads a fresh one.
+/// One that a graphics driver took down runs on the processor from then on.
+pub fn discard<R: Runtime>(app: &AppHandle<R>, recognizer: Recognizer) {
+    if recognizer.lost_to_directml() {
+        super::directml_failed(app);
+    }
+    // With the last handle gone, the idle check ends the speech process.
+    super::ensure_unloader(app);
+}
+
 pub fn give_back<R: Runtime>(app: &AppHandle<R>, mut recognizer: Recognizer) {
+    // Its speech process crashed or was stopped for new settings: nothing to keep.
+    if !recognizer.alive() {
+        return discard(app, recognizer);
+    }
+    super::ensure_unloader(app);
     recognizer.vad.reset();
     let device = recognizer.device.clone();
     *lock(&state(app).stt) = Some(LoadedRecognizer { recognizer: Some(recognizer), device, last_used: Instant::now() });
-    super::ensure_unloader(app);
 }
 
 /// "Hey NOVA" has the recognizer; dictation gets it from there, no need to load another.
@@ -164,5 +252,8 @@ pub fn warm<R: Runtime>(app: &AppHandle<R>) {
 
 /// "Parakeet · CPU · 2 threads" while it is loaded.
 pub fn active_label<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
+    if !state(app).helpers.recognizer.running() {
+        return None;
+    }
     lock(&state(app).stt).as_ref().map(|l| format!("Parakeet · {}", l.device.label()))
 }

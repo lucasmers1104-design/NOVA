@@ -855,7 +855,7 @@ mod tests {
                 let device = crate::speech::runtime::Device::Cpu { threads: 4 };
                 let asr = crate::speech::stt::parakeet::Parakeet::open(runtime, &dir, &device).unwrap();
                 let vad = crate::speech::stt::vad::Vad::open(runtime, &dir.join("silero_vad.onnx")).unwrap();
-                let mut recognizer = crate::speech::stt::Recognizer { asr, vad, device };
+                let mut recognizer = crate::speech::stt::Recognizer::in_process(asr, vad, device);
                 println!("spotter ready after {} s", started.elapsed().as_secs());
                 crate::shell::with_com(false, || spot::listen(&mut recognizer, &spotting, &|heard| println!("{:>4}s phrase accepted={} {}", started.elapsed().as_secs(), heard.confidence == Confidence::High, heard.text.chars().count()))).unwrap();
             });

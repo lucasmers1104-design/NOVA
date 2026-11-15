@@ -47,6 +47,8 @@ export const finderSetContent = (enabled: boolean) => callNative<FinderStatus>("
 export const finderAddAllDrives = () => callNative<FinderStatus>("finder_add_all_drives");
 export const finderReindex = () => callNative<FinderStatus>("finder_reindex");
 
+/** The query the dot's status lives under, for every page of Settings that shows the dot. */
+export const ASSISTANT_STATUS_KEY = ["assistant", "status"] as const;
 export const assistantStatus = () => callNative<AssistantStatus>("assistant_status");
 export const configureAssistant = (update: AssistantPrefsUpdate) => callNative<AssistantStatus>("assistant_configure", { update });
 export const resetDotPosition = () => callNative<AssistantStatus>("assistant_reset_position");
@@ -65,6 +67,8 @@ export const panelHidden = (generation: number) => callNative<void>("assistant_p
 
 export const dotReady = () => callNative<DotView>("assistant_dot_ready");
 export const panelReady = () => callNative<PanelView>("assistant_panel_ready");
+/** Ends this panel's window and page; `snapshot` is its conversation, for the next panel. */
+export const retirePanel = (snapshot: string) => callNative<void>("assistant_panel_retire", { snapshot });
 export const openDotMenu = () => callNative<void>("assistant_dot_menu");
 /** Shows NOVA's main window, optionally at Settings → NOVA AI assistant or AI providers. */
 export const openNova = (section?: "assistant" | "ai" | "productivity" | "routines" | "media") => callNative<void>("assistant_open_main", { section: section ?? null });

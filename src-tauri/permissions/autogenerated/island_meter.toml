@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-island-meter"
+description = "Enables the island_meter command without any pre-configured scope."
+commands.allow = ["island_meter"]
+
+[[permission]]
+identifier = "deny-island-meter"
+description = "Denies the island_meter command without any pre-configured scope."
+commands.deny = ["island_meter"]

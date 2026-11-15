@@ -1,45 +1,75 @@
+import type { ApprovalRequest } from "@nova/companion-protocol";
 import { liveApprovals } from "@nova/companion-protocol/state";
 import { router } from "expo-router";
-import { useEffect, useState } from "react";
-import { FlatList, Pressable, Text, View } from "react-native";
+import { FlatList, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { RISK } from "../../src/risk";
 import { useCompanion } from "../../src/store";
-import { colors, ui } from "../../src/theme";
-import { Backdrop, Glass, Icon } from "../../src/ui";
+import { space, TAB_BAR_ROOM, themed, useTheme } from "../../src/theme";
+import { Badge, Card, EmptyState, Icon, IconTile, OfflineBanner, ScreenHeader, TabScene, Text, useNow } from "../../src/ui";
+
+function ApprovalCard({ request, now }: { request: ApprovalRequest; now: number }) {
+  const styles = useStyles();
+  const { colors } = useTheme();
+  const risk = RISK[request.risk];
+  const left = Math.max(0, Math.round((request.expiresAt - now) / 1000));
+  return (
+    <Card
+      accent={request.risk !== "high"}
+      danger={request.risk === "high"}
+      label={`${request.title}. ${risk.short}. Noch ${left} Sekunden.`}
+      onPress={() => router.push({ pathname: "/approval/[id]", params: { id: request.requestId } })}
+      style={styles.card}
+    >
+      <IconTile name="fingerprint" tint={risk.tint} />
+      <View style={styles.body}>
+        <Text variant="headline" numberOfLines={3}>
+          {request.title}
+        </Text>
+        <View style={styles.meta}>
+          <Badge label={risk.short} tint={risk.tint} />
+          <Text variant="footnote" tone={left < 30 ? "warning" : "muted"}>
+            noch {left} s
+          </Text>
+        </View>
+      </View>
+      <Icon name="chevron" size={18} color={colors.subtle} />
+    </Card>
+  );
+}
 
 export default function ApprovalsScreen() {
+  const styles = useStyles();
   const insets = useSafeAreaInsets();
   const approvals = useCompanion((s) => s.approvals);
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, []);
+  const offset = useCompanion((s) => s.clockOffset);
+  // The PC's clock decides when an approval expires, so the countdown runs on it too.
+  const now = useNow(1000) + offset;
   const open = liveApprovals(approvals, now);
 
   return (
-    <View style={ui.screen}>
-      <Backdrop />
+    <TabScene>
       <FlatList
         data={open}
         keyExtractor={(item) => item.requestId}
-        contentContainerStyle={{ padding: 20, paddingTop: insets.top + 16, gap: 12 }}
-        ListHeaderComponent={<Text style={[ui.title, { marginBottom: 6 }]}>Freigaben</Text>}
-        ListEmptyComponent={<Text style={ui.muted}>Keine offenen Freigaben. Wenn NOVA für einen Auftrag etwas auf deinem PC ändern will, fragt es hier.</Text>}
-        renderItem={({ item }) => (
-          <Pressable accessibilityRole="button" onPress={() => router.push({ pathname: "/approval/[id]", params: { id: item.requestId } })}>
-            <Glass style={{ flexDirection: "row", gap: 14, alignItems: "center" }}>
-              <Icon name="fingerprint" color={item.risk === "high" ? colors.danger : colors.violet} />
-              <View style={{ flex: 1 }}>
-                <Text style={ui.heading} numberOfLines={2}>
-                  {item.title}
-                </Text>
-                <Text style={ui.muted}>Noch {Math.max(0, Math.round((item.expiresAt - now) / 1000))} Sekunden</Text>
-              </View>
-            </Glass>
-          </Pressable>
-        )}
+        contentContainerStyle={[styles.page, { paddingTop: insets.top + 18, paddingBottom: TAB_BAR_ROOM + insets.bottom }]}
+        ListHeaderComponent={
+          <View style={styles.head}>
+            <ScreenHeader eyebrow="Mit Fingerabdruck" title="Freigaben" />
+            <OfflineBanner />
+          </View>
+        }
+        ListEmptyComponent={<EmptyState icon="shield" title="Nichts freizugeben" text="Wenn NOVA für einen Auftrag etwas auf deinem PC ändern will, fragt es hier. Ohne dich passiert nichts." />}
+        renderItem={({ item }) => <ApprovalCard request={item} now={now} />}
       />
-    </View>
+    </TabScene>
   );
 }
+
+const useStyles = themed(() => ({
+  page: { paddingHorizontal: space.page, gap: space.md },
+  head: { gap: space.md },
+  card: { flexDirection: "row", gap: space.md + 2, alignItems: "center" },
+  body: { flex: 1, gap: space.sm },
+  meta: { flexDirection: "row", alignItems: "center", gap: space.sm + 2, flexWrap: "wrap" },
+}));

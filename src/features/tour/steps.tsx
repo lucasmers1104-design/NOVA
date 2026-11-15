@@ -133,7 +133,7 @@ function LookStep() {
         </div>
         <Switch label="Glas-Effekte" checked={transparency} onChange={setTransparency} />
       </div>
-      <p className="mt-3 text-[12px] text-fg-subtle">Hintergründe und eigene Farben findest du später unter Settings → Appearance.</p>
+      <p className="mt-3 text-[12px] text-fg-subtle">Hintergründe und eigene Farben findest du später unter Einstellungen → Darstellung.</p>
     </>
   );
 }
@@ -512,6 +512,8 @@ const AREAS: Record<RouteId, string> = {
   ai: "Chatte hier mit Anthropic, OpenAI oder Gemini. Dein Verlauf bleibt erhalten.",
   productivity: "Aufgaben mit Erinnerungen, Projekte, Notizen und ein Kalender.",
   routines: "Was ich von selbst für dich erledige und was ich mir über dich merke.",
+  island: "Gestalte die Nova Island oben am Bildschirm: Musik, Anrufe, Benachrichtigungen und ich.",
+  discord: "Verbinde mich mit Discord. Dann schreibe ich für dich in Kanäle und sage Dinge im Call an.",
   media: "Steuere, was gerade läuft, zum Beispiel Spotify oder den Browser, dazu die Lautstärke.",
   files: "Standardordner, Favoriten und zuletzt benutzte Dateien an einem Ort.",
   live: "Wetter, Nachrichten aus deinen Feeds und Weltuhren.",
@@ -529,8 +531,11 @@ function ExploreStep() {
   const explored = useTour((s) => s.explored);
   const explore = useTour((s) => s.explore);
   const complete = useTour((s) => s.complete);
-  const next = NAV_ITEMS.find((item) => !explored.includes(item.id));
-  const current = NAV_ITEMS.find((item) => item.id === route);
+  const hidden = useSettings((s) => s.navHidden);
+  // Only what the sidebar shows: hidden sections (Media and Files by default) can't be clicked.
+  const items = NAV_ITEMS.filter((item) => !hidden.includes(item.id));
+  const next = items.find((item) => !explored.includes(item.id));
+  const current = items.find((item) => item.id === route);
 
   useEffect(() => {
     explore(route);
@@ -558,7 +563,7 @@ function ExploreStep() {
         </div>
       )}
       <ul className="mt-3 grid grid-cols-6 gap-1.5" aria-label="Bereiche">
-        {NAV_ITEMS.map((item) => {
+        {items.map((item) => {
           const Icon: LucideIcon = item.icon;
           const seen = explored.includes(item.id);
           return (
@@ -579,7 +584,7 @@ function ExploreStep() {
         })}
       </ul>
       <p className="mt-2.5 text-right text-[11.5px] text-fg-subtle tabular-nums">
-        {explored.length} von {NAV_ITEMS.length} entdeckt
+        {explored.length} von {items.length} entdeckt
       </p>
     </>
   );
@@ -738,7 +743,7 @@ function DoneStep() {
         })}
       </ul>
       <p className="mt-5 text-[12px] text-fg-subtle">
-        Diese Tour findest du jederzeit wieder unter Settings → About NOVA oder mit <Keys keys={["Ctrl", "K"]} />.
+        Diese Tour findest du jederzeit wieder unter Einstellungen → Über NOVA oder mit <Keys keys={["Ctrl", "K"]} />.
       </p>
     </div>
   );

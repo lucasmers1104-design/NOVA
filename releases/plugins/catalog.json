@@ -3,11 +3,11 @@
     {
       "id": "dev.nova.companion",
       "name": "NOVA Companion",
-      "version": "1.0.0",
-      "description": "Your phone as a line to NOVA AI: ask from anywhere at home, start apps, approve changes with your fingerprint.",
+      "version": "1.1.1",
+      "description": "Your phone as a line to NOVA AI: ask from anywhere at home, start apps, approve changes with your fingerprint, and see its notifications and calls on Nova Island.",
       "author": "NOVA",
-      "file": "dev.nova.companion-1.0.0.novaplugin",
-      "sha256": "2354b8692307f0d06cdfc79fe7c3b9fc75c8e4a93caa66cf1be87ba0b4c1bc8f"
+      "file": "dev.nova.companion-1.1.1.novaplugin",
+      "sha256": "dbaaf7648b661872cfdacc4be8415a1ddc21e217706f735b93e9ca530ec56cd2"
     }
   ]
 }

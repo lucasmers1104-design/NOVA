@@ -246,6 +246,27 @@ pub fn definitions() -> Vec<ToolSpec> {
             schema: json!({ "type": "object", "properties": { "message": string("A short line to go with it, in the user's words.") } }),
         },
         ToolSpec {
+            name: "discord_send",
+            description: "Write a message in a Discord text channel through NOVA. It shows as “<user's name> · via Nova” and can't ping anyone. Use it only when the user asks you to write something there, with the text in their words or in their style. `channel` is the name the user gave it (discord_channels lists them). The user sees the exact text and confirms first.",
+            schema: json!({ "type": "object", "properties": {
+                "message": string("The exact text to post, at most 2000 characters."),
+                "channel": string("The channel's name as the user calls it, e.g. 'die Jungs'. Leave out when there is only one."),
+            }, "required": ["message"] }),
+        },
+        ToolSpec {
+            name: "discord_announce",
+            description: "Say something out loud in a Discord voice call: NOVA's bot joins, speaks the text in NOVA's voice and leaves ('Sag den Jungs im Call, dass ich in 10 Minuten komme'). Write it as a short spoken message from NOVA, e.g. 'Hey, ich soll euch von Luca sagen: Er kommt in zehn Minuten.' At most 300 characters. Without `channel` it goes to the call with the most people. The user confirms first.",
+            schema: json!({ "type": "object", "properties": {
+                "message": string("What NOVA says in the call, in full sentences."),
+                "channel": string("The voice channel's name as the user calls it. Leave out for the call with the most people."),
+            }, "required": ["message"] }),
+        },
+        ToolSpec {
+            name: "discord_channels",
+            description: "List the Discord channels the user set up in NOVA, with the names they gave them, to pick one for discord_send or discord_announce.",
+            schema: json!({ "type": "object", "properties": {} }),
+        },
+        ToolSpec {
             name: "end_process",
             description: "End a running program (all its processes, or one by id): its windows are asked to close so it can save; background processes without a window are terminated. High impact: the user must confirm explicitly. Windows' own processes and NOVA can't be ended.",
             schema: json!({
@@ -694,6 +715,10 @@ pub enum Action {
     RecentLoad,
     Clip { seconds: u64, name: Option<String> },
     SendClip(String),
+    DiscordSend(String),
+    RelaySend { channel_id: String, label: String, message: String },
+    RelayAnnounce { channel_id: Option<String>, label: String, message: String },
+    RelayChannels,
 }
 
 /// Which video to play.
@@ -1242,6 +1267,66 @@ pub fn prepare<R: Runtime>(app: &AppHandle<R>, name: &str, input: &Value) -> Res
                 title: format!("Send {} to {channel} on Discord", display_name(&clip)),
                 detail: Some(if message.is_empty() { "Only the video, without a message.".into() } else { format!("With the message “{message}”") }),
                 action: Action::SendClip(message),
+                risk: Risk::Confirm,
+            })
+        }
+        "discord_send" if crate::relay::configured() => {
+            let message: String = str_arg(input, "message")?.trim().chars().take(crate::relay::MAX_MESSAGE).collect();
+            if message.is_empty() {
+                return Err("There's no message to write.".into());
+            }
+            let aliases = crate::relay::aliases(app);
+            let target = crate::relay::pick(&aliases, input["channel"].as_str().unwrap_or_default(), crate::relay::Kind::Text)?;
+            let name = super::user_name(app).unwrap_or_else(|| "NOVA".into());
+            Ok(Prepared {
+                title: format!("Write in {} on Discord", target.name),
+                detail: Some(format!("In #{} ({}), shown as “{name} · via Nova”: “{message}”", target.channel, target.server)),
+                action: Action::RelaySend { channel_id: target.channel_id.clone(), label: target.name.clone(), message },
+                risk: Risk::Confirm,
+            })
+        }
+        "discord_announce" => {
+            let message: String = str_arg(input, "message")?.trim().chars().take(crate::relay::MAX_ANNOUNCEMENT).collect();
+            if message.is_empty() {
+                return Err("There's nothing to say.".into());
+            }
+            if !crate::relay::configured() {
+                return Err("Speaking in calls needs NOVA-Relay. The user sets it up under Settings → Spiele & Clips.".into());
+            }
+            let wanted = input["channel"].as_str().unwrap_or_default();
+            let aliases = crate::relay::aliases(app);
+            let (channel_id, label, place) = if wanted.trim().is_empty() {
+                (None, "the call".to_string(), "the Discord call with the most people".to_string())
+            } else {
+                let target = crate::relay::pick(&aliases, wanted, crate::relay::Kind::Voice)?;
+                (Some(target.channel_id.clone()), target.name.clone(), format!("#{} ({})", target.channel, target.server))
+            };
+            Ok(Prepared {
+                title: format!("Say it in {label} on Discord"),
+                detail: Some(format!("NOVA's bot joins {place}, says this in NOVA's voice and leaves: “{message}”")),
+                action: Action::RelayAnnounce { channel_id, label, message },
+                risk: Risk::Confirm,
+            })
+        }
+        "discord_channels" => safe(Action::RelayChannels, "Check the Discord channels".into()),
+        "discord_send" => {
+            if !crate::discord::configured() {
+                return Err("No Discord bot is set up yet. The user adds its token and channel under Settings.".into());
+            }
+            let message = crate::discord::clean_content(str_arg(input, "message")?);
+            if message.is_empty() {
+                return Err("There's no message to write.".into());
+            }
+            let channel = crate::discord::label().unwrap_or_else(|| "the channel".into());
+            let sender = if crate::discord::as_user() {
+                format!("Shown as “{} · via Nova”", super::user_name(app).unwrap_or_else(|| "NOVA".into()))
+            } else {
+                "The bot posts it under its own name".into()
+            };
+            Ok(Prepared {
+                title: format!("Write in {channel} on Discord"),
+                detail: Some(format!("{sender}: “{message}”")),
+                action: Action::DiscordSend(message),
                 risk: Risk::Confirm,
             })
         }
@@ -2079,6 +2164,38 @@ pub fn execute<R: Runtime>(app: &AppHandle<R>, action: &Action) -> Result<Outcom
             let name = tauri::async_runtime::block_on(crate::replay::send_to_discord(app, message))?;
             Ok(Outcome { for_model: format!("Sent {name} to the user's Discord channel."), summary: format!("Sent {name} to Discord"), ..Outcome::default() })
         }
+        Action::RelaySend { channel_id, label, message } => {
+            let place = tauri::async_runtime::block_on(crate::relay::send(channel_id, message))?;
+            Ok(Outcome { for_model: format!("Posted the message in {place}."), summary: format!("Posted in {label}"), ..Outcome::default() })
+        }
+        Action::RelayAnnounce { channel_id, label, message } => {
+            if channel_id.is_none() {
+                tauri::async_runtime::block_on(crate::relay::one_busy_call())?;
+            }
+            let wav = crate::speech::speak(app, None, message, 1.0)?;
+            let place = tauri::async_runtime::block_on(crate::relay::announce(channel_id.as_deref(), wav))?;
+            Ok(Outcome { for_model: format!("Said it in {place}; the bot has left the call again."), summary: format!("Said it in {label}"), ..Outcome::default() })
+        }
+        Action::RelayChannels => {
+            let aliases = crate::relay::aliases(app);
+            let lines: Vec<String> = aliases
+                .iter()
+                .map(|a| format!("“{}”: {} channel #{} on {}", a.name, if a.kind == crate::relay::Kind::Text { "text" } else { "voice" }, a.channel, a.server))
+                .collect();
+            let for_model = if !crate::relay::configured() {
+                "NOVA-Relay isn't set up. The user sets it up under Settings → Spiele & Clips.".to_string()
+            } else if lines.is_empty() {
+                "No Discord channels are named yet. The user names them under Settings → Spiele & Clips → NOVA-Relay.".to_string()
+            } else {
+                lines.join("\n")
+            };
+            Ok(Outcome { for_model, summary: format!("{} Discord channels", aliases.len()), ..Outcome::default() })
+        }
+        Action::DiscordSend(message) => {
+            let user = super::user_name(app);
+            let channel = tauri::async_runtime::block_on(crate::discord::send(message, user.as_deref()))?;
+            Ok(Outcome { for_model: format!("Posted the message in {channel}."), summary: format!("Posted in {channel}"), ..Outcome::default() })
+        }
         Action::EndProcess { name, pids, force } => {
             let said = pc::end_processes(name, pids, *force)?;
             Ok(Outcome { for_model: said.clone(), summary: said, ..Outcome::default() })
@@ -2144,13 +2261,13 @@ pub fn execute<R: Runtime>(app: &AppHandle<R>, action: &Action) -> Result<Outcom
         Action::SpotifyPlay { query, kind } => {
             // A video still running in the browser would play over it.
             crate::media::platform::pause_all(Some("spotify"))?;
-            let playing = spotify::play(query, *kind)?;
-            Ok(Outcome { for_model: format!("Now playing: {playing}."), card: Some(json!({ "kind": "music", "title": playing })), summary: playing, image: None })
+            let played = spotify::play(query, *kind)?;
+            Ok(Outcome { for_model: played.said, card: Some(json!({ "kind": "music", "title": played.track })), summary: played.track, image: None })
         }
         Action::SpotifyPlayFromLibrary(name) => {
             crate::media::platform::pause_all(Some("spotify"))?;
-            let playing = spotify::play_from_library(name)?;
-            Ok(Outcome { for_model: format!("Now playing: {playing}."), card: Some(json!({ "kind": "music", "title": playing })), summary: playing, image: None })
+            let played = spotify::play_from_library(name)?;
+            Ok(Outcome { for_model: played.said, card: Some(json!({ "kind": "music", "title": played.track })), summary: played.track, image: None })
         }
         Action::SpotifyLibrary => {
             let items = spotify::library_items()?;

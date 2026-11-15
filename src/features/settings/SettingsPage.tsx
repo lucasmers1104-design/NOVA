@@ -1,15 +1,16 @@
 import { useQuery } from "@tanstack/react-query";
 import { getTauriVersion, getVersion } from "@tauri-apps/api/app";
-import { Activity, AudioLines, Check, Clapperboard, CloudDownload, Cpu, Ear, FolderSearch, Gauge, Globe, Info, Keyboard, KeyRound, LayoutDashboard, Layers, type LucideIcon, Palette, PanelLeft, Plug, Power, RotateCcw, Search, ShieldCheck, Sparkles, TriangleAlert, UserRound } from "lucide-react";
-import { useEffect, useId, useState } from "react";
-import { SHORTCUTS } from "@/app/shortcuts";
+import { Activity, AudioLines, Check, Clapperboard, Clock, CloudDownload, Cpu, Database, Ear, FolderSearch, Gauge, Globe, Info, Keyboard, KeyRound, LayoutDashboard, Layers, type LucideIcon, MemoryStick, Palette, PanelLeft, Plug, Power, ShieldCheck, Sparkles, TriangleAlert, UserRound } from "lucide-react";
+import { type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { type Shortcut, SHORTCUTS } from "@/app/shortcuts";
 import { NovaMark } from "@/components/brand/NovaMark";
 import { Page, PageHeader } from "@/components/layout/PageHeader";
+import { ResetButton, SegmentedControl, SettingCard, SettingLine } from "@/components/settings-kit";
 import { Kbd } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
-import { SegmentedControl } from "@/components/ui/SegmentedControl";
+import { FOCUSABLE } from "@/components/ui/Dialog";
 import { Switch } from "@/components/ui/Switch";
-import { AgentSettings, AssistantHistoryRow, FinderSettings } from "@/features/nova-assistant/AgentSettings";
+import { AgentSettings, AssistantHistoryCard, FinderSettings } from "@/features/nova-assistant/AgentSettings";
 import { SpeechSettings } from "@/features/nova-assistant/SpeechSettings";
 import { AssistantSettings } from "@/features/nova-assistant/AssistantSettings";
 import { WakeSettings } from "@/features/nova-assistant/WakeSettings";
@@ -20,134 +21,188 @@ import { showWhatsNew } from "@/features/updates/WhatsNew";
 import { cn } from "@/lib/cn";
 import { callNative, isDesktop } from "@/lib/native";
 import { useStorageHealth } from "@/lib/persistence";
-import { type MotionPreference, REFRESH_INTERVALS_MS, type TitleBarClock, useSettings } from "@/stores/settings";
+import { greetingFor } from "@/lib/time";
+import { REFRESH_INTERVALS_MS, type TitleBarClock, useSettings } from "@/stores/settings";
 import { useUi } from "@/stores/ui";
-import { AccentSettings } from "./AccentSettings";
-import { BackdropSettings } from "./BackdropSettings";
+import { AppearanceSettings } from "./AppearanceSettings";
 import { GamesSettings } from "./GamesSettings";
 import { AiProviderSettings, IntegrationsSettings, ProfilesSettings, StartupSettings, UpdatesSettings, useExternalConnections } from "./ExtraSettings";
 import { NavigationSettings } from "./NavigationSettings";
-import { REVEAL_SETTINGS_EVENT, SettingRow, SettingsSection } from "./SettingsLayout";
+import { PerformanceSettings } from "./PerformanceSettings";
+import { useRecordChanges } from "./recent";
+import { FIELD, REVEAL_SETTINGS_EVENT, SettingsSection } from "./SettingsLayout";
 import { SettingsOverview } from "./SettingsOverview";
+import { SettingsSearch } from "./SettingsSearch";
 
-const GROUPS: readonly { label: string; sections: readonly { id: string; label: string; icon: LucideIcon }[] }[] = [
+export interface SettingsSectionInfo {
+  id: string;
+  label: string;
+  icon: LucideIcon;
+  /** What is in there, in a few words, for the tiles on the Settings home. */
+  hint: string;
+}
+
+export interface SettingsGroup {
+  label: string;
+  sections: readonly SettingsSectionInfo[];
+}
+
+const GROUPS: readonly SettingsGroup[] = [
   {
-    label: "You",
+    label: "Du",
     sections: [
-      { id: "you", label: "Your name", icon: UserRound },
-      { id: "appearance", label: "Appearance", icon: Palette },
-      { id: "profiles", label: "Profiles", icon: Layers },
-      { id: "navigation", label: "Navigation", icon: PanelLeft },
-      { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+      { id: "you", label: "Dein Name", icon: UserRound, hint: "Wie NOVA dich nennt" },
+      { id: "appearance", label: "Darstellung", icon: Palette, hint: "Akzent, Hintergrund, Glas, Bewegung" },
+      { id: "profiles", label: "Profile", icon: Layers, hint: "Layout und Look auf einmal wechseln" },
+      { id: "navigation", label: "Navigation", icon: PanelLeft, hint: "Seitenleiste ordnen und ausblenden" },
+      { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, hint: "Uhrzeit auf Home und in der Titelleiste" },
     ],
   },
   {
     label: "NOVA AI",
     sections: [
-      { id: "assistant-brain", label: "Model & voice", icon: AudioLines },
-      { id: "wake", label: "Hey NOVA & claps", icon: Ear },
-      { id: "games", label: "Games & clips", icon: Clapperboard },
-      { id: "assistant", label: "The NOVA dot", icon: Sparkles },
-      { id: "finder", label: "NOVA Finder", icon: FolderSearch },
-      { id: "ai", label: "AI providers", icon: KeyRound },
-      { id: "local-ai", label: "Local AI & performance", icon: Cpu },
+      { id: "assistant-brain", label: "Modell & Stimme", icon: AudioLines, hint: "Welche KI antwortet und wie sie klingt" },
+      { id: "wake", label: "Hey NOVA & Klatschen", icon: Ear, hint: "NOVA ohne Hände wecken" },
+      { id: "games", label: "Spiele & Clips", icon: Clapperboard, hint: "„Clip das“ und deine Clips" },
+      { id: "assistant", label: "Der NOVA-Punkt", icon: Sparkles, hint: "Aussehen, Platz und Tastenkürzel" },
+      { id: "finder", label: "NOVA Finder", icon: FolderSearch, hint: "Welche Ordner NOVA durchsucht" },
+      { id: "ai", label: "KI-Anbieter", icon: KeyRound, hint: "API-Schlüssel für Claude, GPT und Gemini" },
+      { id: "local-ai", label: "Sprache auf diesem PC", icon: Cpu, hint: "Eigene Stimmen, Offline-Erkennung, Tempo" },
     ],
   },
   {
-    label: "This PC",
+    label: "Dieser PC",
     sections: [
-      { id: "startup", label: "Startup", icon: Power },
-      { id: "updates", label: "Updates", icon: CloudDownload },
-      { id: "integrations", label: "Integrations", icon: Plug },
-      { id: "system", label: "System", icon: Activity },
-      { id: "shortcuts", label: "Keyboard shortcuts", icon: Keyboard },
+      { id: "startup", label: "Start", icon: Power, hint: "Autostart, Infobereich, Benachrichtigungen" },
+      { id: "updates", label: "Updates", icon: CloudDownload, hint: "Version und automatische Updates" },
+      { id: "integrations", label: "Integrationen", icon: Plug, hint: "Wetter, Nachrichten, Kalender" },
+      { id: "system", label: "System", icon: Activity, hint: "Wie oft Live-Werte neu gelesen werden" },
+      { id: "performance", label: "Leistung", icon: MemoryStick, hint: "Arbeitsspeicher messen und freigeben" },
+      { id: "shortcuts", label: "Tastenkürzel", icon: Keyboard, hint: "Was überall in NOVA funktioniert" },
     ],
   },
   {
     label: "NOVA",
     sections: [
-      { id: "privacy", label: "Privacy", icon: ShieldCheck },
-      { id: "about", label: "About NOVA", icon: Info },
+      { id: "privacy", label: "Datenschutz", icon: ShieldCheck, hint: "Was auf dem PC bleibt und was nicht" },
+      { id: "about", label: "Über NOVA", icon: Info, hint: "Version, Einführung, Zurücksetzen" },
     ],
   },
 ];
 
-/** What the search finds: the settings by the name their row shows, with the words people may use instead. */
-const SEARCHABLE: readonly { label: string; section: string; words?: string }[] = [
-  { label: "Your name", section: "you", words: "name heißen nennen anrede" },
-  { label: "Start the tour", section: "about", words: "tour einführung tutorial hilfe" },
-  { label: "Accent color", section: "appearance", words: "farbe akzent color" },
-  { label: "Background", section: "appearance", words: "hintergrund verlauf gradient bild picture png wallpaper" },
-  { label: "Transparency effects", section: "appearance", words: "glas glass transparenz" },
-  { label: "Wallpaper backdrop", section: "appearance", words: "hintergrundbild" },
-  { label: "Motion", section: "appearance", words: "animation bewegung" },
-  { label: "Workspace profiles", section: "profiles", words: "profil" },
-  { label: "Sidebar sections", section: "navigation", words: "seitenleiste menü" },
-  { label: "24-hour clock", section: "dashboard", words: "uhr zeit" },
-  { label: "Title bar clock", section: "dashboard", words: "uhr zeit" },
-  { label: "AI provider", section: "assistant-brain", words: "ki anbieter claude gemini openai" },
-  { label: "Thoroughness", section: "assistant-brain", words: "gründlichkeit effort schnell" },
-  { label: "Monthly limit", section: "assistant-brain", words: "kosten geld budget limit" },
-  { label: "Spoken replies", section: "assistant-brain", words: "vorlesen sprechen" },
-  { label: "Keep listening", section: "assistant-brain", words: "mikrofon mikro weiterhören" },
-  { label: "Auto mode", section: "assistant-brain", words: "auto modus automatisch ohne fragen" },
-  { label: "Voice", section: "assistant-brain", words: "stimme thorsten gemini elevenlabs" },
-  { label: "Speed and volume", section: "assistant-brain", words: "tempo lautstärke geschwindigkeit" },
-  { label: "Speech recognition language", section: "assistant-brain", words: "sprache deutsch englisch" },
-  { label: "Wake with “Hey NOVA”", section: "wake", words: "hey nova aufwecken wake mikrofon" },
-  { label: "How sure NOVA must be", section: "wake", words: "empfindlichkeit versteht" },
-  { label: "Wake with a double clap", section: "wake", words: "klatschen clap" },
-  { label: "Clap detection", section: "wake", words: "klatschen empfindlichkeit" },
-  { label: "After waking", section: "wake" },
-  { label: "Play a sound when NOVA wakes", section: "wake", words: "ton chime" },
-  { label: "Also in games", section: "wake", words: "spiele fortnite vollbild" },
+/**
+ * What the search finds: each setting by the name its row shows (`data-setting`), with
+ * the words people may use instead, in German and in English (the labels used to be English).
+ */
+export const SEARCHABLE: readonly { label: string; section: string; words?: string }[] = [
+  { label: "Dein Name", section: "you", words: "name heißen nennen anrede your name" },
+  { label: "Einführung", section: "about", words: "tour start the tour tutorial hilfe help" },
+  { label: "Akzentfarbe", section: "appearance", words: "farbe akzent accent color colour" },
+  { label: "Hintergrund", section: "appearance", words: "background verlauf gradient bild picture png wallpaper" },
+  { label: "Windows-Hintergrundbild zeigen", section: "appearance", words: "wallpaper backdrop desktop hintergrundbild" },
+  { label: "Transparenz", section: "appearance", words: "transparency effects glas glass milchglas" },
+  { label: "Glasstärke", section: "appearance", words: "glass strength glas deckkraft opacity" },
+  { label: "Glasfarbe", section: "appearance", words: "glass color glas tönung tint" },
+  { label: "Ecken", section: "appearance", words: "corners rund radius kantig" },
+  { label: "Schrift", section: "appearance", words: "font schriftart inter segoe" },
+  { label: "Bewegung", section: "appearance", words: "motion animation reduziert reduced" },
+  { label: "Profile", section: "profiles", words: "workspace profiles profil arbeitsprofil" },
+  { label: "Bereiche der Seitenleiste", section: "navigation", words: "sidebar sections seitenleiste menü reihenfolge sortieren ausblenden" },
+  { label: "24-Stunden-Uhr", section: "dashboard", words: "24-hour clock uhr zeit" },
+  { label: "Uhr in der Titelleiste", section: "dashboard", words: "title bar clock uhr zeit datum" },
+  { label: "KI-Anbieter", section: "assistant-brain", words: "ai provider ki anbieter claude gemini openai" },
+  { label: "Gründlichkeit", section: "assistant-brain", words: "thoroughness effort schnell gründlich" },
+  { label: "Monatslimit", section: "assistant-brain", words: "monthly limit kosten geld budget" },
+  { label: "Antworten vorlesen", section: "assistant-brain", words: "spoken replies vorlesen sprechen" },
+  { label: "Weiter zuhören", section: "assistant-brain", words: "keep listening mikrofon mikro weiterhören" },
+  { label: "Auto-Modus", section: "assistant-brain", words: "auto mode modus automatisch ohne fragen" },
+  { label: "Stimme", section: "assistant-brain", words: "voice thorsten gemini elevenlabs probehören klang" },
+  { label: "Tempo", section: "assistant-brain", words: "speed geschwindigkeit sprechtempo" },
+  { label: "Lautstärke", section: "assistant-brain", words: "volume laut leise" },
+  { label: "Sprache der Spracherkennung", section: "assistant-brain", words: "speech recognition language sprache deutsch englisch" },
+  { label: "Mit „Hey NOVA“ wecken", section: "wake", words: "hey nova aufwecken wake mikrofon" },
+  { label: "Wie sicher NOVA sein muss", section: "wake", words: "how sure empfindlichkeit versteht sensitivity" },
+  { label: "Mit Doppelklatschen wecken", section: "wake", words: "double clap klatschen" },
+  { label: "Klatsch-Erkennung", section: "wake", words: "clap detection klatschen empfindlichkeit" },
+  { label: "Nach dem Wecken", section: "wake", words: "after waking zuhören öffnen" },
+  { label: "Ton beim Wecken", section: "wake", words: "sound chime ton klang" },
+  { label: "Auch in Spielen", section: "wake", words: "also in games spiele fortnite vollbild" },
   { label: "Clip das!", section: "games", words: "clip clips aufnahme aufnehmen video replay spiele gaming ffmpeg" },
-  { label: "Your clips", section: "games", words: "clips ordner videos" },
-  { label: "Discord channel", section: "games", words: "discord jungs schicken teilen webhook" },
-  { label: "Show the NOVA dot", section: "assistant", words: "punkt taskleiste" },
-  { label: "Where it sits", section: "assistant", words: "punkt position ecke taskleiste" },
-  { label: "Search inside text files", section: "finder", words: "suche ordner dateien" },
-  { label: "NOVA Finder folders", section: "finder", words: "ordner dateien pfad zugriff ganzer pc festplatte" },
-  { label: "API keys", section: "ai", words: "schlüssel key anthropic openai gemini" },
-  { label: "NOVA's own voices", section: "local-ai", words: "offline stimmen erkennung grafikkarte" },
-  { label: "Start with Windows", section: "startup", words: "autostart" },
-  { label: "Keep running in the tray", section: "startup", words: "hintergrund" },
-  { label: "Windows notifications", section: "startup", words: "benachrichtigung erinnerung" },
-  { label: "Automatic updates", section: "updates", words: "aktualisierung version" },
-  { label: "Weather", section: "integrations", words: "wetter ort" },
-  { label: "News feeds", section: "integrations", words: "nachrichten" },
-  { label: "Refresh interval", section: "system", words: "aktualisieren cpu" },
-  { label: "Keyboard shortcuts", section: "shortcuts", words: "tastenkürzel tasten" },
-  { label: "Action history and usage", section: "privacy", words: "verlauf datenschutz löschen" },
-  { label: "Send usage statistics", section: "privacy", words: "statistik telemetrie zustimmung widerrufen datenschutz" },
-  { label: "Version", section: "about", words: "what's new neu" },
-  { label: "Reset settings", section: "about", words: "zurücksetzen" },
+  { label: "Deine Clips", section: "games", words: "your clips ordner videos folder" },
+  { label: "Discord", section: "games", words: "discord jungs schicken teilen webhook relay bot kanal" },
+  { label: "NOVA-Punkt anzeigen", section: "assistant", words: "show the nova dot punkt taskleiste" },
+  { label: "Wo er sitzt", section: "assistant", words: "where it sits punkt position ecke taskleiste corner" },
+  { label: "Tastenkürzel", section: "assistant", words: "keyboard shortcut hotkey tasten strg alt punkt nova ai öffnen" },
+  { label: "Stil", section: "assistant", words: "punkt style glas orb ring flach aussehen look" },
+  { label: "In Textdateien suchen", section: "finder", words: "search inside text files suche inhalt dateien" },
+  { label: "Ordner für NOVA Finder", section: "finder", words: "folders ordner dateien pfad zugriff ganzer pc festplatte" },
+  { label: "API-Schlüssel", section: "ai", words: "api keys key anthropic openai gemini claude" },
+  { label: "Stimmen auf diesem PC", section: "local-ai", words: "own voices offline stimmen eva thorsten martin" },
+  { label: "Online-Stimmen", section: "local-ai", words: "online voices gemini elevenlabs schlüssel" },
+  { label: "Leistungsmodus", section: "local-ai", words: "performance mode auto max low sparmodus" },
+  { label: "Läuft auf", section: "local-ai", words: "runs on prozessor grafikkarte gpu cpu directml" },
+  { label: "Spracherkennung", section: "local-ai", words: "speech recognition offline windows parakeet erkennung" },
+  { label: "Messungen", section: "local-ai", words: "measurements benchmark messen geschwindigkeit" },
+  { label: "Mit Windows starten", section: "startup", words: "start with windows autostart" },
+  { label: "Im Infobereich weiterlaufen", section: "startup", words: "keep running in the tray hintergrund infobereich" },
+  { label: "Windows-Benachrichtigungen", section: "startup", words: "windows notifications benachrichtigung erinnerung" },
+  { label: "Automatisch aktualisieren", section: "updates", words: "automatic updates aktualisierung version" },
+  { label: "Update-Quelle", section: "updates", words: "update source github repository" },
+  { label: "Wetter", section: "integrations", words: "weather ort" },
+  { label: "Nachrichten-Feeds", section: "integrations", words: "news feeds nachrichten rss" },
+  { label: "Aktualisierungsintervall", section: "system", words: "refresh interval aktualisieren cpu" },
+  { label: "Arbeitsspeicher", section: "performance", words: "ram speicher memory verbrauch leistung performance mb" },
+  { label: "Hauptfenster beim Schließen freigeben", section: "performance", words: "ram speicher tray schließen fenster leistung" },
+  { label: "NOVA-AI-Fenster freigeben nach", section: "performance", words: "ram speicher panel assistent leerlauf leistung" },
+  { label: "Tastenkürzel", section: "shortcuts", words: "keyboard shortcuts tasten befehlspalette" },
+  { label: "Aktionsverlauf und Nutzung", section: "privacy", words: "action history usage verlauf datenschutz löschen" },
+  { label: "Nutzungsstatistik senden", section: "privacy", words: "usage statistics statistik telemetrie zustimmung widerrufen datenschutz" },
+  { label: "Version", section: "about", words: "what's new was ist neu" },
+  { label: "Einstellungen zurücksetzen", section: "about", words: "reset settings zurücksetzen" },
 ];
 
+/** Words as people type them: split at anything that is no letter or digit ("Auto-Modus" is two). */
+const wordsOf = (text: string) => text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+
+/**
+ * How well a term fits a setting; lower is better, `null` is no fit. A name that starts
+ * with it comes first, then a word of the name, then one of the other words, and last a
+ * match inside a word: that still counts, because German builds its words from parts
+ * ("bild" finds "Hintergrundbild"), but it mustn't push "Ecken" behind "wecken".
+ */
+function fit(setting: (typeof SEARCHABLE)[number], term: string): number | null {
+  const label = setting.label.toLowerCase();
+  if (label.startsWith(term)) return 0;
+  if (wordsOf(label).some((word) => word.startsWith(term))) return 1;
+  if (wordsOf(setting.words ?? "").some((word) => word.startsWith(term))) return 2;
+  return `${label} ${setting.words ?? ""}`.toLowerCase().includes(term) ? 3 : null;
+}
+
+/** The settings that fit every word of the query, the best fit first. */
 export function searchSettings(query: string): typeof SEARCHABLE {
   const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   if (terms.length === 0) return [];
-  return SEARCHABLE.filter((setting) => {
-    const text = `${setting.label} ${setting.words ?? ""}`.toLowerCase();
-    return terms.every((term) => text.includes(term));
-  }).slice(0, 8);
+  return SEARCHABLE.flatMap((setting) => {
+    const fits = terms.map((term) => fit(setting, term));
+    return fits.includes(null) ? [] : [{ setting, score: fits.reduce<number>((sum, value) => sum + (value ?? 0), 0) }];
+  })
+    // A stable sort: among equal fits the order of the list (the order of the sections) stays.
+    .sort((a, b) => a.score - b.score)
+    .slice(0, 8)
+    .map(({ setting }) => setting);
 }
 
 const OVERVIEW = "overview";
-
-const MOTION_OPTIONS = [
-  { value: "system", label: "System" },
-  { value: "reduced", label: "Reduced" },
-  { value: "full", label: "Full" },
-] as const satisfies readonly { value: MotionPreference; label: string }[];
+const SECTIONS = GROUPS.flatMap((group) => group.sections);
+const sectionOf = (id: string) => SECTIONS.find((section) => section.id === id);
 
 const TITLE_BAR_CLOCK_OPTIONS = [
-  { value: "off", label: "Off" },
-  { value: "time", label: "Time" },
-  { value: "time-date", label: "Time & date" },
+  { value: "off", label: "Aus" },
+  { value: "time", label: "Uhrzeit" },
+  { value: "time-date", label: "Uhrzeit & Datum" },
 ] as const satisfies readonly { value: TitleBarClock; label: string }[];
 
-const REFRESH_OPTIONS = REFRESH_INTERVALS_MS.map((ms) => ({ value: ms, label: `${ms / 1000}s` }));
+const REFRESH_OPTIONS = REFRESH_INTERVALS_MS.map((ms) => ({ value: ms, label: `${ms / 1000} s` }));
 
 export default function SettingsPage() {
   const requestedSection = useUi((s) => s.settingsSection);
@@ -157,6 +212,8 @@ export default function SettingsPage() {
   // A setting the search led to: shown and briefly lit up once its section is there.
   const [target, setTarget] = useState<string | null>(null);
   const results = searchSettings(query);
+  const content = useRef<HTMLDivElement>(null);
+  useRecordChanges(content, active);
 
   const open = (section: string, setting: string | null = null) => {
     setActive(section);
@@ -175,14 +232,20 @@ export default function SettingsPage() {
   useEffect(() => {
     if (!target) return;
     window.dispatchEvent(new Event(REVEAL_SETTINGS_EVENT));
+    let lit: ReturnType<typeof setTimeout> | undefined;
     const frame = requestAnimationFrame(() => {
       const row = [...document.querySelectorAll<HTMLElement>("[data-setting]")].find((el) => el.dataset.setting === target);
       if (!row) return;
       row.scrollIntoView({ block: "center" });
+      // The keyboard lands where the eye does: on the setting's own control.
+      row.querySelector<HTMLElement>(FOCUSABLE)?.focus({ preventScroll: true });
       row.classList.add("setting-found");
-      setTimeout(() => row.classList.remove("setting-found"), 1800);
+      lit = setTimeout(() => row.classList.remove("setting-found"), 1800);
     });
-    return () => cancelAnimationFrame(frame);
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(lit);
+    };
   }, [target, active]);
 
   const navButton = (id: string, label: string, Icon: LucideIcon) => (
@@ -201,43 +264,17 @@ export default function SettingsPage() {
     </button>
   );
 
+  // On the home the search is the wide field in the middle; inside a section it sits here.
+  const searchingBeside = active !== OVERVIEW && query.trim() !== "";
   return (
     <Page>
-      <PageHeader title="Settings" description="Personalize NOVA. Changes are saved automatically on this PC." />
+      <PageHeader title="Einstellungen" description="Mach NOVA zu deinem. Jede Änderung wird sofort auf diesem PC gespeichert." />
       <div className="grid grid-cols-[212px_minmax(0,1fr)] items-start gap-6">
-        <nav aria-label="Settings sections" className="sticky top-0 max-h-[calc(100vh-3.5rem)] space-y-3 overflow-y-auto pb-4">
-          <label className="flex h-9 items-center gap-2 rounded-control border border-line bg-black/25 px-2.5 focus-within:border-line-strong">
-            <Search size={14} className="shrink-0 text-fg-subtle" aria-hidden />
-            <span className="sr-only">Search settings</span>
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && results[0]) open(results[0].section, results[0].label);
-                if (event.key === "Escape") setQuery("");
-              }}
-              placeholder="Search settings"
-              className="h-full min-w-0 flex-1 bg-transparent text-[12.5px] text-fg outline-none select-text placeholder:text-fg-subtle"
-            />
-          </label>
-          {query.trim() ? (
-            results.length === 0 ? (
-              <p className="px-2.5 text-[12px] text-fg-subtle">Nothing found.</p>
-            ) : (
-              <ul className="space-y-0.5">
-                {results.map((result) => (
-                  <li key={result.label}>
-                    <button type="button" onClick={() => open(result.section, result.label)} className="w-full rounded-control px-2.5 py-1.5 text-left transition-colors hover:bg-white/[0.05]">
-                      <span className="block truncate text-[12.5px] font-medium text-fg">{result.label}</span>
-                      <span className="block truncate text-[11px] text-fg-subtle">{GROUPS.flatMap((g) => g.sections).find((s) => s.id === result.section)?.label}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )
-          ) : (
+        <nav aria-label="Bereiche der Einstellungen" className="sticky top-0 max-h-[calc(100vh-3.5rem)] space-y-3 overflow-y-auto pb-4">
+          {active !== OVERVIEW && <SettingsSearch query={query} onQuery={setQuery} results={results} sectionOf={sectionOf} onOpen={open} />}
+          {!searchingBeside && (
             <>
-              {navButton(OVERVIEW, "Overview", Gauge)}
+              {navButton(OVERVIEW, "Übersicht", Gauge)}
               {GROUPS.map((group) => (
                 <div key={group.label}>
                   <p className="px-2.5 pb-1 text-[10.5px] font-semibold tracking-[0.08em] text-fg-subtle uppercase">{group.label}</p>
@@ -248,22 +285,30 @@ export default function SettingsPage() {
           )}
         </nav>
 
-        <div className="min-w-0 max-w-3xl space-y-5">
+        <div ref={content} className="min-w-0 max-w-3xl space-y-5">
           <StorageWarning />
-          <Section id={active} onOpen={open} />
+          <Section id={active} onOpen={open} search={<SettingsSearch large autoFocus query={query} onQuery={setQuery} results={results} sectionOf={sectionOf} onOpen={open} />} searching={query.trim() !== ""} />
         </div>
       </div>
     </Page>
   );
 }
 
+interface SectionProps {
+  id: string;
+  onOpen: (section: string, setting?: string | null) => void;
+  /** The home's search field. */
+  search: ReactNode;
+  searching: boolean;
+}
+
 /** One section at a time: eighteen in a row was too much to find anything in. */
-function Section({ id, onOpen }: { id: string; onOpen: (section: string) => void }) {
+function Section({ id, onOpen, search, searching }: SectionProps) {
   switch (id) {
     case "you":
       return <NameSection />;
     case "appearance":
-      return <AppearanceSection />;
+      return <AppearanceSettings />;
     case "profiles":
       return <ProfilesSettings />;
     case "navigation":
@@ -292,6 +337,8 @@ function Section({ id, onOpen }: { id: string; onOpen: (section: string) => void
       return <UpdatesSettings />;
     case "system":
       return <SystemSection />;
+    case "performance":
+      return <PerformanceSettings />;
     case "shortcuts":
       return <ShortcutsSection />;
     case "privacy":
@@ -299,7 +346,7 @@ function Section({ id, onOpen }: { id: string; onOpen: (section: string) => void
     case "about":
       return <AboutSection />;
     default:
-      return <SettingsOverview onOpen={onOpen} />;
+      return <SettingsOverview groups={GROUPS} search={search} searching={searching} onOpen={onOpen} />;
   }
 }
 
@@ -308,49 +355,28 @@ function NameSection() {
   const setDisplayName = useSettings((s) => s.setDisplayName);
   const { data: info } = useSystemInfo();
   const nameId = useId();
+  const shown = displayName.trim() || info?.userName || "";
 
   return (
-    <SettingsSection id="you" title="Your name" description="What NOVA calls you, on Home and when it talks to you." icon={UserRound}>
-      <SettingRow
-        label="Your name"
-        htmlFor={nameId}
-        description={info?.userName ? `Without one, Home shows your Windows account name (${info.userName}) and NOVA AI doesn't use a name at all.` : "Without one, NOVA AI doesn't use a name at all."}
-      >
-        <input
-          id={nameId}
-          value={displayName}
-          onChange={(event) => setDisplayName(event.target.value)}
-          placeholder="Your name"
-          maxLength={40}
-          className="h-9 w-56 rounded-control border border-line bg-black/25 px-3 text-[13px] text-fg outline-none select-text placeholder:text-fg-subtle focus:border-line-strong"
-        />
-      </SettingRow>
-    </SettingsSection>
-  );
-}
-
-function AppearanceSection() {
-  const transparency = useSettings((s) => s.transparency);
-  const setTransparency = useSettings((s) => s.setTransparency);
-  const motion = useSettings((s) => s.motion);
-  const setMotion = useSettings((s) => s.setMotion);
-  const wallpaperBackdrop = useSettings((s) => s.wallpaperBackdrop);
-  const setWallpaperBackdrop = useSettings((s) => s.setWallpaperBackdrop);
-  const hasGradient = useSettings((s) => s.backdropGradient !== null || s.backdropImage !== null);
-
-  return (
-    <SettingsSection id="appearance" title="Appearance" description="Accent color, background, glass, corners, font and motion." icon={Palette}>
-      <AccentSettings />
-      <BackdropSettings />
-      <SettingRow label="Transparency effects" description="Frosted-glass surfaces. Turn off for smoother performance on integrated graphics.">
-        <Switch label="Transparency effects" checked={transparency} onChange={setTransparency} />
-      </SettingRow>
-      <SettingRow label="Wallpaper backdrop" description={hasGradient ? "Off while a gradient or your own picture is chosen above." :"Shows your desktop wallpaper softly behind NOVA's glass, like macOS. Needs transparency effects."}>
-        <Switch label="Wallpaper backdrop" checked={wallpaperBackdrop && !hasGradient} disabled={!transparency || hasGradient} onChange={setWallpaperBackdrop} />
-      </SettingRow>
-      <SettingRow label="Motion" description="“System” follows the Windows animation setting.">
-        <SegmentedControl label="Motion" value={motion} options={MOTION_OPTIONS} onChange={setMotion} />
-      </SettingRow>
+    <SettingsSection id="you" title="Dein Name" description="Wie NOVA dich nennt: auf Home und wenn es mit dir spricht." icon={UserRound}>
+      <SettingCard title="Anrede">
+        {/* The greeting as Home shows it, so the name can be read in its place while it is typed. */}
+        <p aria-hidden className="pb-4 text-[24px] leading-tight font-semibold tracking-[-0.015em] text-fg">
+          {greetingFor(new Date())}
+          {shown && (
+            <>
+              , <span className="text-accent-text">{shown}</span>
+            </>
+          )}
+        </p>
+        <SettingLine
+          label="Dein Name"
+          htmlFor={nameId}
+          description={info?.userName ? `Ohne Namen zeigt Home den deines Windows-Kontos (${info.userName}), und NOVA AI spricht dich gar nicht mit Namen an.` : "Ohne Namen spricht NOVA AI dich gar nicht mit Namen an."}
+        >
+          <input id={nameId} value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Dein Name" maxLength={40} className={cn(FIELD, "w-56")} />
+        </SettingLine>
+      </SettingCard>
     </SettingsSection>
   );
 }
@@ -362,13 +388,15 @@ function DashboardSection() {
   const setTitleBarClock = useSettings((s) => s.setTitleBarClock);
 
   return (
-    <SettingsSection id="dashboard" title="Dashboard" description="How Home tells time." icon={LayoutDashboard}>
-      <SettingRow label="24-hour clock" description="Show times as 18:30 instead of 6:30 PM.">
-        <Switch label="24-hour clock" checked={use24HourClock} onChange={setUse24HourClock} />
-      </SettingRow>
-      <SettingRow label="Title bar clock" description="Keeps the time in view on every page, next to the notifications.">
-        <SegmentedControl label="Title bar clock" value={titleBarClock} options={TITLE_BAR_CLOCK_OPTIONS} onChange={setTitleBarClock} />
-      </SettingRow>
+    <SettingsSection id="dashboard" title="Dashboard" description="Wie NOVA die Uhrzeit zeigt." icon={LayoutDashboard}>
+      <SettingCard title="Uhrzeit" icon={Clock}>
+        <SettingLine label="24-Stunden-Uhr" description="Zeigt 18:30 statt 6:30 PM.">
+          <Switch label="24-Stunden-Uhr" checked={use24HourClock} onChange={setUse24HourClock} />
+        </SettingLine>
+        <SettingLine label="Uhr in der Titelleiste" description="Hält die Uhrzeit auf jeder Seite im Blick, neben den Mitteilungen.">
+          <SegmentedControl label="Uhr in der Titelleiste" value={titleBarClock} options={TITLE_BAR_CLOCK_OPTIONS} onChange={setTitleBarClock} />
+        </SettingLine>
+      </SettingCard>
     </SettingsSection>
   );
 }
@@ -378,30 +406,40 @@ function SystemSection() {
   const setRefreshInterval = useSettings((s) => s.setRefreshInterval);
 
   return (
-    <SettingsSection id="system" title="System" description="Live metric collection." icon={Activity}>
-      <SettingRow
-        label="Refresh interval"
-        description="How often CPU and memory update. Shorter intervals use slightly more CPU; polling pauses while NOVA is minimized."
-      >
-        <SegmentedControl label="Refresh interval" value={refreshIntervalMs} options={REFRESH_OPTIONS} onChange={setRefreshInterval} />
-      </SettingRow>
+    <SettingsSection id="system" title="System" description="Wie NOVA die Live-Werte dieses PCs liest." icon={Activity}>
+      <SettingCard title="Live-Werte" icon={Activity}>
+        <SettingLine label="Aktualisierungsintervall" description="Wie oft CPU und Arbeitsspeicher neu gelesen werden. Kürzer kostet etwas mehr CPU; solange NOVA minimiert ist, ruht das Lesen.">
+          <SegmentedControl label="Aktualisierungsintervall" value={refreshIntervalMs} options={REFRESH_OPTIONS} onChange={setRefreshInterval} />
+        </SettingLine>
+      </SettingCard>
     </SettingsSection>
   );
 }
 
+/** What each shortcut does, in the words of Settings (the command palette has its own). */
+const SHORTCUT_LABELS: Record<Shortcut["id"], string> = {
+  palette: "Befehlspalette öffnen",
+  sidebar: "Seitenleiste ein- oder ausklappen",
+  settings: "Einstellungen öffnen",
+};
+
 function ShortcutsSection() {
   return (
-    <SettingsSection id="shortcuts" title="Keyboard shortcuts" description="Available everywhere in NOVA." icon={Keyboard}>
-      {SHORTCUTS.map((shortcut) => (
-        <div key={shortcut.id} className="flex items-center justify-between py-3 text-[13px] first:pt-0 last:pb-0">
-          <span className="text-fg">{shortcut.description}</span>
-          <span className="flex gap-1">
-            {shortcut.keys.map((key) => (
-              <Kbd key={key}>{key}</Kbd>
-            ))}
-          </span>
-        </div>
-      ))}
+    <SettingsSection id="shortcuts" title="Tastenkürzel" description="Funktionieren überall in NOVA. Das Kürzel für NOVA AI stellst du unter „Der NOVA-Punkt“ ein." icon={Keyboard}>
+      <SettingCard title="In NOVA" icon={Keyboard}>
+        <dl data-setting="Tastenkürzel" className="divide-y divide-line">
+          {SHORTCUTS.map((shortcut) => (
+            <div key={shortcut.id} className="flex items-center justify-between gap-6 py-3 text-[13px] first:pt-0 last:pb-0">
+              <dt className="font-medium text-fg">{SHORTCUT_LABELS[shortcut.id]}</dt>
+              <dd className="flex gap-1">
+                {shortcut.keys.map((key) => (
+                  <Kbd key={key}>{key === "Ctrl" ? "Strg" : key}</Kbd>
+                ))}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </SettingCard>
     </SettingsSection>
   );
 }
@@ -414,25 +452,25 @@ function StorageWarning() {
     <div role="alert" className="flex items-start gap-3 rounded-widget border border-warning/30 bg-warning/10 p-4 text-[13px]">
       <TriangleAlert size={17} className="mt-0.5 shrink-0 text-warning" aria-hidden />
       <div>
-        <p className="font-medium text-fg">NOVA's database is unavailable</p>
-        <p className="mt-0.5 text-fg-muted">Settings are being kept in temporary WebView storage instead. Details: {error}</p>
+        <p className="font-medium text-fg">NOVAs Datenbank ist nicht erreichbar</p>
+        <p className="mt-0.5 text-fg-muted">Die Einstellungen liegen solange im vorläufigen Speicher der WebView. Details: {error}</p>
       </div>
     </div>
   );
 }
 
 const PRIVACY_FACTS = [
-  "Settings, layouts, tasks, notes and chats are stored in a local database on this PC.",
-  "Usage statistics are optional and off until you accept them. They never hold chats, voice, files, screenshots, keystrokes, window or program names.",
-  "System metrics, apps, files and media are read locally and never leave your device.",
-  "Asked for the weather or your internet speed, NOVA contacts Open-Meteo or downloads a test file from Hetzner. Only then.",
-  "NOVA Finder only knows the folders you give it. Even with the whole PC added, Windows, installed programs and app data stay off limits.",
-  "AI keys live in Windows Credential Manager. Only your messages — and screenshots or files when you share them — go to the provider you chose.",
-  "Wallpaper colors are sampled on this PC.",
-  "The NOVA AI dot never captures your screen in the background. Changes to files wait for your OK, unless you turn on auto mode.",
-  "Voice input uses Windows speech recognition or NOVA's offline recognizer, only while the microphone is open. After a spoken reply it opens again by itself, unless you turn that off.",
-  "NOVA's own voices run on this PC. If you pick an online voice, what NOVA says goes to that service (Google or ElevenLabs).",
-  "“Hey NOVA” and the double clap keep the microphone open only while you turn them on, also in games unless you turn that off. The sound is checked on this PC and never recorded, saved or sent.",
+  "Einstellungen, Layouts, Aufgaben, Notizen und Chats liegen in einer lokalen Datenbank auf diesem PC.",
+  "Nutzungsstatistik ist freiwillig und aus, bis du zustimmst. Sie enthält nie Chats, Sprache, Dateien, Screenshots, Tastatureingaben, Fenster- oder Programmnamen.",
+  "Systemwerte, Apps, Dateien und Medien werden lokal gelesen und verlassen dein Gerät nie.",
+  "Fragst du nach dem Wetter oder deiner Internetgeschwindigkeit, fragt NOVA bei Open-Meteo an oder lädt eine Testdatei von Hetzner. Nur dann.",
+  "NOVA Finder kennt nur die Ordner, die du ihm gibst. Auch mit dem ganzen PC bleiben Windows, installierte Programme und App-Daten tabu.",
+  "KI-Schlüssel liegen in der Windows-Anmeldeinformationsverwaltung. Nur deine Nachrichten, und Screenshots oder Dateien, wenn du sie teilst, gehen an den Anbieter, den du gewählt hast.",
+  "Die Farben deines Hintergrundbilds werden auf diesem PC gelesen.",
+  "Der NOVA-Punkt nimmt deinen Bildschirm nie im Hintergrund auf. Änderungen an Dateien warten auf dein OK, außer du schaltest den Auto-Modus ein.",
+  "Spracheingabe nutzt die Windows-Spracherkennung oder NOVAs Offline-Erkennung, nur solange das Mikrofon offen ist. Nach einer gesprochenen Antwort öffnet es sich von selbst wieder, außer du schaltest das aus.",
+  "NOVAs eigene Stimmen laufen auf diesem PC. Wählst du eine Online-Stimme, geht das, was NOVA sagt, an diesen Dienst (Google oder ElevenLabs).",
+  "„Hey NOVA“ und das Doppelklatschen halten das Mikrofon nur offen, solange du sie einschaltest, auch in Spielen, außer du schaltest das aus. Der Ton wird auf diesem PC geprüft und nie aufgenommen, gespeichert oder gesendet.",
 ];
 
 interface StorageStatus {
@@ -445,40 +483,39 @@ interface StorageStatus {
 function PrivacySection() {
   const connections = useExternalConnections();
   return (
-    <SettingsSection id="privacy" title="Privacy" description="NOVA is local-first by design." icon={ShieldCheck}>
+    <SettingsSection id="privacy" title="Datenschutz" description="NOVA arbeitet zuerst lokal. Hier steht, was den PC verlässt, und nur weil du es so willst." icon={ShieldCheck}>
       <TelemetrySettings />
-      <div className="mb-4 rounded-[14px] border border-line bg-black/20 p-4">
-        <p className="flex items-center gap-2 text-[13px] font-medium text-fg">
-          <Globe size={14} className="text-accent-text" aria-hidden /> External connections
-        </p>
+      <SettingCard title="Verbindungen nach außen" description="Alles, womit sich NOVA mit deinen jetzigen Einstellungen verbinden kann." icon={Globe}>
         {connections.length === 0 ? (
-          <p className="mt-1 text-[12.5px] text-fg-muted">None. NOVA currently makes no network connections.</p>
+          <p className="text-[12.5px] text-fg-muted">Keine. NOVA baut gerade keine Netzwerkverbindungen auf.</p>
         ) : (
-          <ul className="mt-2 space-y-1 text-[12.5px] text-fg-muted">
-            {connections.map((c) => (
-              <li key={c}>• {c}</li>
+          <ul className="space-y-1.5 text-[12.5px] leading-relaxed text-fg-muted">
+            {connections.map((connection) => (
+              <li key={connection} className="flex gap-2">
+                <span aria-hidden className="mt-[7px] size-1 shrink-0 rounded-full bg-fg-subtle" />
+                {connection}
+              </li>
             ))}
           </ul>
         )}
-      </div>
-      <ul className="space-y-2.5">
-        {PRIVACY_FACTS.map((fact) => (
-          <li key={fact} className="flex items-start gap-2.5 text-[13px] text-fg-muted">
-            <Check size={15} className="mt-0.5 shrink-0 text-success" aria-hidden />
-            {fact}
-          </li>
-        ))}
-      </ul>
-      <div className="mt-5 border-t border-line pt-4">
-        <AssistantHistoryRow />
-      </div>
+      </SettingCard>
+      <SettingCard title="Worauf du dich verlassen kannst" icon={ShieldCheck}>
+        <ul className="space-y-2.5">
+          {PRIVACY_FACTS.map((fact) => (
+            <li key={fact} className="flex items-start gap-2.5 text-[13px] leading-relaxed text-fg-muted">
+              <Check size={15} className="mt-0.5 shrink-0 text-success" aria-hidden />
+              {fact}
+            </li>
+          ))}
+        </ul>
+      </SettingCard>
+      <AssistantHistoryCard />
     </SettingsSection>
   );
 }
 
 function AboutSection() {
   const resetSettings = useSettings((s) => s.resetSettings);
-  const [confirming, setConfirming] = useState(false);
   const { data: runtime } = useQuery({
     queryKey: ["app", "runtime"],
     queryFn: async () => (isDesktop() ? { version: await getVersion(), tauri: await getTauriVersion() } : null),
@@ -489,63 +526,38 @@ function AboutSection() {
     queryFn: () => (isDesktop() ? callNative<StorageStatus>("storage_status") : null),
   });
 
-  useEffect(() => {
-    if (!confirming) return;
-    const timer = window.setTimeout(() => setConfirming(false), 4000);
-    return () => window.clearTimeout(timer);
-  }, [confirming]);
-
   return (
-    <SettingsSection id="about" title="About NOVA" icon={Info}>
-      <div className="flex items-center gap-4 pb-4">
-        <NovaMark size={48} />
-        <div>
-          <p className="text-[15px] font-semibold tracking-[0.16em] text-fg">NOVA</p>
-          <p className="text-[12.5px] text-fg-muted">Your Personal Command Center · Everything. Connected.</p>
+    <SettingsSection id="about" title="Über NOVA" description="Your Personal Command Center · Everything. Connected." icon={Info}>
+      <SettingCard title="NOVA" icon={Info}>
+        <div className="flex items-center gap-4 pb-4">
+          <NovaMark size={48} />
+          <div>
+            <p className="text-[15px] font-semibold tracking-[0.16em] text-fg">NOVA</p>
+            <p className="text-[12.5px] text-fg-muted">{runtime ? `Desktop-App · Tauri ${runtime.tauri}` : "Vorschau im Browser: Was Windows braucht, gibt es hier nicht."}</p>
+          </div>
         </div>
-      </div>
-      <SettingRow label="Version" description={runtime ? `Desktop runtime · Tauri ${runtime.tauri}` : "Browser preview — native features are unavailable."}>
-        <span className="flex items-center gap-2">
-          <Button size="sm" variant="ghost" onClick={() => useTour.getState().start()}>
-            Start the tour
+        <SettingLine label="Version" description="Was in dieser Version dazugekommen ist, zeigt „Was ist neu“.">
+          <span className="flex items-center gap-3">
+            <span className="text-[13px] font-medium text-fg tabular-nums">{runtime?.version ?? __NOVA_VERSION__}</span>
+            <Button size="sm" variant="secondary" onClick={showWhatsNew}>
+              Was ist neu
+            </Button>
+          </span>
+        </SettingLine>
+        <SettingLine label="Einführung" description="Die Tour vom ersten Start, noch einmal von vorn.">
+          <Button size="sm" variant="secondary" onClick={() => useTour.getState().start()}>
+            Tour starten
           </Button>
-          <Button size="sm" variant="ghost" onClick={showWhatsNew}>
-            What's new
-          </Button>
-          <span className="text-[13px] font-medium text-fg tabular-nums">{runtime?.version ?? __NOVA_VERSION__}</span>
-        </span>
-      </SettingRow>
-      <SettingRow
-        label="Local database"
-        description={
-          storage ? (
-            <span className="break-all select-text">{storage.path ?? "No data folder available"}</span>
-          ) : (
-            "Browser preview — data is kept in this browser's storage."
-          )
-        }
-      >
-        <span className={cn("text-[13px] font-medium tabular-nums", storage?.available === false ? "text-warning" : "text-fg")}>
-          {storage ? (storage.available ? `Schema v${storage.schemaVersion}` : "Unavailable") : "—"}
-        </span>
-      </SettingRow>
-      <SettingRow label="Reset settings" description="Restore appearance, navigation, dashboard and system preferences. Your name, weather place, news feeds, startup and update choices and dashboard layouts are kept.">
-        <Button
-          size="sm"
-          variant={confirming ? "danger" : "secondary"}
-          icon={<RotateCcw size={14} aria-hidden />}
-          onClick={() => {
-            if (confirming) {
-              resetSettings();
-              setConfirming(false);
-            } else {
-              setConfirming(true);
-            }
-          }}
-        >
-          {confirming ? "Click again to reset" : "Reset…"}
-        </Button>
-      </SettingRow>
+        </SettingLine>
+      </SettingCard>
+      <SettingCard title="Deine Daten" icon={Database}>
+        <SettingLine label="Lokale Datenbank" description={storage ? <span className="break-all select-text">{storage.path ?? "Kein Datenordner vorhanden"}</span> : "Vorschau im Browser: Die Daten liegen im Speicher dieses Browsers."}>
+          <span className={cn("text-[13px] font-medium tabular-nums", storage?.available === false ? "text-warning" : "text-fg")}>{storage ? (storage.available ? `Schema v${storage.schemaVersion}` : "Nicht erreichbar") : "—"}</span>
+        </SettingLine>
+        <SettingLine label="Einstellungen zurücksetzen" description="Stellt Darstellung, Navigation, Dashboard und System wieder her. Dein Name, Wetter-Ort, Nachrichten-Feeds, Start- und Update-Einstellungen und deine Dashboard-Layouts bleiben.">
+          <ResetButton onReset={resetSettings} />
+        </SettingLine>
+      </SettingCard>
     </SettingsSection>
   );
 }

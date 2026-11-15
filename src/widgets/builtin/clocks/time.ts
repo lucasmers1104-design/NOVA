@@ -1,6 +1,8 @@
+import type { CSSProperties } from "react";
 import type { SelectConfigField } from "../../types";
 
-export type ClockStyle = "digital" | "minimal" | "analog" | "flip" | "words";
+export type ClockStyle = "digital" | "minimal" | "glass" | "stacked" | "analog" | "flip" | "words";
+export type ClockFont = "classic" | "thin" | "bold" | "rounded" | "serif" | "condensed" | "mono";
 
 /** Shared `style` option; "digital" keeps existing layouts unchanged. */
 export const CLOCK_STYLE_FIELD: SelectConfigField = {
@@ -11,11 +13,50 @@ export const CLOCK_STYLE_FIELD: SelectConfigField = {
   options: [
     { value: "digital", label: "Digital" },
     { value: "minimal", label: "Minimal" },
+    { value: "glass", label: "Glass" },
+    { value: "stacked", label: "Stacked" },
     { value: "analog", label: "Analog" },
     { value: "flip", label: "Flip" },
     { value: "words", label: "Words" },
   ],
 };
+
+/** Shared `font` option, like the lock screen's typefaces; only the digital faces use it. */
+export const CLOCK_FONT_FIELD: SelectConfigField = {
+  type: "select",
+  key: "font",
+  label: "Typeface",
+  default: "classic",
+  options: [
+    { value: "classic", label: "Classic" },
+    { value: "thin", label: "Thin" },
+    { value: "bold", label: "Bold" },
+    { value: "rounded", label: "Rounded" },
+    { value: "serif", label: "Serif" },
+    { value: "condensed", label: "Condensed" },
+    { value: "mono", label: "Mono" },
+  ],
+};
+
+/** The typeface for a `font` setting, as inline style so it wins over each face's own weight. */
+export function clockFontStyle(font: ClockFont | undefined): CSSProperties | undefined {
+  switch (font) {
+    case "thin":
+      return { fontWeight: 100 };
+    case "bold":
+      return { fontWeight: 700, letterSpacing: "-0.04em" };
+    case "rounded":
+      return { fontFamily: '"Arial Rounded MT Bold", "Nunito", ui-rounded, var(--font-sans)', fontWeight: 400 };
+    case "serif":
+      return { fontFamily: '"New York", Georgia, Cambria, "Times New Roman", serif', fontWeight: 400, letterSpacing: "-0.02em" };
+    case "condensed":
+      return { fontFamily: 'Bahnschrift, "DIN Alternate", "Roboto Condensed", var(--font-sans)', fontStretch: "condensed", fontWeight: 500 };
+    case "mono":
+      return { fontFamily: '"Cascadia Mono", Consolas, ui-monospace, monospace', fontWeight: 400, letterSpacing: "-0.03em" };
+    default:
+      return undefined;
+  }
+}
 
 export function clockParts(date: Date, use24Hour: boolean, locale: string, timeZone?: string) {
   const parts = new Intl.DateTimeFormat(locale, {

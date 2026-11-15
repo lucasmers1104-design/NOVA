@@ -1,6 +1,6 @@
 [package]
 name = "nova"
-version = "1.11.2"
+version = "1.12.0"
 description = "NOVA — Your Personal Command Center"
 authors = ["Luca Warmers"]
 edition = "2021"
@@ -53,6 +53,8 @@ qrcodegen = "1.8"
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
 windows-future = "0.3"
+# The same crate Tauri's WebView2 handles come from: for the memory target of hidden pages.
+webview2-com = "0.39"
 windows-collections = "0.3"
 windows = { version = "0.62", features = [
     "Data_Pdf",
@@ -73,6 +75,7 @@ windows = { version = "0.62", features = [
     "Win32_Media_Audio",
     "Win32_Media_Audio_Endpoints",
     "Win32_NetworkManagement_Dns",
+    "Win32_NetworkManagement_WindowsFirewall",
     "Win32_Security",
     "Win32_Security_Credentials",
     "Win32_Security_Cryptography",

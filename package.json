@@ -1,7 +1,7 @@
 {
   "name": "nova",
   "private": true,
-  "version": "1.11.2",
+  "version": "1.12.0",
   "description": "NOVA — Your Personal Command Center",
   "type": "module",
   "scripts": {
@@ -17,6 +17,7 @@
     "check:rust": "node scripts/build-helpers.mjs && cargo check --manifest-path src-tauri/Cargo.toml && cargo test --manifest-path src-tauri/Cargo.toml && cargo test --manifest-path src-tauri/Cargo.toml --lib --features companion-e2e companion::tests && cargo test --manifest-path tools/nova-phonemize/Cargo.toml",
     "check": "npm run typecheck && npm run test && npm run check:rust",
     "release": "node scripts/release.mjs",
+    "release:companion": "node scripts/companion-release.mjs",
     "build:helpers": "node scripts/build-helpers.mjs"
   },
   "dependencies": {

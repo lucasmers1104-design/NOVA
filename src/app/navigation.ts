@@ -7,7 +7,9 @@ import {
   LayoutDashboard,
   ListTodo,
   type LucideIcon,
+  MessagesSquare,
   Newspaper,
+  PanelTop,
   Puzzle,
   Settings,
   Sparkles,
@@ -21,6 +23,8 @@ export type RouteId =
   | "ai"
   | "productivity"
   | "routines"
+  | "island"
+  | "discord"
   | "media"
   | "files"
   | "live"
@@ -46,9 +50,11 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { id: "ai", label: "NOVA AI", icon: Sparkles, group: "workspace", description: "Your multi-provider AI assistant" },
   { id: "productivity", label: "Productivity", icon: ListTodo, group: "workspace", description: "Tasks, projects, notes and calendar" },
   { id: "routines", label: "Routines", icon: Workflow, group: "workspace", description: "What NOVA does by itself and remembers" },
+  { id: "island", label: "NOVA Island", icon: PanelTop, group: "workspace", description: "Design the island at the top of your screen" },
+  { id: "discord", label: "Discord", icon: MessagesSquare, group: "workspace", description: "NOVA writes and speaks in Discord for you" },
+  { id: "live", label: "Live Information", icon: Newspaper, group: "workspace", description: "Weather, news and information cards" },
   { id: "media", label: "Media", icon: AudioLines, group: "workspace", description: "Control what's playing on this PC" },
   { id: "files", label: "Files", icon: FolderOpen, group: "workspace", description: "Favorite folders and quick access" },
-  { id: "live", label: "Live Information", icon: Newspaper, group: "workspace", description: "Weather, news and information cards" },
   { id: "studio", label: "Widget Studio", icon: Blocks, group: "customize", description: "Build and arrange your widgets" },
   { id: "plugins", label: "Plugins", icon: Puzzle, group: "customize", description: "Install and manage extensions" },
   { id: "settings", label: "Settings", icon: Settings, group: "footer", description: "Appearance, privacy and preferences" },
@@ -63,6 +69,19 @@ export const NAV_GROUP_LABELS: Record<Exclude<NavGroup, "footer">, string> = {
 export const WORKSPACE_ORDERABLE_ROUTES: readonly RouteId[] = NAV_ITEMS.filter(
   (item) => item.group === "workspace" && item.id !== "home",
 ).map((item) => item.id);
+
+/** Hidden until the user shows them again (Settings → Sidebar): Island and Discord took their place in 1.13. */
+export const HIDDEN_BY_DEFAULT: readonly RouteId[] = ["media", "files"];
+
+/**
+ * Settings saved before 1.13: Island takes Media's place and Discord takes Files' place in the
+ * user's own order, and Media and Files are hidden (not removed).
+ */
+export function migrateNavigation(order: readonly RouteId[], hidden: readonly RouteId[]): { order: RouteId[]; hidden: RouteId[] } {
+  const replaced = order.flatMap((id): RouteId[] => (id === "media" ? ["island"] : id === "files" ? ["discord"] : id === "island" || id === "discord" ? [] : [id]));
+  const missing = WORKSPACE_ORDERABLE_ROUTES.filter((id) => !replaced.includes(id));
+  return { order: [...replaced, ...missing], hidden: [...new Set([...hidden, ...HIDDEN_BY_DEFAULT])] };
+}
 
 /** Sections the user may hide from the sidebar; Home and Settings are always shown. */
 export const CUSTOMIZABLE_ROUTES: readonly RouteId[] = NAV_ITEMS.filter((item) => item.id !== "home" && item.id !== "settings").map(

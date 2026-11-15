@@ -209,29 +209,151 @@ fn fits_search(track: &str, query: &str) -> bool {
     !title.is_empty() && letters(query).contains(&title)
 }
 
-/// What plays now, once Spotify reports it. For a moment after the press it still
-/// says "playing" about the song from before, so a new song is waited for. The
-/// same song only counts if it fits the search; otherwise the press didn't work,
-/// and the user is told that rather than told it worked.
-fn confirm_playing(before: Option<&str>, query: Option<&str>) -> Result<String, String> {
-    let current = || -> Result<Option<(String, bool)>, String> { Ok(crate::media::platform::state()?.filter(|state| state.describe().contains("Spotify")).map(|state| (state.track(), state.is_playing()))) };
-    if let Some(track) = wait_for(CONFIRMING, || Ok(current()?.filter(|(track, playing)| *playing && before != Some(track.as_str())).map(|(track, _)| track)))? {
-        return Ok(track);
+/// What Spotify reports through Windows' media controls: the track and whether it
+/// plays. That's all there is; which playlist or album it comes from isn't told.
+#[derive(Debug, Clone, PartialEq)]
+struct Now {
+    track: String,
+    playing: bool,
+}
+
+fn spotify_now() -> Result<Option<Now>, String> {
+    Ok(crate::media::platform::state()?.filter(|state| state.describe().contains("Spotify")).map(|state| Now { track: state.track(), playing: state.is_playing() }))
+}
+
+/// How Spotify changed from before the press to now.
+#[derive(Debug, Clone, PartialEq)]
+enum Change {
+    /// Another track plays than before: something started.
+    New(String),
+    /// The track that was paused plays again. A result's or a page's play button
+    /// only resumes when it belongs to what is loaded (anything else would start
+    /// from its beginning), so this is the asked-for playlist, album or song
+    /// continuing where it was paused.
+    Resumed(String),
+    /// The track that played still plays: the press changed nothing that shows.
+    Same(String),
+    /// The track that played is paused now. Pressing play on what already plays
+    /// pauses it, so what was asked for was already on.
+    Paused(String),
+    /// Nothing plays.
+    Silent,
+}
+
+impl Change {
+    fn between(before: Option<&Now>, now: Option<&Now>) -> Change {
+        let same_track = |now: &Now| before.is_some_and(|before| before.track == now.track);
+        let played = before.is_some_and(|before| before.playing);
+        match now {
+            Some(now) if now.playing && !same_track(now) => Change::New(now.track.clone()),
+            Some(now) if now.playing && played => Change::Same(now.track.clone()),
+            Some(now) if now.playing => Change::Resumed(now.track.clone()),
+            Some(now) if played && same_track(now) => Change::Paused(now.track.clone()),
+            _ => Change::Silent,
+        }
     }
-    match current()? {
-        Some((track, true)) if query.is_some_and(|query| fits_search(&track, query)) => Ok(track),
-        Some((track, true)) => Err(format!("Spotify still plays {track}, so that didn't work. Try again.")),
-        _ => Err("NOVA pressed play, but Spotify doesn't report playing yet. On a free account an ad may be running first.".into()),
+
+    /// Whether this can be believed once it has held for a moment. Right after the
+    /// press Spotify may still name the old track while it switches, so these wait
+    /// a little for a new one; "same" and "silent" wait the whole time.
+    fn settles(&self) -> bool {
+        matches!(self, Change::Resumed(_) | Change::Paused(_))
     }
 }
 
-fn track_before() -> Option<String> {
-    crate::media::platform::state().ok().flatten().map(|state| state.track())
+/// How it came to play.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum How {
+    Started,
+    Resumed,
+    AlreadyOn,
+}
+
+/// Whether the change means it worked. Never judged by which track it is for a
+/// playlist, album or artist: those start or continue anywhere in them.
+fn judge(change: &Change, query: Option<&str>) -> Result<(How, String), String> {
+    match change {
+        Change::New(track) => Ok((How::Started, track.clone())),
+        Change::Resumed(track) => Ok((How::Resumed, track.clone())),
+        Change::Paused(track) => Ok((How::AlreadyOn, track.clone())),
+        // A song asked for again while it plays.
+        Change::Same(track) if query.is_some_and(|query| fits_search(track, query)) => Ok((How::AlreadyOn, track.clone())),
+        Change::Same(track) => Err(format!("Spotify kept playing {track}; the press changed nothing. Try again.")),
+        Change::Silent => Err("NOVA pressed play, but Spotify doesn't report playing yet. On a free account an ad may be running first.".into()),
+    }
+}
+
+/// What was asked for: a kind and a search, or something from the library (no kind).
+struct Asked<'a> {
+    kind: Option<Kind>,
+    name: &'a str,
+}
+
+impl Asked<'_> {
+    fn label(&self) -> String {
+        match self.kind {
+            Some(Kind::Song) => String::new(),
+            Some(Kind::Album) => format!("The album “{}”", self.name),
+            Some(Kind::Playlist) => format!("The playlist “{}”", self.name),
+            Some(Kind::Artist) => format!("Music by “{}”", self.name),
+            None => format!("“{}”", self.name),
+        }
+    }
+
+    /// Short and true, for NOVA AI to repeat.
+    fn say(&self, how: How, track: &str) -> String {
+        let label = self.label();
+        match (label.is_empty(), how) {
+            (true, How::Started) => format!("Now playing: {track}."),
+            (true, How::Resumed) => format!("Now playing: {track} (continued where it was paused)."),
+            (true, How::AlreadyOn) => format!("{track} was already playing and keeps playing."),
+            (false, How::Started) => format!("{label} plays, starting with: {track}."),
+            (false, How::Resumed) => format!("{label} plays, continuing at: {track} (where it was paused)."),
+            (false, How::AlreadyOn) => format!("{label} was already playing and keeps playing (now: {track})."),
+        }
+    }
+}
+
+/// What plays after a press, and what NOVA AI is told about it.
+#[derive(Debug, Clone)]
+pub struct Played {
+    pub track: String,
+    pub said: String,
+}
+
+/// Waits for Spotify to show what the press did, and says it.
+fn confirm_playing(before: Option<&Now>, asked: &Asked) -> Result<Played, String> {
+    const SETTLING: Duration = Duration::from_millis(2000);
+    let started = Instant::now();
+    let mut held: Option<(Change, Instant)> = None;
+    let change = loop {
+        let change = Change::between(before, spotify_now()?.as_ref());
+        let since = match &held {
+            Some((last, since)) if *last == change => *since,
+            _ => Instant::now(),
+        };
+        let done = matches!(change, Change::New(_)) || (change.settles() && since.elapsed() >= SETTLING) || started.elapsed() >= CONFIRMING;
+        if done {
+            break change;
+        }
+        held = Some((change, since));
+        std::thread::sleep(Duration::from_millis(300));
+    };
+    let query = asked.kind.map(|_| asked.name);
+    let (how, mut track) = judge(&change, query)?;
+    if let Change::Paused(_) = change {
+        // The press paused what was already on; play it on from where it is.
+        crate::media::platform::control("play").map_err(|e| format!("{track} was already playing, the press paused it, and NOVA couldn't resume it: {e}"))?;
+        if let Some(now) = wait_for(Duration::from_secs(3), || Ok(spotify_now()?.filter(|now| now.playing)))? {
+            track = now.track;
+        }
+    }
+    Ok(Played { said: asked.say(how, &track), track })
 }
 
 /// Searches for `query` and plays the first result of this kind.
-pub fn play(query: &str, kind: Kind) -> Result<String, String> {
-    let before = track_before();
+pub fn play(query: &str, kind: Kind) -> Result<Played, String> {
+    let before = spotify_now().ok().flatten();
     with_spotify(|target| {
         let old_result = first_result(&read(target)?, Kind::Song);
         let link = format!("spotify:search:{}", crate::shell::encode_query(query));
@@ -261,7 +383,7 @@ pub fn play(query: &str, kind: Kind) -> Result<String, String> {
         }
         let pressed = wait_for(RESULTS, || press(target, &|elements| pick_result(elements, kind)))?;
         pressed.ok_or_else(|| format!("Spotify found nothing of that kind for “{query}”."))?;
-        confirm_playing(before.as_deref(), Some(query))
+        confirm_playing(before.as_ref(), &Asked { kind: Some(kind), name: query })
     })
 }
 
@@ -281,13 +403,13 @@ pub fn library_items() -> Result<Vec<String>, String> {
 }
 
 /// Opens something from the user's library and plays it.
-pub fn play_from_library(wanted: &str) -> Result<String, String> {
-    let before = track_before();
+pub fn play_from_library(wanted: &str) -> Result<Played, String> {
+    let before = spotify_now().ok().flatten();
     with_spotify(|target| {
         press(target, &|elements| pick_library(elements, wanted))?.ok_or_else(|| format!("“{wanted}” isn't in the Spotify library. Check spotify_library."))?;
         let pressed = wait_for(RESULTS, || press(target, &|elements| pick_page_play(elements, wanted)))?;
         pressed.ok_or_else(|| format!("Spotify opened “{wanted}”, but NOVA found no play button on it."))?;
-        confirm_playing(before.as_deref(), None)
+        confirm_playing(before.as_ref(), &Asked { kind: None, name: wanted })
     })
 }
 
@@ -457,6 +579,70 @@ mod tests {
         assert!(!fits_search("", "Numb"));
     }
 
+    fn now(track: &str, playing: bool) -> Now {
+        Now { track: track.into(), playing }
+    }
+
+    const TOUGH: &str = "Tough by Quavo, Lil Durk";
+
+    #[test]
+    fn a_paused_playlist_that_resumes_counts_as_playing() {
+        // The reported case: "Tough" was paused, the playlist's play button continued it.
+        let change = Change::between(Some(&now(TOUGH, false)), Some(&now(TOUGH, true)));
+        assert_eq!(change, Change::Resumed(TOUGH.into()));
+        assert!(change.settles());
+        let (how, track) = judge(&change, Some("Rap Mix")).unwrap();
+        assert_eq!((how, track.as_str()), (How::Resumed, TOUGH));
+        let said = Asked { kind: Some(Kind::Playlist), name: "Rap Mix" }.say(how, &track);
+        assert_eq!(said, format!("The playlist “Rap Mix” plays, continuing at: {TOUGH} (where it was paused)."));
+        // From the library it's the same, and no track name is ever expected.
+        assert_eq!(judge(&change, None).unwrap().0, How::Resumed);
+    }
+
+    #[test]
+    fn a_new_track_counts_whatever_it_is() {
+        for before in [None, Some(now(TOUGH, false)), Some(now(TOUGH, true))] {
+            let change = Change::between(before.as_ref(), Some(&now("Numb by Linkin Park", true)));
+            assert_eq!(change, Change::New("Numb by Linkin Park".into()));
+            assert_eq!(judge(&change, Some("Rap Mix")).unwrap().0, How::Started, "a playlist can start with any of its songs");
+        }
+        let said = Asked { kind: Some(Kind::Album), name: "Hybrid Theory" }.say(How::Started, "Papercut by Linkin Park");
+        assert_eq!(said, "The album “Hybrid Theory” plays, starting with: Papercut by Linkin Park.");
+        assert_eq!(Asked { kind: Some(Kind::Song), name: "Numb" }.say(How::Started, "Numb by Linkin Park"), "Now playing: Numb by Linkin Park.");
+    }
+
+    #[test]
+    fn pressing_what_already_plays_paused_it_and_is_resumed() {
+        let change = Change::between(Some(&now(TOUGH, true)), Some(&now(TOUGH, false)));
+        assert_eq!(change, Change::Paused(TOUGH.into()));
+        assert!(change.settles());
+        assert_eq!(judge(&change, None).unwrap().0, How::AlreadyOn);
+        let said = Asked { kind: None, name: "Lieblingssongs" }.say(How::AlreadyOn, TOUGH);
+        assert_eq!(said, format!("“Lieblingssongs” was already playing and keeps playing (now: {TOUGH})."));
+    }
+
+    #[test]
+    fn the_same_track_playing_on_only_counts_for_that_song() {
+        let change = Change::between(Some(&now(TOUGH, true)), Some(&now(TOUGH, true)));
+        assert_eq!(change, Change::Same(TOUGH.into()));
+        assert!(!change.settles(), "the old track may still show for a moment, so this waits");
+        assert_eq!(judge(&change, Some("Tough Quavo")).unwrap().0, How::AlreadyOn);
+        assert!(judge(&change, Some("Rap Mix")).is_err());
+        assert!(judge(&change, None).is_err());
+    }
+
+    #[test]
+    fn nothing_playing_is_not_success() {
+        for (before, after) in [(None, None), (None, Some(now(TOUGH, false))), (Some(now(TOUGH, false)), Some(now(TOUGH, false))), (Some(now(TOUGH, true)), None)] {
+            let change = Change::between(before.as_ref(), after.as_ref());
+            assert_eq!(change, Change::Silent, "{before:?} -> {after:?}");
+            assert!(!change.settles());
+            assert!(judge(&change, Some("Rap Mix")).is_err());
+        }
+        // Another track paused isn't "what played got paused".
+        assert_eq!(Change::between(Some(&now(TOUGH, true)), Some(&now("Numb", false))), Change::Silent);
+    }
+
     #[test]
     fn kinds_come_from_the_tool() {
         assert_eq!(Kind::parse("album"), Some(Kind::Album));
@@ -474,7 +660,7 @@ mod tests {
         for (query, expected) in songs {
             let started = Instant::now();
             let outcome = play(query, Kind::Song);
-            right += usize::from(outcome.as_ref().is_ok_and(|track| track.to_lowercase().contains(&expected.to_lowercase())));
+            right += usize::from(outcome.as_ref().is_ok_and(|played| played.track.to_lowercase().contains(&expected.to_lowercase())));
             eprintln!("{query}: {outcome:?} in {} ms | in front: {} | minimized: {:?}", started.elapsed().as_millis(), front(), spotify_window().map(|w| w.minimized));
             std::thread::sleep(Duration::from_millis(1500));
         }

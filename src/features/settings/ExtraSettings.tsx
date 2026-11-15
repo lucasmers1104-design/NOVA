@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, Check, CloudDownload, ExternalLink, KeyRound, Layers, Plug, Plus, Power, RefreshCw, Trash } from "lucide-react";
+import { Bell, CalendarClock, Check, CloudDownload, CloudSun, ExternalLink, KeyRound, Layers, Newspaper, Plug, Plus, Power, RefreshCw, Trash } from "lucide-react";
 import { type FormEvent, useState } from "react";
+import { SettingCard, SettingLine } from "@/components/settings-kit";
 import { Badge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Switch } from "@/components/ui/Switch";
@@ -16,7 +17,7 @@ import { cn } from "@/lib/cn";
 import { callNative, isDesktop } from "@/lib/native";
 import { useSettings } from "@/stores/settings";
 import { useUi } from "@/stores/ui";
-import { SettingRow, SettingsSection } from "./SettingsLayout";
+import { FIELD, SettingsNotice, SettingsSection } from "./SettingsLayout";
 
 export function ProfilesSettings() {
   const profiles = useProfiles((s) => s.profiles);
@@ -36,56 +37,55 @@ export function ProfilesSettings() {
   };
 
   return (
-    <SettingsSection id="profiles" title="Workspace profiles" description="Switch layout, accent and appearance together for different moments." icon={Layers}>
-      <ul className="grid grid-cols-2 gap-3 pb-4">
-        {profiles.map((profile) => {
-          const Icon = PROFILE_ICONS[profile.kind];
-          const active = profile.id === activeId;
-          const layout = layouts.find((l) => l.id === profile.layoutId);
-          return (
-            <li key={profile.id} className={cn("rounded-[16px] border p-4 transition-colors", active ? "border-accent/50 bg-accent/[0.07]" : "border-line bg-white/[0.03]")}>
-              <div className="flex items-start gap-3">
-                <span className="flex size-10 shrink-0 items-center justify-center rounded-[12px] text-white" style={{ backgroundColor: resolveAccentColor(profile.accent) }}>
-                  <Icon size={19} aria-hidden />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="flex items-center gap-2 text-[14px] font-semibold text-fg">
-                    {profile.name}
-                    {active && <Badge tone="accent" className="h-5 px-2 text-[11px]">Active</Badge>}
-                  </p>
-                  <p className="mt-0.5 truncate text-[12px] text-fg-muted">
-                    {layout ? `Layout “${layout.name}”` : "Creates its own layout"} · {profile.transparency ? "Glass" : "Solid"} · Sidebar {profile.sidebarCollapsed ? "compact" : "full"}
-                  </p>
+    <SettingsSection id="profiles" title="Profile" description="Layout, Akzent und Darstellung auf einmal wechseln, passend zum Moment." icon={Layers}>
+      <SettingCard title="Deine Profile" description="Ein Profil merkt sich dein Dashboard-Layout, die Akzentfarbe, das Glas und die Seitenleiste." icon={Layers}>
+        <ul data-setting="Profile" className="grid grid-cols-2 gap-2.5">
+          {profiles.map((profile) => {
+            const Icon = PROFILE_ICONS[profile.kind];
+            const active = profile.id === activeId;
+            const layout = layouts.find((l) => l.id === profile.layoutId);
+            return (
+              <li key={profile.id} className={cn("rounded-[16px] border p-3.5 transition-colors", active ? "border-accent/50 bg-accent/[0.07]" : "border-line bg-white/[0.02] hover:border-line-strong")}>
+                <div className="flex items-start gap-3">
+                  <span className="flex size-10 shrink-0 items-center justify-center rounded-[12px] text-white" style={{ backgroundColor: resolveAccentColor(profile.accent) }}>
+                    <Icon size={19} aria-hidden />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="flex items-center gap-2 text-[13.5px] font-semibold text-fg">
+                      <span className="truncate">{profile.name}</span>
+                      {active && <Badge tone="accent" className="h-5 px-2 text-[11px]">Aktiv</Badge>}
+                    </p>
+                    <p className="mt-0.5 truncate text-[12px] text-fg-muted">
+                      {layout ? `Layout „${layout.name}“` : "Legt ein eigenes Layout an"} · {profile.transparency ? "Glas" : "Deckend"} · Seitenleiste {profile.sidebarCollapsed ? "kompakt" : "voll"}
+                    </p>
+                  </div>
                 </div>
-              </div>
-              <div className="mt-3 flex items-center gap-1.5">
-                <Button size="sm" variant={active ? "secondary" : "primary"} icon={active ? <Check size={13} /> : undefined} onClick={() => apply(profile.id)} className="h-7">
-                  {active ? "Re-apply" : "Switch"}
-                </Button>
-                {profile.kind === "custom" && (
-                  <>
-                    <IconButton size="sm" label={`Update ${profile.name} with the current setup`} onClick={() => updateFromCurrent(profile.id)}>
-                      <RefreshCw size={13} />
-                    </IconButton>
-                    <IconButton size="sm" label={`Delete ${profile.name}`} onClick={() => remove(profile.id)} className="hover:text-danger">
-                      <Trash size={13} />
-                    </IconButton>
-                  </>
-                )}
-              </div>
-            </li>
-          );
-        })}
-      </ul>
-      <form onSubmit={save} className="flex items-center gap-2 pt-4">
-        <label className="flex h-9 flex-1 items-center rounded-control border border-line bg-black/25 px-3 focus-within:border-line-strong">
-          <span className="sr-only">New profile name</span>
-          <input value={name} onChange={(e) => setName(e.target.value)} maxLength={40} placeholder="Name for a profile from your current setup" className="h-full flex-1 bg-transparent text-[13px] text-fg outline-none select-text placeholder:text-fg-subtle" />
-        </label>
-        <Button type="submit" size="sm" variant="secondary" icon={<Plus size={14} />} disabled={!name.trim()}>
-          Save current setup
-        </Button>
-      </form>
+                <div className="mt-3 flex items-center gap-1.5">
+                  <Button size="sm" variant={active ? "secondary" : "primary"} icon={active ? <Check size={13} aria-hidden /> : undefined} data-records onClick={() => apply(profile.id)} className="h-7">
+                    {active ? "Neu anwenden" : "Wechseln"}
+                  </Button>
+                  {profile.kind === "custom" && (
+                    <>
+                      <IconButton size="sm" label={`${profile.name} mit dem jetzigen Stand überschreiben`} onClick={() => updateFromCurrent(profile.id)}>
+                        <RefreshCw size={13} aria-hidden />
+                      </IconButton>
+                      <IconButton size="sm" label={`${profile.name} löschen`} onClick={() => remove(profile.id)} className="hover:text-danger">
+                        <Trash size={13} aria-hidden />
+                      </IconButton>
+                    </>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+        <form onSubmit={save} className="flex items-center gap-2 pt-4">
+          <input aria-label="Name für ein neues Profil" value={name} onChange={(event) => setName(event.target.value)} maxLength={40} placeholder="Name für ein Profil aus deinem jetzigen Stand" className={cn(FIELD, "min-w-0 flex-1")} />
+          <Button type="submit" size="sm" variant="secondary" icon={<Plus size={14} aria-hidden />} disabled={!name.trim()}>
+            Jetzigen Stand speichern
+          </Button>
+        </form>
+      </SettingCard>
     </SettingsSection>
   );
 }
@@ -93,16 +93,17 @@ export function ProfilesSettings() {
 export function AiProviderSettings() {
   const { data: status, error } = useKeyStatus();
   return (
-    <SettingsSection
-      id="ai"
-      title="AI providers"
-      description="Keys are stored in Windows Credential Manager. NOVA can use them but never shows them again."
-      icon={KeyRound}
-    >
+    <SettingsSection id="ai" title="KI-Anbieter" description="Die Schlüssel liegen in der Windows-Anmeldeinformationsverwaltung. NOVA kann sie benutzen, zeigt sie aber nie wieder an." icon={KeyRound}>
       {error ? (
-        <p className="text-[13px] text-fg-muted">AI providers are available in the desktop app.</p>
+        <SettingsNotice>KI-Anbieter gibt es in der NOVA-Desktop-App.</SettingsNotice>
       ) : (
-        PROVIDERS.map((provider) => <ProviderRow key={provider.id} id={provider.id} configured={status?.[provider.id] ?? false} />)
+        <SettingCard title="API-Schlüssel" description="Mit einem Schlüssel antwortet NOVA AI über diesen Anbieter. Ohne versteht NOVA nur einfache Befehle." icon={KeyRound}>
+          <div data-setting="API-Schlüssel" className="divide-y divide-line">
+            {PROVIDERS.map((provider) => (
+              <ProviderRow key={provider.id} id={provider.id} configured={status?.[provider.id] ?? false} />
+            ))}
+          </div>
+        </SettingCard>
       )}
     </SettingsSection>
   );
@@ -116,40 +117,36 @@ function ProviderRow({ id, configured }: { id: ProviderId; configured: boolean }
   const [editing, setEditing] = useState(false);
 
   return (
-    <div className="py-4 first:pt-0 last:pb-0">
+    <div className="py-3.5 first:pt-0 last:pb-0">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <p className="flex items-center gap-2 text-[13.5px] font-medium text-fg">
+          <p className="flex items-center gap-2 text-[13px] font-medium text-fg">
             {provider.name}
             <Badge tone={configured ? "success" : "neutral"} className="h-5 px-2 text-[11px]">
-              {configured ? "Key saved" : "Not connected"}
+              {configured ? "Schlüssel gespeichert" : "Nicht verbunden"}
             </Badge>
           </p>
-          <button
-            type="button"
-            onClick={() => void callNative("open_url", { url: provider.keyUrl })}
-            className="mt-0.5 flex items-center gap-1 text-[12px] text-fg-subtle hover:text-accent-text"
-          >
-            Get a key <ExternalLink size={11} aria-hidden />
+          <button type="button" onClick={() => void callNative("open_url", { url: provider.keyUrl })} className="mt-0.5 flex items-center gap-1 text-[12px] text-fg-subtle transition-colors hover:text-accent-text">
+            Schlüssel holen <ExternalLink size={11} aria-hidden />
           </button>
         </div>
         <div className="flex gap-1.5">
           {configured && !editing && (
-            <Button size="sm" variant="ghost" onClick={() => deleteKey.mutate(id)} className="hover:text-danger">
-              Remove
+            <Button size="sm" variant="ghost" data-records onClick={() => deleteKey.mutate(id)} className="hover:text-danger">
+              Entfernen
             </Button>
           )}
           {!editing && (
             <Button size="sm" variant="secondary" onClick={() => setEditing(true)}>
-              {configured ? "Replace key" : "Add key"}
+              {configured ? "Schlüssel ersetzen" : "Schlüssel hinzufügen"}
             </Button>
           )}
         </div>
       </div>
       {editing && (
         <form
-          onSubmit={(e) => {
-            e.preventDefault();
+          onSubmit={(event) => {
+            event.preventDefault();
             saveKey.mutate(
               { provider: id, key },
               {
@@ -162,24 +159,12 @@ function ProviderRow({ id, configured }: { id: ProviderId; configured: boolean }
           }}
           className="mt-3 flex gap-2"
         >
-          <label className="flex h-9 flex-1 items-center rounded-control border border-line bg-black/25 px-3 focus-within:border-line-strong">
-            <span className="sr-only">{provider.name} API key</span>
-            <input
-              autoFocus
-              type="password"
-              autoComplete="off"
-              spellCheck={false}
-              value={key}
-              onChange={(e) => setKey(e.target.value)}
-              placeholder={provider.keyHint}
-              className="h-full flex-1 bg-transparent font-mono text-[13px] text-fg outline-none placeholder:text-fg-subtle"
-            />
-          </label>
+          <input autoFocus type="password" aria-label={`API-Schlüssel für ${provider.name}`} autoComplete="off" spellCheck={false} value={key} onChange={(event) => setKey(event.target.value)} placeholder={provider.keyHint} className={cn(FIELD, "min-w-0 flex-1 font-mono")} />
           <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
-            Cancel
+            Abbrechen
           </Button>
           <Button size="sm" variant="primary" type="submit" disabled={key.trim().length < 10 || saveKey.isPending}>
-            Save securely
+            Sicher speichern
           </Button>
         </form>
       )}
@@ -198,27 +183,24 @@ export function StartupSettings() {
   const setAutostart = useMutation({
     mutationFn: (enabled: boolean) => callNative<boolean>("autostart_set", { enabled }),
     onSuccess: (enabled) => client.setQueryData(["desktop", "autostart"], enabled),
-    onError: (error) => notifyError("Couldn't change the startup setting", error),
+    onError: (error) => notifyError("Der Autostart ließ sich nicht ändern", error),
   });
 
   return (
-    <SettingsSection id="startup" title="Startup & notifications" description="Background behavior is off unless you turn it on." icon={Power}>
-      <SettingRow label="Start with Windows" description="Opens NOVA when you sign in. With “Keep running in the tray” on, it starts quietly in the tray.">
-        <Switch label="Start with Windows" checked={autostart ?? false} disabled={!desktop || setAutostart.isPending} onChange={(v) => setAutostart.mutate(v)} />
-      </SettingRow>
-      <SettingRow label="Keep running in the tray" description="Closing the window hides NOVA to the tray so reminders keep working. Quit from the tray icon.">
-        <Switch label="Keep running in the tray" checked={closeToTray} disabled={!desktop} onChange={setCloseToTray} />
-      </SettingRow>
-      <SettingRow
-        label="Windows notifications"
-        description={
-          <span className="flex items-center gap-1">
-            <Bell size={12} aria-hidden /> Show task reminders as Windows notifications, in addition to NOVA's notification center.
-          </span>
-        }
-      >
-        <Switch label="Windows notifications" checked={systemNotifications} onChange={setSystemNotifications} />
-      </SettingRow>
+    <SettingsSection id="startup" title="Start & Benachrichtigungen" description="Im Hintergrund läuft NOVA nur, wenn du es einschaltest." icon={Power}>
+      <SettingCard title="Start" description="Wann NOVA da ist, ohne dass du es öffnest." icon={Power}>
+        <SettingLine label="Mit Windows starten" description="Öffnet NOVA, sobald du dich anmeldest. Mit „Im Infobereich weiterlaufen“ startet es still im Infobereich.">
+          <Switch label="Mit Windows starten" checked={autostart ?? false} disabled={!desktop || setAutostart.isPending} onChange={(enabled) => setAutostart.mutate(enabled)} />
+        </SettingLine>
+        <SettingLine label="Im Infobereich weiterlaufen" description="Schließt du das Fenster, bleibt NOVA im Infobereich neben der Uhr, damit Erinnerungen weiter kommen. Beenden über das Symbol dort.">
+          <Switch label="Im Infobereich weiterlaufen" checked={closeToTray} disabled={!desktop} onChange={setCloseToTray} />
+        </SettingLine>
+      </SettingCard>
+      <SettingCard title="Benachrichtigungen" icon={Bell}>
+        <SettingLine label="Windows-Benachrichtigungen" description="Zeigt Erinnerungen an Aufgaben auch als Windows-Benachrichtigung, zusätzlich zu NOVAs eigener Mitteilungszentrale.">
+          <Switch label="Windows-Benachrichtigungen" checked={systemNotifications} onChange={setSystemNotifications} />
+        </SettingLine>
+      </SettingCard>
     </SettingsSection>
   );
 }
@@ -229,27 +211,31 @@ export function IntegrationsSettings() {
   const setPlace = useSettings((s) => s.setWeatherPlace);
   const navigate = useUi((s) => s.navigate);
   return (
-    <SettingsSection id="integrations" title="Integrations" description="Online services NOVA connects to — only those you set up." icon={Plug}>
-      <SettingRow label="Weather" description={place ? `Open-Meteo · ${placeLabel(place)}` : "Off — choose a location in Live Information."}>
-        <div className="flex gap-1.5">
-          {place && (
-            <Button size="sm" variant="ghost" onClick={() => setPlace(null)}>
-              Turn off
+    <SettingsSection id="integrations" title="Integrationen" description="Online-Dienste, mit denen NOVA sich verbindet. Nur die, die du einrichtest." icon={Plug}>
+      <SettingCard title="Wetter und Nachrichten" description="Eingerichtet wird beides unter Live Information." icon={CloudSun}>
+        <SettingLine label="Wetter" description={place ? `Open-Meteo · ${placeLabel(place)}` : "Aus. Wähl einen Ort unter Live Information."}>
+          <div className="flex gap-1.5">
+            {place && (
+              <Button size="sm" variant="ghost" data-records onClick={() => setPlace(null)}>
+                Ausschalten
+              </Button>
+            )}
+            <Button size="sm" variant="secondary" onClick={() => navigate("live")}>
+              {place ? "Ändern" : "Einrichten"}
             </Button>
-          )}
-          <Button size="sm" variant="secondary" onClick={() => navigate("live")}>
-            {place ? "Change" : "Set up"}
+          </div>
+        </SettingLine>
+        <SettingLine label="Nachrichten-Feeds" description={feeds.length ? `${feeds.length} ${feeds.length === 1 ? "Feed" : "Feeds"}: ${feeds.map((feed) => feed.title).join(", ")}` : "Noch keine Feeds."}>
+          <Button size="sm" variant="secondary" icon={<Newspaper size={13} aria-hidden />} onClick={() => navigate("live")}>
+            Verwalten
           </Button>
-        </div>
-      </SettingRow>
-      <SettingRow label="News feeds" description={feeds.length ? `${feeds.length} feed${feeds.length > 1 ? "s" : ""}: ${feeds.map((f) => f.title).join(", ")}` : "No feeds added."}>
-        <Button size="sm" variant="secondary" onClick={() => navigate("live")}>
-          Manage
-        </Button>
-      </SettingRow>
-      <SettingRow label="Calendar sync" description="Outlook and Google Calendar adapters are planned. Your NOVA calendar works fully offline today.">
-        <Badge>Planned</Badge>
-      </SettingRow>
+        </SettingLine>
+      </SettingCard>
+      <SettingCard title="Kalender" icon={CalendarClock}>
+        <SettingLine label="Kalender-Sync" description="Outlook und Google Kalender sind geplant. Dein NOVA-Kalender funktioniert schon heute, ganz ohne Internet.">
+          <Badge>Geplant</Badge>
+        </SettingLine>
+      </SettingCard>
     </SettingsSection>
   );
 }
@@ -270,62 +256,57 @@ export function UpdatesSettings() {
     staleTime: Number.POSITIVE_INFINITY,
   });
 
-  const result =
-    status === "checking"
-      ? "Checking…"
-      : status === "upToDate"
-        ? "NOVA is up to date."
-        : status === "available" && info
-          ? `Version ${info.version} is available.`
-          : status === "error"
-            ? error
-            : null;
+  const result = status === "checking" ? "Suche nach Updates …" : status === "upToDate" ? "NOVA ist aktuell." : status === "available" && info ? `Version ${info.version} ist da.` : status === "error" ? error : null;
 
   return (
     <SettingsSection
       id="updates"
       title="Updates"
-      description="Signed updates from your release repository. NOVA verifies every download before installing it."
+      description="Signierte Updates aus deinem Release-Repository. NOVA prüft jeden Download, bevor es ihn installiert."
       icon={CloudDownload}
-    >
-      <SettingRow label="Installed version" description={desktop ? "Updates keep your settings, layouts and data." : "Updates are available in the desktop app."}>
-        <span className="text-[13px] font-semibold text-fg tabular-nums">{version ?? "—"}</span>
-      </SettingRow>
-      <SettingRow
-        label="Update source"
-        description={
-          <>
-            Your public GitHub repository as <span className="font-mono">owner/name</span> — NOVA reads <span className="font-mono">releases/latest.json</span> from its
-            main branch.{DEFAULT_UPDATE_SOURCE ? ` Leave empty to use ${DEFAULT_UPDATE_SOURCE}.` : ""}
-          </>
-        }
-      >
-        <label className="flex h-9 w-60 items-center rounded-full border border-line bg-black/25 px-3 focus-within:border-line-strong">
-          <span className="sr-only">Update source</span>
-          <input
-            value={updateSource}
-            onChange={(e) => setUpdateSource(e.target.value)}
-            placeholder={DEFAULT_UPDATE_SOURCE || "owner/repository"}
-            spellCheck={false}
-            className="h-full w-full bg-transparent font-mono text-[12.5px] text-fg outline-none select-text placeholder:text-fg-subtle"
-          />
-        </label>
-      </SettingRow>
-      <SettingRow label="Update automatically" description="Checks every time NOVA starts — also when it starts with Windows — and installs new versions after a 15-second notice. NOVA closes and reopens by itself.">
-        <Switch label="Update automatically" checked={autoUpdate} onChange={setAutoUpdate} />
-      </SettingRow>
-      <div className="flex items-center justify-between gap-4 pt-4">
-        <p className={cn("text-[12.5px]", status === "error" ? "text-warning" : "text-fg-muted")}>{result}</p>
+      actions={
         <Button
           size="sm"
           variant="secondary"
-          icon={<RefreshCw size={13} className={status === "checking" ? "animate-spin" : ""} />}
+          icon={<RefreshCw size={13} className={status === "checking" ? "animate-spin" : ""} aria-hidden />}
           disabled={!desktop || !effectiveUpdateSource() || status === "checking" || status === "downloading" || status === "installing"}
           onClick={() => void check({ automatic: false })}
         >
-          Check now
+          Jetzt prüfen
         </Button>
-      </div>
+      }
+    >
+      <SettingCard title="Version" icon={CloudDownload}>
+        <SettingLine
+          label="Installierte Version"
+          description={
+            <>
+              {desktop ? "Updates behalten deine Einstellungen, Layouts und Daten." : "Updates gibt es in der NOVA-Desktop-App."}
+              {result && (
+                <span role="status" className={cn("mt-1 block font-medium", status === "error" ? "text-warning" : "text-fg")}>
+                  {result}
+                </span>
+              )}
+            </>
+          }
+        >
+          <span className="text-[13px] font-semibold text-fg tabular-nums">{version ?? "—"}</span>
+        </SettingLine>
+        <SettingLine label="Automatisch aktualisieren" description="Prüft bei jedem Start von NOVA, auch beim Start mit Windows, und installiert neue Versionen nach 15 Sekunden Vorwarnung. NOVA schließt und öffnet sich dabei von selbst.">
+          <Switch label="Automatisch aktualisieren" checked={autoUpdate} onChange={setAutoUpdate} />
+        </SettingLine>
+        <SettingLine
+          label="Update-Quelle"
+          description={
+            <>
+              Dein öffentliches GitHub-Repository als <span className="font-mono">besitzer/name</span>. NOVA liest <span className="font-mono">releases/latest.json</span> aus dessen Hauptzweig.
+              {DEFAULT_UPDATE_SOURCE ? ` Leer lassen für ${DEFAULT_UPDATE_SOURCE}.` : ""}
+            </>
+          }
+        >
+          <input aria-label="Update-Quelle" value={updateSource} onChange={(event) => setUpdateSource(event.target.value)} placeholder={DEFAULT_UPDATE_SOURCE || "besitzer/repository"} spellCheck={false} className={cn(FIELD, "w-60 font-mono")} />
+        </SettingLine>
+      </SettingCard>
     </SettingsSection>
   );
 }
@@ -337,25 +318,25 @@ export function useExternalConnections(): string[] {
   const { data: keys } = useKeyStatus();
   const { data: statistics } = useTelemetryStatus();
   const list: string[] = [];
-  if (statistics?.accepted) list.push(`Usage statistics: ${statistics.host} — because you accepted them`);
-  if (place) list.push("Weather: api.open-meteo.com (your chosen place's coordinates)");
+  if (statistics?.accepted) list.push(`Nutzungsstatistik: ${statistics.host}, weil du zugestimmt hast`);
+  if (place) list.push("Wetter: api.open-meteo.com (die Koordinaten deines gewählten Orts)");
   for (const feed of feeds) {
     try {
-      list.push(`News: ${new URL(feed.url).hostname}`);
+      list.push(`Nachrichten: ${new URL(feed.url).hostname}`);
     } catch {
       // Invalid URLs are never stored; ignore defensively.
     }
   }
-  for (const provider of PROVIDERS) if (keys?.[provider.id]) list.push(`AI: ${provider.name} — only when you send a message (NOVA AI includes screenshots and files you share)`);
+  for (const provider of PROVIDERS) if (keys?.[provider.id]) list.push(`KI: ${provider.name}, nur wenn du eine Nachricht schickst (NOVA AI schickt Screenshots und Dateien mit, die du teilst)`);
   const updateSource = useSettings((s) => s.updateSource.trim()) || DEFAULT_UPDATE_SOURCE;
   const autoUpdate = useSettings((s) => s.autoUpdate);
   if (updateSource) {
     const host = updateSource.includes("://") ? updateSource.replace(/^https?:\/\//, "").split("/")[0] : `raw.githubusercontent.com/${updateSource}`;
-    list.push(`Updates: ${host} — ${autoUpdate ? "at every start" : "only when you check"}`);
+    list.push(`Updates: ${host}, ${autoUpdate ? "bei jedem Start" : "nur wenn du prüfst"}`);
   }
-  list.push("Voices and offline speech recognition: huggingface.co, api.nuget.org, github.com — only for downloads you start (each file checked against a fixed hash)");
-  list.push("Online voices: generativelanguage.googleapis.com or api.elevenlabs.io — only if you pick one (what NOVA says goes there)");
-  list.push("Clips: github.com for the video tool ffmpeg when you turn clips on (checked against a fixed hash), and discord.com when you send a clip to the channel you saved");
-  list.push("Web pages: any public site — only when NOVA AI reads a page for your request (it can search the web through Anthropic too, and never reaches your own network)");
+  list.push("Stimmen und Offline-Spracherkennung: huggingface.co, api.nuget.org, github.com, nur für Downloads, die du startest (jede Datei wird gegen eine feste Prüfsumme geprüft)");
+  list.push("Online-Stimmen: generativelanguage.googleapis.com oder api.elevenlabs.io, nur wenn du eine wählst (was NOVA sagt, geht dorthin)");
+  list.push("Clips: github.com für das Videowerkzeug ffmpeg, wenn du Clips einschaltest (gegen eine feste Prüfsumme geprüft), und discord.com, wenn du einen Clip in den gespeicherten Kanal schickst");
+  list.push("Webseiten: jede öffentliche Seite, nur wenn NOVA AI für deine Anfrage eine Seite liest (es kann auch über Anthropic im Web suchen und erreicht nie dein eigenes Netzwerk)");
   return list;
 }

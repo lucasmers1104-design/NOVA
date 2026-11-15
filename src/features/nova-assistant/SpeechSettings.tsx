@@ -1,38 +1,43 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Cpu, Download, Gauge, Play, Trash } from "lucide-react";
+import { Activity, Cpu, Download, Gauge, HardDrive, Mic, Trash, Zap } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
+import { ChoiceCards, SegmentedControl, SettingCard, SettingLine } from "@/components/settings-kit";
 import { Badge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
-import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { notifyError } from "@/features/notifications/store";
-import { SettingRow, SettingsSection } from "@/features/settings/SettingsLayout";
+import { FIELD, SettingsNotice, SettingsSection } from "@/features/settings/SettingsLayout";
+import { cn } from "@/lib/cn";
 import { isDesktop } from "@/lib/native";
 import { agentStatus, configureAgent } from "./api";
-import { OnlineVoiceList } from "./OnlineVoiceSettings";
+import { OnlineVoiceList, VoiceRow } from "./OnlineVoiceSettings";
 import { type BackendPref, type BenchRun, deviceLabel, formatBytes, type SpeechItem, type SpeechMode, type SpeechStatus, type SttPref, useSpeech } from "./speech/api";
-import type { AgentStatus } from "./types";
-import { speak } from "./voice";
+import type { AgentPrefs, AgentStatus } from "./types";
+import { speak, stopSpeaking } from "./voice";
 
-const MODES = [
-  { value: "auto", label: "Auto" },
-  { value: "max", label: "Max performance" },
-  { value: "low", label: "Low resource" },
-] as const satisfies readonly { value: SpeechMode; label: string }[];
+const TITLE = "Sprache auf diesem PC";
+const DESCRIPTION = "NOVAs eigene Stimmen und die Offline-Spracherkennung, und wo auf diesem PC sie laufen.";
+
+const MODES: readonly { value: SpeechMode; label: string; description: string }[] = [
+  { value: "auto", label: "Auto", description: "Schnell, ohne den PC zu bremsen" },
+  { value: "max", label: "Volle Leistung", description: "Das Schnellste, was hier geht" },
+  { value: "low", label: "Sparsam", description: "So wenig Speicher wie möglich" },
+];
 
 const MODE_HELP: Record<SpeechMode, string> = {
-  auto: "The fastest setup that keeps the PC responsive. The graphics card is used only where it was measured to be clearly faster.",
-  max: "The fastest setup measured on this PC. Voices and the recognizer stay loaded and are made ready when NOVA wakes.",
-  low: "As little memory and processor time as possible: the processor with one thread, models unloaded soon after use.",
+  auto: "Die schnellste Einstellung, bei der der PC flüssig bleibt. Die Grafikkarte kommt nur dort zum Einsatz, wo sie hier nachweislich deutlich schneller war.",
+  max: "Die schnellste Einstellung, die auf diesem PC gemessen wurde. Stimmen und Erkennung bleiben geladen und sind bereit, sobald NOVA aufwacht.",
+  low: "So wenig Arbeitsspeicher und Prozessorzeit wie möglich: der Prozessor mit einem Thread, und Modelle werden bald nach dem Benutzen entladen.",
 };
 
 const RECOGNITION = [
   { value: "windows", label: "Windows" },
   { value: "local", label: "Offline" },
-  { value: "auto", label: "Automatic" },
+  { value: "auto", label: "Automatisch" },
 ] as const satisfies readonly { value: SttPref; label: string }[];
 
-const selectClass = "h-9 max-w-72 rounded-control border border-line bg-black/25 px-2.5 text-[13px] text-fg outline-none focus:border-line-strong disabled:opacity-50";
-
 const AGENT_KEY = ["assistant", "agent"] as const;
+/** What a voice says to introduce itself. */
+const SAMPLE = "Hallo, ich bin NOVA. So klinge ich mit dieser Stimme.";
 
 function useAgentVoice() {
   const client = useQueryClient();
@@ -40,58 +45,85 @@ function useAgentVoice() {
   const save = useMutation({
     mutationFn: configureAgent,
     onSuccess: (next: AgentStatus) => client.setQueryData(AGENT_KEY, next),
-    onError: (error) => notifyError("Couldn't change the voice", error),
+    onError: (error) => notifyError("Die Stimme ließ sich nicht ändern", error),
   });
   const prefs = query.data?.prefs;
   return { prefs, choose: (voice: string) => prefs && save.mutate({ ...prefs, voice }) };
 }
 
+/** Plays a voice's sample; a second click on the same voice stops it. */
+function useAudition(prefs: AgentPrefs | undefined) {
+  const [playing, setPlaying] = useState<string | null>(null);
+  const current = useRef<string | null>(null);
+  current.current = playing;
+  // Leaving the page ends a sample that is still playing (and nothing else NOVA may be saying).
+  useEffect(
+    () => () => {
+      if (current.current) stopSpeaking();
+    },
+    [],
+  );
+  const listen = (voice: string) => {
+    if (!prefs) return;
+    if (playing === voice) {
+      stopSpeaking();
+      setPlaying(null);
+      return;
+    }
+    setPlaying(voice);
+    void speak(SAMPLE, { ...prefs, voice }, "test").finally(() => setPlaying((now) => (now === voice ? null : now)));
+  };
+  return { playing, listen };
+}
+
 function installLabel(item: SpeechItem): string {
   switch (item.install.state) {
     case "downloading":
-      return `Downloading … ${item.install.percent} %`;
+      return `Wird geladen … ${item.install.percent} %`;
     case "failed":
       return item.install.message;
     case "ready":
-      return "Downloaded";
+      return "Geladen";
     default:
-      return `${formatBytes(item.size)} download`;
+      return `${formatBytes(item.size)} zum Laden`;
   }
 }
 
 function DownloadButton({ item, onInstall, onRemove, removable = true }: { item: SpeechItem; onInstall: () => void; onRemove: () => void; removable?: boolean }) {
   if (item.install.state === "ready") {
     return removable ? (
-      <IconButton size="sm" label={`Remove ${item.label}`} onClick={onRemove}>
+      <IconButton size="sm" label={`${item.label} entfernen`} onClick={onRemove}>
         <Trash size={14} aria-hidden />
       </IconButton>
     ) : null;
   }
   return (
     <Button size="sm" variant="ghost" icon={<Download size={14} aria-hidden />} disabled={item.install.state === "downloading"} onClick={onInstall}>
-      {item.install.state === "failed" ? "Retry" : "Download"}
+      {item.install.state === "failed" ? "Noch mal" : "Laden"}
     </Button>
   );
 }
 
-const QUALITY: Record<string, string> = { x_low: "basic", low: "good", medium: "natural", high: "most natural" };
+const QUALITY: Record<string, string> = { x_low: "einfach", low: "gut", medium: "natürlich", high: "am natürlichsten" };
 
-/** Settings → Local AI & performance: NOVA's own voices and recognizer, and where they run. */
+/** Settings → Sprache auf diesem PC: NOVA's own voices and recognizer, and where they run. */
 export function SpeechSettings() {
   const { status, update, install, remove, benchmark, progress } = useSpeech();
   const agent = useAgentVoice();
+  const audition = useAudition(agent.prefs);
+  const backendId = useId();
 
   if (!isDesktop()) {
     return (
-      <SettingsSection id="local-ai" title="Local AI & performance" description="NOVA's own voices and speech recognition on this PC." icon={Cpu}>
-        <p className="text-[13px] text-fg-muted">Available in the NOVA desktop app.</p>
+      <SettingsSection id="local-ai" title={TITLE} description={DESCRIPTION} icon={Cpu}>
+        <SettingsNotice>Das gibt es in der NOVA-Desktop-App.</SettingsNotice>
       </SettingsSection>
     );
   }
   if (!status) {
     return (
-      <SettingsSection id="local-ai" title="Local AI & performance" description="NOVA's own voices and speech recognition on this PC." icon={Cpu}>
-        <p className="text-[13px] text-fg-muted">Looking at this PC …</p>
+      <SettingsSection id="local-ai" title={TITLE} description={DESCRIPTION} icon={Cpu}>
+        <SettingsNotice>NOVA sieht sich diesen PC an …</SettingsNotice>
       </SettingsSection>
     );
   }
@@ -105,154 +137,137 @@ export function SpeechSettings() {
   const backendValue = status.prefs.backend === "directMl" ? `gpu:${status.prefs.adapter ?? hw.adapters[0]?.index ?? 0}` : status.prefs.backend;
 
   return (
-    <SettingsSection id="local-ai" title="Local AI & performance" description="NOVA's own voices and offline speech recognition, and where on this PC they run." icon={Cpu}>
-      <SettingRow label="This PC" description={<HardwareSummary status={status} />}>
-        <span />
-      </SettingRow>
-
-      {runtime && (
-        <SettingRow
-          label="Speech runtime"
-          description={
-            <>
-              {status.runtime.label}: runs NOVA's voices and offline recognition on the processor or on any DirectX 12 graphics card (NVIDIA, AMD, Intel). {installLabel(runtime)}
-              {status.runtime.loaded && " · in use"}
-              {status.runtime.error && <span className="block text-danger">{status.runtime.error}</span>}
-              {runtimeReady && !status.runtime.phonemizer && <span className="block text-warning">nova-phonemize.exe is missing; NOVA uses piper.exe for its voices.</span>}
-            </>
-          }
-        >
-          <DownloadButton item={runtime} onInstall={() => install(runtime.id)} onRemove={() => remove(runtime.id)} />
-        </SettingRow>
-      )}
-
-      <SettingRow label="Performance mode" description={MODE_HELP[status.prefs.mode]}>
-        <SegmentedControl label="Performance mode" value={status.prefs.mode} options={MODES} onChange={(mode) => update({ mode })} />
-      </SettingRow>
-
-      <SettingRow
-        label="Runs on"
-        description={
-          status.directmlBlocked
-            ? `The graphics card is off: ${status.directmlBlocked}.`
-            : status.bench
-              ? "Automatic picks what was measured to be faster on this PC."
-              : "Measure once to let NOVA choose; until then everything runs on the processor."
-        }
-      >
-        <select
-          aria-label="Runs on"
-          className={selectClass}
-          value={backendValue}
-          disabled={status.prefs.mode === "low"}
-          onChange={(e) => {
-            const value = e.target.value;
-            if (value.startsWith("gpu:")) update({ backend: "directMl" satisfies BackendPref, adapter: Number(value.slice(4)) });
-            else update({ backend: value as BackendPref, adapter: null });
-          }}
-        >
-          <option value="auto">Automatic</option>
-          <option value="cpu">Processor</option>
-          {hw.adapters.map((a) => (
-            <option key={a.index} value={`gpu:${a.index}`} disabled={!measuredGpu(a.index) || status.directmlBlocked !== null}>
-              {a.name} (DirectML){measuredGpu(a.index) ? "" : " — measure first"}
-            </option>
-          ))}
-        </select>
-      </SettingRow>
-
-      <OnlineVoiceList
-        current={agent.prefs?.voice ?? ""}
-        onChoose={agent.choose}
-        onListen={(voice) => agent.prefs && void speak("Hallo, ich bin NOVA. So klinge ich mit dieser Stimme.", { ...agent.prefs, voice }, "test")}
-      />
-
-      <div className="py-4">
-        <div className="text-[13.5px] font-medium text-fg">Voices on this PC</div>
-        <p className="mt-0.5 text-[12.5px] text-fg-muted">German voices that run on this PC, offline. Pick one to make it NOVA's voice.</p>
-        <ul className="mt-3 space-y-1.5">
+    <SettingsSection id="local-ai" title={TITLE} description={DESCRIPTION} icon={Cpu}>
+      <SettingCard title="Stimmen auf diesem PC" description="Deutsche Stimmen, die hier laufen, ganz ohne Internet. Hör sie dir an und nimm die, die dir gefällt." icon={Mic}>
+        <ul data-setting="Stimmen auf diesem PC" className="space-y-1.5">
           {voices.map((voice) => {
             const value = `nova:${voice.id}`;
-            const chosen = agent.prefs?.voice === value || (voice.id === "thorsten" && agent.prefs?.voice === "");
             return (
-              <li key={voice.id} className="flex items-center justify-between gap-3 rounded-[12px] border border-line bg-white/[0.02] px-3 py-2">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-1.5 text-[13px] text-fg">
-                    {voice.label}
-                    {chosen && <Badge tone="accent">NOVA's voice</Badge>}
-                    {voice.experimental && <Badge tone="warning">experimental</Badge>}
-                  </div>
-                  <div className="text-[12px] text-fg-muted">
-                    {voice.gender === "female" ? "Female" : "Male"} · {QUALITY[voice.quality] ?? voice.quality} · {voice.license} · {installLabel(voice)}
+              <VoiceRow
+                key={voice.id}
+                name={voice.label}
+                badges={voice.experimental && <Badge tone="warning">experimentell</Badge>}
+                detail={
+                  <>
+                    {voice.gender === "female" ? "Weiblich" : "Männlich"} · {QUALITY[voice.quality] ?? voice.quality} · {voice.license} · {installLabel(voice)}
                     <SpeedNote status={status} item={voice.id} />
-                  </div>
-                </div>
-                <div className="flex shrink-0 items-center gap-1">
-                  {voice.install.state === "ready" && (
-                    <>
-                      <IconButton
-                        size="sm"
-                        label={`Listen to ${voice.label}`}
-                        onClick={() => agent.prefs && void speak("Hallo, ich bin NOVA. So klinge ich mit dieser Stimme.", { ...agent.prefs, voice: value }, "test")}
-                      >
-                        <Play size={14} aria-hidden />
-                      </IconButton>
-                      {!chosen && (
-                        <Button size="sm" variant="ghost" onClick={() => agent.choose(value)}>
-                          Use
-                        </Button>
-                      )}
-                    </>
-                  )}
-                  <DownloadButton item={voice} removable={voice.id !== "thorsten"} onInstall={() => install(voice.id)} onRemove={() => remove(voice.id)} />
-                </div>
-              </li>
+                  </>
+                }
+                chosen={agent.prefs?.voice === value || (voice.id === "thorsten" && agent.prefs?.voice === "")}
+                playing={audition.playing === value}
+                usable={voice.install.state === "ready"}
+                onListen={() => audition.listen(value)}
+                onChoose={() => agent.choose(value)}
+              >
+                <DownloadButton item={voice} removable={voice.id !== "thorsten"} onInstall={() => install(voice.id)} onRemove={() => remove(voice.id)} />
+              </VoiceRow>
             );
           })}
         </ul>
-        {!runtimeReady && <p className="mt-2 text-[12px] text-fg-subtle">Without the speech runtime, Piper voices run with piper.exe on the processor; Martin (Kokoro) needs the runtime.</p>}
-      </div>
+        {!runtimeReady && <p className="pt-3 text-[12px] leading-relaxed text-fg-subtle">Ohne die Sprach-Laufzeit laufen Piper-Stimmen mit piper.exe auf dem Prozessor. Martin (Kokoro) braucht die Laufzeit.</p>}
+      </SettingCard>
+
+      <OnlineVoiceList current={agent.prefs?.voice ?? ""} playing={audition.playing} onChoose={agent.choose} onListen={audition.listen} />
 
       {recognizer && (
-        <SettingRow
-          label="Speech recognition"
-          description={
-            <>
-              Windows uses its online dictation. Offline uses NVIDIA Parakeet on this PC ({formatBytes(recognizer.size)}, {recognizer.license}) and needs the speech runtime; it also steps in when Windows can't listen. {installLabel(recognizer)}
-            </>
-          }
-        >
-          <div className="flex items-center gap-1.5">
-            <SegmentedControl label="Speech recognition" value={status.prefs.stt} options={RECOGNITION} onChange={(stt) => update({ stt })} />
-            <DownloadButton item={recognizer} onInstall={() => install(recognizer.id)} onRemove={() => remove(recognizer.id)} />
-          </div>
-        </SettingRow>
+        <SettingCard title="Spracherkennung" icon={Activity}>
+          <SettingLine
+            label="Spracherkennung"
+            description={
+              <>
+                „Windows“ nutzt dessen Online-Diktat. „Offline“ nutzt NVIDIA Parakeet auf diesem PC ({formatBytes(recognizer.size)}, {recognizer.license}), braucht die Sprach-Laufzeit und springt auch ein, wenn Windows nicht zuhören kann. {installLabel(recognizer)}
+              </>
+            }
+          >
+            <div className="flex items-center gap-1.5">
+              <SegmentedControl label="Spracherkennung" value={status.prefs.stt} options={RECOGNITION} onChange={(stt) => update({ stt })} />
+              <DownloadButton item={recognizer} onInstall={() => install(recognizer.id)} onRemove={() => remove(recognizer.id)} />
+            </div>
+          </SettingLine>
+        </SettingCard>
       )}
 
-      <div className="py-4">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <div className="text-[13.5px] font-medium text-fg">Measurements</div>
-            <p className="mt-0.5 text-[12.5px] text-fg-muted">
-              {status.benchmarking
-                ? progress?.item
-                  ? `Measuring ${progress.item} on ${progress.device} (${progress.done + 1} of ${progress.total}) …`
-                  : "Measuring …"
-                : status.bench
-                  ? `Measured ${new Date(status.bench.at).toLocaleString()}${status.benchStale ? " — the hardware or the models changed since; measure again." : "."}`
-                  : "How fast each downloaded model runs on the processor and on each graphics card. Runs in a separate process, so a faulty driver can't affect NOVA."}
-            </p>
-          </div>
-          <Button size="sm" icon={<Gauge size={14} aria-hidden />} disabled={!runtimeReady || status.benchmarking} onClick={benchmark}>
-            {status.bench ? "Measure again" : "Measure"}
-          </Button>
+      <SettingCard title="Leistung" description="Wie viel von diesem PC NOVAs Sprache nutzen darf." icon={Zap}>
+        <div data-setting="Leistungsmodus" className="pb-3.5">
+          <ChoiceCards label="Leistungsmodus" value={status.prefs.mode} options={MODES} onChange={(mode) => update({ mode })} />
+          <p className="mt-2.5 text-[12px] leading-relaxed text-fg-muted">{MODE_HELP[status.prefs.mode]}</p>
         </div>
-        {status.bench && <BenchTable runs={status.bench.runs} items={status.items} />}
-      </div>
+        <SettingLine
+          label="Läuft auf"
+          htmlFor={backendId}
+          description={
+            status.directmlBlocked
+              ? `Die Grafikkarte ist aus: ${status.directmlBlocked}.`
+              : status.bench
+                ? "„Automatisch“ nimmt, was auf diesem PC als schneller gemessen wurde."
+                : "Miss einmal, damit NOVA wählen kann. Bis dahin läuft alles auf dem Prozessor."
+          }
+          disabled={status.prefs.mode === "low"}
+        >
+          <select
+            id={backendId}
+            className={cn(FIELD, "max-w-72")}
+            value={backendValue}
+            disabled={status.prefs.mode === "low"}
+            onChange={(event) => {
+              const value = event.target.value;
+              if (value.startsWith("gpu:")) update({ backend: "directMl" satisfies BackendPref, adapter: Number(value.slice(4)) });
+              else update({ backend: value as BackendPref, adapter: null });
+            }}
+          >
+            <option value="auto">Automatisch</option>
+            <option value="cpu">Prozessor</option>
+            {hw.adapters.map((a) => (
+              <option key={a.index} value={`gpu:${a.index}`} disabled={!measuredGpu(a.index) || status.directmlBlocked !== null}>
+                {a.name} (DirectML){measuredGpu(a.index) ? "" : " – erst messen"}
+              </option>
+            ))}
+          </select>
+        </SettingLine>
+        {runtime && (
+          <SettingLine
+            label="Sprach-Laufzeit"
+            description={
+              <>
+                {status.runtime.label}: Lässt NOVAs Stimmen und die Offline-Erkennung auf dem Prozessor oder auf jeder DirectX-12-Grafikkarte laufen (NVIDIA, AMD, Intel). {installLabel(runtime)}
+                {status.runtime.loaded && " · in Benutzung"}
+                {status.runtime.error && <span className="block text-danger">{status.runtime.error}</span>}
+                {runtimeReady && !status.runtime.phonemizer && <span className="block text-warning">nova-phonemize.exe fehlt. NOVA nutzt piper.exe für seine Stimmen.</span>}
+              </>
+            }
+          >
+            <DownloadButton item={runtime} onInstall={() => install(runtime.id)} onRemove={() => remove(runtime.id)} />
+          </SettingLine>
+        )}
+      </SettingCard>
 
-      <SettingRow label="Now" description={<Placements status={status} />}>
-        <span />
-      </SettingRow>
+      <SettingCard
+        title="Messungen"
+        description={
+          status.benchmarking
+            ? progress?.item
+              ? `${progress.item} wird auf ${progress.device} gemessen (${progress.done + 1} von ${progress.total}) …`
+              : "Wird gemessen …"
+            : status.bench
+              ? `Gemessen am ${new Date(status.bench.at).toLocaleString("de-DE")}${status.benchStale ? ". Seitdem haben sich Hardware oder Modelle geändert: Miss noch einmal." : "."}`
+              : "Wie schnell jedes geladene Modell auf dem Prozessor und auf jeder Grafikkarte läuft. Gemessen wird in einem eigenen Prozess, damit ein fehlerhafter Treiber NOVA nichts anhaben kann."
+        }
+        icon={Gauge}
+        actions={
+          <Button size="sm" icon={<Gauge size={14} aria-hidden />} disabled={!runtimeReady || status.benchmarking} onClick={benchmark}>
+            {status.bench ? "Neu messen" : "Messen"}
+          </Button>
+        }
+      >
+        <div data-setting="Messungen">{status.bench ? <BenchTable runs={status.bench.runs} items={status.items} /> : <p className="text-[12.5px] text-fg-muted">Noch nichts gemessen.</p>}</div>
+        <SettingLine label="Gerade jetzt" description={<Placements status={status} />} stacked>
+          {null}
+        </SettingLine>
+      </SettingCard>
+
+      <SettingCard title="Dieser PC" icon={HardDrive}>
+        <HardwareSummary status={status} />
+      </SettingCard>
     </SettingsSection>
   );
 }
@@ -270,9 +285,9 @@ function SpeedNote({ status, item }: { status: SpeechStatus; item: string }) {
   const rtf = bestSpeed(status, item);
   if (rtf === null) return null;
   return rtf > SLOW ? (
-    <span className="text-warning"> · too slow on this PC ({rtf.toFixed(2)} s per second of speech)</span>
+    <span className="text-warning"> · auf diesem PC zu langsam ({rtf.toFixed(2)} s pro Sekunde Sprache)</span>
   ) : (
-    <span> · {(1 / rtf).toFixed(1)}× faster than real time here</span>
+    <span> · hier {(1 / rtf).toFixed(1)}× schneller als Echtzeit</span>
   );
 }
 
@@ -280,38 +295,36 @@ function HardwareSummary({ status }: { status: SpeechStatus }) {
   const hw = status.hardware;
   const extras = [hw.vulkan && "Vulkan", hw.cuda && "CUDA", hw.rocm && "ROCm"].filter(Boolean).join(", ");
   return (
-    <span className="block space-y-0.5">
-      <span className="block">
-        {hw.cpu} · {hw.physicalCores} cores, {hw.logicalCores} threads{hw.avx512 ? " · AVX-512" : hw.avx2 ? " · AVX2" : ""} · {formatBytes(hw.memoryTotal)} memory ({formatBytes(hw.memoryAvailable)} free)
-      </span>
+    <div className="space-y-1 text-[12.5px] leading-relaxed text-fg-muted select-text">
+      <p>
+        <span className="text-fg">{hw.cpu}</span> · {hw.physicalCores} Kerne, {hw.logicalCores} Threads{hw.avx512 ? " · AVX-512" : hw.avx2 ? " · AVX2" : ""} · {formatBytes(hw.memoryTotal)} Arbeitsspeicher ({formatBytes(hw.memoryAvailable)} frei)
+      </p>
       {hw.adapters.map((a) => (
-        <span key={a.index} className="block">
-          {a.name} · {a.dedicatedMemory > 0 ? `${formatBytes(a.dedicatedMemory)} video memory` : `${formatBytes(a.sharedMemory)} shared memory`}
-          {a.driver && ` · driver ${a.driver}`}
-        </span>
+        <p key={a.index}>
+          <span className="text-fg">{a.name}</span> · {a.dedicatedMemory > 0 ? `${formatBytes(a.dedicatedMemory)} Grafikspeicher` : `${formatBytes(a.sharedMemory)} geteilter Speicher`}
+          {a.driver && ` · Treiber ${a.driver}`}
+        </p>
       ))}
-      {hw.adapters.length === 0 && <span className="block">No graphics card for DirectML: everything runs on the processor.</span>}
-      <span className="block text-fg-subtle">
-        DirectML covers NVIDIA, AMD and Intel graphics.{extras ? ` Also found: ${extras} (not needed by NOVA).` : ""}
-      </span>
-    </span>
+      {hw.adapters.length === 0 && <p>Keine Grafikkarte für DirectML: Alles läuft auf dem Prozessor.</p>}
+      <p className="text-fg-subtle">DirectML deckt Grafik von NVIDIA, AMD und Intel ab.{extras ? ` Außerdem gefunden: ${extras} (braucht NOVA nicht).` : ""}</p>
+    </div>
   );
 }
 
 function BenchTable({ runs, items }: { runs: BenchRun[]; items: SpeechItem[] }) {
   const label = (id: string) => items.find((i) => i.id === id)?.label ?? id;
   return (
-    <table className="mt-3 w-full text-left text-[12px] text-fg-muted">
+    <table className="w-full text-left text-[12px] text-fg-muted">
       <thead className="text-fg-subtle">
         <tr>
-          <th className="py-1 font-medium">Model</th>
-          <th className="py-1 font-medium">Runs on</th>
-          <th className="py-1 text-right font-medium">Load</th>
-          <th className="py-1 text-right font-medium">First</th>
-          <th className="py-1 text-right font-medium" title="Seconds of work per second of speech (lower is faster)">
-            Speed
+          <th scope="col" className="py-1 font-medium">Modell</th>
+          <th scope="col" className="py-1 font-medium">Läuft auf</th>
+          <th scope="col" className="py-1 text-right font-medium">Laden</th>
+          <th scope="col" className="py-1 text-right font-medium">Erster Ton</th>
+          <th scope="col" className="py-1 text-right font-medium" title="Sekunden Arbeit pro Sekunde Sprache (weniger ist schneller)">
+            Tempo
           </th>
-          <th className="py-1 text-right font-medium">Memory</th>
+          <th scope="col" className="py-1 text-right font-medium">Speicher</th>
         </tr>
       </thead>
       <tbody>
@@ -321,14 +334,14 @@ function BenchTable({ runs, items }: { runs: BenchRun[]; items: SpeechItem[] }) 
             <td className="py-1">{deviceLabel(run.device)}</td>
             {run.ok ? (
               <>
-                <td className="py-1 text-right">{(run.loadMs / 1000).toFixed(1)} s</td>
-                <td className="py-1 text-right">{run.firstMs} ms</td>
-                <td className="py-1 text-right text-fg">{run.rtf.toFixed(2)}</td>
-                <td className="py-1 text-right">{run.peakMb} MB</td>
+                <td className="py-1 text-right tabular-nums">{(run.loadMs / 1000).toFixed(1)} s</td>
+                <td className="py-1 text-right tabular-nums">{run.firstMs} ms</td>
+                <td className="py-1 text-right text-fg tabular-nums">{run.rtf.toFixed(2)}</td>
+                <td className="py-1 text-right tabular-nums">{run.peakMb} MB</td>
               </>
             ) : (
               <td colSpan={4} className="py-1 text-right text-danger" title={run.error ?? undefined}>
-                didn't work
+                ging nicht
               </td>
             )}
           </tr>
@@ -340,16 +353,16 @@ function BenchTable({ runs, items }: { runs: BenchRun[]; items: SpeechItem[] }) 
 
 function Placements({ status }: { status: SpeechStatus }) {
   const label = (id: string) => status.items.find((i) => i.id === id)?.label ?? id;
-  if (status.placements.length === 0) return <>Nothing of NOVA's own is downloaded yet; NOVA speaks with a Windows voice.</>;
+  if (status.placements.length === 0) return <>Von NOVAs Eigenem ist noch nichts geladen. NOVA spricht mit einer Windows-Stimme.</>;
   return (
     <span className="block space-y-0.5">
       {status.placements.map((p) => (
         <span key={p.item} className="block">
-          <span className="text-fg">{label(p.item)}</span>: {deviceLabel(p.device)} — {p.reason}
+          <span className="text-fg">{label(p.item)}</span>: {deviceLabel(p.device)} – {p.reason}
         </span>
       ))}
-      {status.lastVoice && <span className="block text-fg-subtle">Last spoke with {status.lastVoice}.</span>}
-      {status.recognizer && <span className="block text-fg-subtle">Recognizer loaded: {status.recognizer}.</span>}
+      {status.lastVoice && <span className="block text-fg-subtle">Zuletzt gesprochen mit {status.lastVoice}.</span>}
+      {status.recognizer && <span className="block text-fg-subtle">Erkennung geladen: {status.recognizer}.</span>}
     </span>
   );
 }

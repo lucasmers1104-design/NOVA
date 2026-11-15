@@ -142,7 +142,17 @@ pub struct Manifest {
     permissions: Vec<Permission>,
     #[serde(default)]
     contributes: Contributes,
+    /// One of NOVA's own icons for the sidebar and the plugin list (see `ICONS`), so plugins look
+    /// like the rest of the app; no image files.
+    #[serde(default)]
+    icon: Option<String>,
 }
+
+/// The icon names a manifest may use; the frontend maps each to a Lucide icon.
+pub const ICONS: &[&str] = &[
+    "smartphone", "user-plus", "users", "message-square", "bar-chart", "activity", "palette", "music", "gamepad", "calendar", "clock", "cloud", "globe", "camera",
+    "image", "film", "mic", "bell", "shield", "key", "wallet", "chart-line", "cpu", "zap", "star", "heart", "book", "code", "terminal", "home", "mail", "map",
+];
 
 fn parse_version(value: &str) -> Option<[u64; 3]> {
     let core = value.split(['-', '+']).next()?;
@@ -169,6 +179,9 @@ fn is_hex_color(value: &str) -> bool {
 }
 
 fn check_manifest(manifest: &Manifest) -> Result<(), String> {
+    if manifest.icon.as_deref().is_some_and(|icon| !ICONS.contains(&icon)) {
+        return Err("The plugin asks for an icon NOVA doesn't have".into());
+    }
     if !is_plugin_id(&manifest.id) {
         return Err("The plugin's id isn't valid".into());
     }
@@ -426,6 +439,7 @@ pub struct PluginInfo {
     pages: Vec<PageContribution>,
     widgets: Vec<WidgetInfo>,
     themes: Vec<ThemeContribution>,
+    icon: Option<String>,
 }
 
 fn plugin_info(row: &Row) -> PluginInfo {
@@ -446,6 +460,7 @@ fn plugin_info(row: &Row) -> PluginInfo {
         pages: m.contributes.pages.clone(),
         widgets: m.contributes.widgets.iter().map(|w| WidgetInfo { key: widget_key(&m.id, &w.id), id: w.id.clone(), name: w.name.clone(), description: w.description.clone(), w: w.w, h: w.h }).collect(),
         themes: m.contributes.themes.clone(),
+        icon: m.icon.clone(),
     }
 }
 

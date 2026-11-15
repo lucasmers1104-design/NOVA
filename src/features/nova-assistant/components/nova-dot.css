@@ -44,7 +44,11 @@
   transition-duration: 90ms;
 }
 
-.nova-dot__body {
+/* With the parent in the selector: the orb style adds `.nova-orb` (orb.css) to the body,
+ * which says `position: relative`. Which of the two won depended on which stylesheet a
+ * window happened to load last, and where orb.css came last (NOVA's main window) the
+ * body lost its size and the orb was drawn as a flat sliver. */
+.nova-dot > .nova-dot__body {
   position: absolute;
   inset: 0;
   display: grid;
@@ -102,8 +106,84 @@
   height: 46%;
 }
 
+/* Liquid glass: clear, with a bright rim, a specular highlight and only a hint of color low down. */
+.nova-dot[data-style="liquid"] .nova-dot__body {
+  background:
+    radial-gradient(120% 80% at 32% 12%, rgb(255 255 255 / 0.5), rgb(255 255 255 / 0.08) 46%, transparent 62%),
+    radial-gradient(90% 70% at 66% 104%, color-mix(in srgb, var(--dot-color) 46%, transparent), transparent 72%),
+    rgb(255 255 255 / 0.07);
+  box-shadow:
+    inset 0 1px 0.5px rgb(255 255 255 / 0.8),
+    inset 0 -1px 1px rgb(255 255 255 / 0.22),
+    inset 0 0 0 0.75px rgb(255 255 255 / 0.32),
+    inset 0 -7px 10px -7px color-mix(in srgb, var(--dot-color) 70%, transparent),
+    0 4px 14px -5px rgb(0 0 0 / 0.5);
+}
+
+.nova-dot[data-style="liquid"] .nova-dot__body > svg {
+  filter: drop-shadow(0 0.5px 1px rgb(0 0 0 / 0.35));
+}
+
+/* Pearl: matte and soft; the sparkle carries the color. */
+.nova-dot[data-style="pearl"] .nova-dot__body {
+  background: radial-gradient(circle at 34% 26%, #ffffff 0%, #f2f3f7 34%, #dcdee6 72%, #c6c9d4 100%);
+  color: color-mix(in srgb, var(--dot-color) 82%, black);
+  box-shadow:
+    inset 0 -2px 4px rgb(20 24 40 / 0.14),
+    inset 0 0 0 1px rgb(255 255 255 / 0.55),
+    0 3px 10px -3px rgb(0 0 0 / 0.45);
+}
+
+/* Halo: a fine glowing ring around a small point of light; no sparkle. */
+.nova-dot[data-style="halo"] .nova-dot__body {
+  border: max(1.5px, calc(var(--dot) * 0.055)) solid color-mix(in srgb, var(--dot-color) 82%, white);
+  background: radial-gradient(circle, color-mix(in srgb, var(--dot-color) 16%, transparent), rgb(10 12 22 / 0.2) 70%);
+  box-shadow:
+    0 0 10px -2px color-mix(in srgb, var(--dot-color) 65%, transparent),
+    inset 0 0 8px -3px color-mix(in srgb, var(--dot-color) 80%, transparent);
+}
+
+.nova-dot[data-style="halo"] .nova-dot__body::after {
+  content: "";
+  width: 30%;
+  height: 30%;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--dot-color) 70%, white);
+  box-shadow: 0 0 6px var(--dot-color);
+}
+
+.nova-dot[data-style="halo"] .nova-dot__body > svg {
+  display: none;
+}
+
+/* Graphite: dark and quiet, with a fine edge and a colored sparkle. */
+.nova-dot[data-style="mono"] .nova-dot__body {
+  background: linear-gradient(160deg, #3b3e4a 0%, #1b1d25 55%, #111218 100%);
+  color: color-mix(in srgb, var(--dot-color) 70%, white);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.2),
+    inset 0 0 0 1px rgb(255 255 255 / 0.07),
+    0 3px 10px -3px rgb(0 0 0 / 0.65);
+}
+
+/* Aura: the dot's color with two neighbors, soft and without gloss. */
+.nova-dot[data-style="aura"] .nova-dot__body {
+  background:
+    radial-gradient(circle at 30% 25%, rgb(255 255 255 / 0.32), transparent 45%),
+    conic-gradient(
+      from 200deg,
+      var(--dot-color),
+      color-mix(in srgb, var(--dot-color) 45%, #22d3ee),
+      color-mix(in srgb, var(--dot-color) 50%, #f472b6),
+      var(--dot-color)
+    );
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / 0.22),
+    0 3px 12px -3px color-mix(in srgb, var(--dot-color) 70%, transparent);
+}
+
 /* Light colors get a dark sparkle. */
-.nova-dot[data-light="true"]:not([data-style="ring"]) .nova-dot__body {
+.nova-dot[data-light="true"]:not([data-style="ring"], [data-style="pearl"], [data-style="mono"], [data-style="liquid"]) .nova-dot__body {
   color: #262a38;
 }
 

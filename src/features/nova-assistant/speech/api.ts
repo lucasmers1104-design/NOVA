@@ -99,8 +99,8 @@ export const removeSpeech = (id: string) => callNative<SpeechStatus>("speech_rem
 export const benchmarkSpeech = () => callNative<void>("speech_benchmark");
 
 export function deviceLabel(device: Device): string {
-  if (device.kind === "directMl") return `Graphics card · ${device.name}`;
-  return `Processor · ${device.threads} ${device.threads === 1 ? "thread" : "threads"}`;
+  if (device.kind === "directMl") return `Grafikkarte · ${device.name}`;
+  return `Prozessor · ${device.threads} ${device.threads === 1 ? "Thread" : "Threads"}`;
 }
 
 export function formatBytes(bytes: number): string {
@@ -128,10 +128,10 @@ export function useSpeech() {
     return () => stops.forEach((stop) => void stop.then((unlisten) => unlisten()));
   }, [client]);
   const apply = (next: SpeechStatus) => client.setQueryData(SPEECH_KEY, next);
-  const configure = useMutation({ mutationFn: configureSpeech, onSuccess: apply, onError: (error) => notifyError("Couldn't save the speech settings", error) });
-  const install = useMutation({ mutationFn: installSpeech, onSuccess: apply, onError: (error) => notifyError("Couldn't start the download", error) });
-  const remove = useMutation({ mutationFn: removeSpeech, onSuccess: apply, onError: (error) => notifyError("Couldn't remove it", error) });
-  const benchmark = useMutation({ mutationFn: benchmarkSpeech, onError: (error) => notifyError("Couldn't start the measurement", error) });
+  const configure = useMutation({ mutationFn: configureSpeech, onSuccess: apply, onError: (error) => notifyError("Die Sprach-Einstellungen ließen sich nicht speichern", error) });
+  const install = useMutation({ mutationFn: installSpeech, onSuccess: apply, onError: (error) => notifyError("Der Download ließ sich nicht starten", error) });
+  const remove = useMutation({ mutationFn: removeSpeech, onSuccess: apply, onError: (error) => notifyError("Das ließ sich nicht entfernen", error) });
+  const benchmark = useMutation({ mutationFn: benchmarkSpeech, onError: (error) => notifyError("Die Messung ließ sich nicht starten", error) });
   const update = (patch: Partial<SpeechPrefs>) => {
     const current = query.data?.prefs;
     if (current) configure.mutate({ ...current, ...patch });

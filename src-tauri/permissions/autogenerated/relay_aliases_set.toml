@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-relay-aliases-set"
+description = "Enables the relay_aliases_set command without any pre-configured scope."
+commands.allow = ["relay_aliases_set"]
+
+[[permission]]
+identifier = "deny-relay-aliases-set"
+description = "Denies the relay_aliases_set command without any pre-configured scope."
+commands.deny = ["relay_aliases_set"]

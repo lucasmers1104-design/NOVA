@@ -26,11 +26,12 @@ export default defineConfig({
   define: { __NOVA_VERSION__: JSON.stringify(version) },
   build: {
     rolldownOptions: {
-      // One page per window: the dashboard, the floating NOVA AI dot, and its panel.
+      // One page per window: the dashboard, the floating NOVA AI dot, its panel, and Nova Island.
       input: {
         main: fileURLToPath(new URL("./index.html", import.meta.url)),
         dot: fileURLToPath(new URL("./dot.html", import.meta.url)),
         assistant: fileURLToPath(new URL("./assistant.html", import.meta.url)),
+        island: fileURLToPath(new URL("./island.html", import.meta.url)),
       },
     },
   },

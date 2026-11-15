@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-media-app-icon"
+description = "Enables the media_app_icon command without any pre-configured scope."
+commands.allow = ["media_app_icon"]
+
+[[permission]]
+identifier = "deny-media-app-icon"
+description = "Denies the media_app_icon command without any pre-configured scope."
+commands.deny = ["media_app_icon"]

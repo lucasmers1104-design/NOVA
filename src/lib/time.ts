@@ -40,21 +40,52 @@ export function dayOfYear(date: Date): number {
 }
 
 /**
+ * Runs `start` while someone can see the page, and stops it (through what it
+ * returns) while the window is hidden or minimized: a clock nobody looks at
+ * needn't wake the page every second. Returns the function that ends it for good.
+ */
+export function whileVisible(start: () => () => void): () => void {
+  let stop: (() => void) | null = null;
+  const sync = () => {
+    if (document.hidden) {
+      stop?.();
+      stop = null;
+    } else {
+      stop ??= start();
+    }
+  };
+  sync();
+  document.addEventListener("visibilitychange", sync);
+  return () => {
+    document.removeEventListener("visibilitychange", sync);
+    stop?.();
+  };
+}
+
+/**
  * Current time, re-rendering on whole-unit boundaries (seconds by default)
- * so clocks tick in sync with the system clock instead of drifting.
+ * so clocks tick in sync with the system clock instead of drifting. Rests
+ * while the window is hidden, and is right again the moment it comes back.
  */
 export function useNow(unitMs = 1000): Date {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
-    let timer: number;
-    const schedule = () => {
-      timer = window.setTimeout(() => {
-        setNow(new Date());
-        schedule();
-      }, unitMs - (Date.now() % unitMs) + 5);
-    };
-    schedule();
-    return () => window.clearTimeout(timer);
+    let rested = false;
+    return whileVisible(() => {
+      let timer: number;
+      const schedule = () => {
+        timer = window.setTimeout(() => {
+          setNow(new Date());
+          schedule();
+        }, unitMs - (Date.now() % unitMs) + 5);
+      };
+      if (rested) setNow(new Date());
+      schedule();
+      return () => {
+        rested = true;
+        window.clearTimeout(timer);
+      };
+    });
   }, [unitMs]);
   return now;
 }

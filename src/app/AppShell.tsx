@@ -3,16 +3,20 @@ import { Suspense, useEffect, useRef } from "react";
 import { Backdrop } from "@/components/layout/Backdrop";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { TitleBar } from "@/components/layout/TitleBar";
+import { useMaximized } from "@/components/layout/WindowControls";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { useThemeSync } from "@/design/theme";
 import { useWallpaperAccentSync } from "@/design/wallpaper";
 import { CommandPalette } from "@/features/command-palette/CommandPalette";
 import { PairDialog } from "@/features/companion/PairDialog";
 import { useDesktopSync } from "@/features/desktop/useDesktopSync";
+import { useMainWindowReady } from "@/features/desktop/useMainWindowReady";
 import { useAssistantBridge } from "@/features/nova-assistant/useAssistantBridge";
 import { NotificationCenter, Toaster } from "@/features/notifications/NotificationUI";
 import { usePluginSync } from "@/features/plugins/usePluginSync";
 import { useReminders } from "@/features/productivity/reminders";
+import { cn } from "@/lib/cn";
+import { isDesktop } from "@/lib/native";
 import { ConsentDialog, usePageTracking } from "@/features/telemetry/ConsentDialog";
 import { Tour } from "@/features/tour/Tour";
 import { UpdateBanner, useStartupUpdates } from "@/features/updates/UpdateUI";
@@ -38,6 +42,8 @@ export function AppShell() {
   useStartupUpdates();
   usePageTracking();
   usePluginSync();
+  // Last: its answer brings what the page missed, and everything above listens by then.
+  useMainWindowReady();
   const route = useUi((s) => s.route);
   const pluginPage = useUi((s) => s.pluginPage);
   const motionPreference = useSettings((s) => s.motion);
@@ -48,10 +54,18 @@ export function AppShell() {
     mainRef.current?.scrollTo({ top: 0 });
   }, [route]);
 
+  // The window itself is transparent: the shell draws its rounded corners, square when maximized.
+  const maximized = useMaximized();
+  const framed = isDesktop() && !maximized;
+  useEffect(() => {
+    if (!isDesktop()) return;
+    document.documentElement.dataset.window = maximized ? "maximized" : "framed";
+  }, [maximized]);
+
   return (
     <MotionConfig reducedMotion={REDUCED_MOTION[motionPreference]}>
       {/* overflow-clip (not hidden): the shell must never be scrolled programmatically, e.g. by scrollIntoView. */}
-      <div className="relative flex h-full overflow-clip bg-canvas">
+      <div className={cn("relative flex h-full overflow-clip bg-canvas", framed && "nova-window-frame")}>
         <Backdrop />
         <Sidebar />
         <div className="relative flex min-w-0 flex-1 flex-col">

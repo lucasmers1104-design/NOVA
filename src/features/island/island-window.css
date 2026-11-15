@@ -1,0 +1,24 @@
+/* The island's own window (island.html): a transparent page that holds only the pill.
+ * Everything about the pill itself is in island.css, which Island Studio shares. */
+:root {
+  color-scheme: dark;
+  /* First-paint accent; replaced by the accent engine (useAssistantAppearance). */
+  --nova-accent: #8b5cf6;
+  --nova-accent-text: #a78bfa;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+}
+
+body {
+  font-family: "Inter Variable", "Segoe UI Variable Text", system-ui, sans-serif;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}

@@ -125,7 +125,7 @@ fn result_of(code: Option<i32>, output: &str) -> ScanResult {
 
 /// The security programs Windows knows as switched on, from `name|state` lines.
 /// Bit 0x1000 of the state means on; uninstalled products often stay listed as off.
-fn active_antivirus(lines: &str) -> Vec<String> {
+fn active_products(lines: &str) -> Vec<String> {
     lines
         .lines()
         .filter_map(|line| {
@@ -136,11 +136,19 @@ fn active_antivirus(lines: &str) -> Vec<String> {
         .collect()
 }
 
+/// What Windows Security Center lists as switched on for `class`, other than Windows'
+/// own programs. `class` is `"AntivirusProduct"` or `"FirewallProduct"`; Windows' own
+/// firewall never appears there, so any firewall listed is a third-party one.
+pub(crate) fn active_security_products(class: &str) -> Vec<String> {
+    debug_assert!(matches!(class, "AntivirusProduct" | "FirewallProduct"));
+    let script = format!("Get-CimInstance -Namespace root/SecurityCenter2 -ClassName {class} | ForEach-Object {{ $_.displayName + '|' + $_.productState }}");
+    let listed = hidden("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", &script]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+    active_products(&listed)
+}
+
 /// Why Defender couldn't scan, in words someone can act on.
 fn why_failed() -> String {
-    let script = "Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntivirusProduct | ForEach-Object { $_.displayName + '|' + $_.productState }";
-    let listed = hidden("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", script]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
-    match active_antivirus(&listed).as_slice() {
+    match active_security_products("AntivirusProduct").as_slice() {
         [] => "Windows Defender couldn't scan. It may be switched off under Windows Security.".into(),
         others => format!("Windows Defender can't scan here because {} protects this PC instead. Start the scan in that program.", others.join(" and ")),
     }
@@ -259,9 +267,11 @@ mod tests {
     fn names_the_antivirus_that_is_really_on() {
         // As Windows lists them on a PC with leftovers of uninstalled products.
         let listed = "Norton 360 for Gamers|262144\r\nMalwarebytes|397312\r\nWindows Defender|393472\r\nKaspersky|270336\r\nAvast Antivirus|270336\r\n";
-        assert_eq!(active_antivirus(listed), ["Malwarebytes"]);
-        assert!(active_antivirus("Windows Defender|397568\n").is_empty());
-        assert!(active_antivirus("nonsense\n").is_empty());
+        assert_eq!(active_products(listed), ["Malwarebytes"]);
+        assert!(active_products("Windows Defender|397568\n").is_empty());
+        assert!(active_products("nonsense\n").is_empty());
+        // Avast's firewall as Windows lists it when it is switched on (0x041000).
+        assert_eq!(active_products("Avast Antivirus|266240\r\n"), ["Avast Antivirus"]);
     }
 
     #[test]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-main-ready"
+description = "Enables the desktop_main_ready command without any pre-configured scope."
+commands.allow = ["desktop_main_ready"]
+
+[[permission]]
+identifier = "deny-desktop-main-ready"
+description = "Denies the desktop_main_ready command without any pre-configured scope."
+commands.deny = ["desktop_main_ready"]

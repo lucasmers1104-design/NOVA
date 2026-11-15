@@ -5,5 +5,6 @@
   { "type": "approval.request", "id": "p-10", "ts": 1, "requestId": "r-1", "taskId": "t-1", "title": "x", "detail": null, "risk": "extreme", "expiresAt": 1 },
   { "type": "approval.closed", "id": "p-11", "ts": 1, "requestId": "r-1", "outcome": "maybe" },
   { "type": "notices", "id": "p-12", "ts": 1, "items": [{ "id": "n1", "kind": "spam", "text": "x", "taskId": null, "ts": 1 }] },
-  { "type": "run.shell", "id": "p-16", "ts": 1 }
+  { "type": "run.shell", "id": "p-16", "ts": 1 },
+  { "type": "call.action", "id": "p-17", "ts": 1, "callId": "c", "action": "answer" }
 ]

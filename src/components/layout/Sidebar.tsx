@@ -1,10 +1,11 @@
-import { BarChart3, Check, Layers, PanelLeftClose, PanelLeftOpen, Puzzle, Settings } from "lucide-react";
+import { Check, Layers, PanelLeftClose, PanelLeftOpen, Settings } from "lucide-react";
 import { motion } from "motion/react";
 import { useMemo } from "react";
 import { NAV_GROUP_LABELS, type NavItem, resolveSidebar } from "@/app/navigation";
 import { NovaMark } from "@/components/brand/NovaMark";
 import { Menu, type MenuEntry } from "@/components/ui/Menu";
 import { runnable, usePlugins } from "@/features/plugins/api";
+import { pluginIcon } from "@/features/plugins/icons";
 import { useProfiles } from "@/features/profiles/store";
 import { useProfile } from "@/features/profile/useProfile";
 import { cn } from "@/lib/cn";
@@ -152,7 +153,7 @@ function PluginPages({ collapsed }: { collapsed: boolean }) {
         {pages.map(({ plugin, page }) => (
           <li key={`${plugin.id}:${page.id}`}>
             <NavButton
-              item={{ id: "plugins", label: page.title, icon: plugin.channel === "private" ? BarChart3 : Puzzle, description: plugin.description, group: "customize" }}
+              item={{ id: "plugins", label: page.title, icon: pluginIcon(plugin), description: plugin.description, group: "customize" }}
               active={route === "plugins" && current?.pluginId === plugin.id && current.pageId === page.id}
               collapsed={collapsed}
               onSelect={() => openPage({ pluginId: plugin.id, pageId: page.id })}
@@ -186,18 +187,11 @@ function NavButton({ item, active, collapsed, onSelect }: NavButtonProps) {
       )}
     >
       {active && (
-        <>
-          <motion.span
-            layoutId="nav-active-surface"
-            className="glass-pill absolute inset-0 rounded-[12px]"
-            transition={{ type: "spring", stiffness: 520, damping: 42 }}
-          />
-          <motion.span
-            layoutId="nav-active-bar"
-            className="absolute top-3 bottom-3 left-0 w-[2px] rounded-full bg-accent"
-            transition={{ type: "spring", stiffness: 520, damping: 42 }}
-          />
-        </>
+        <motion.span
+          layoutId="nav-active-surface"
+          className="glass-pill absolute inset-0 rounded-[12px]"
+          transition={{ type: "spring", stiffness: 520, damping: 42 }}
+        />
       )}
       <Icon
         size={18}

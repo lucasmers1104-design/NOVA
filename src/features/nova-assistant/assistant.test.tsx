@@ -17,7 +17,7 @@ import { HeadlessVoice } from "./panel/HeadlessVoice";
 import { elapsedLabel, useScan } from "./scan";
 import { reduceReply, replyText, useConversation } from "./conversation";
 import { displayedState } from "./panel/PanelApp";
-import { captureShortcut, shortcutLabels } from "./shortcut";
+import { shortcutLabels, shortcutText, toAccelerator } from "./shortcut";
 import { type AgentEvent, type AgentStatus, type AssistantStatus, DEFAULT_DOT_LOOK, type FinderStatus } from "./types";
 import { isOnlineVoice, isStopCommand, listen, NOVA_VOICE, speakableText, speaksGerman, speechChunks, usesNovaVoice, useVoice, type VoiceEvent, voiceLine } from "./voice";
 import { voiceDescription } from "./AgentSettings";
@@ -29,22 +29,22 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => {}), e
 // Conversations stream over a Tauri channel; the tests drive the events directly.
 vi.mock("./api", async (importOriginal) => ({ ...(await importOriginal<typeof import("./api")>()), sendMessage: vi.fn(), answerConfirmation: vi.fn() }));
 
-const key = (code: string, mods: Partial<Record<"ctrlKey" | "altKey" | "shiftKey" | "metaKey", boolean>> = {}) => ({
-  code,
-  ctrlKey: false,
-  altKey: false,
-  shiftKey: false,
-  metaKey: false,
-  ...mods,
-});
-
 describe("assistant shortcuts", () => {
-  it("captures key combinations in the format Rust registers", () => {
-    expect(captureShortcut(key("Space", { ctrlKey: true, altKey: true }))).toEqual({ kind: "shortcut", shortcut: "Ctrl+Alt+Space" });
-    expect(captureShortcut(key("KeyN", { metaKey: true, shiftKey: true }))).toEqual({ kind: "shortcut", shortcut: "Shift+Super+N" });
-    expect(captureShortcut(key("Digit4", { altKey: true }))).toEqual({ kind: "shortcut", shortcut: "Alt+4" });
-    expect(captureShortcut(key("ControlLeft", { ctrlKey: true }))).toEqual({ kind: "pending" });
-    expect(captureShortcut(key("KeyA", { shiftKey: true })).kind).toBe("invalid");
+  it("hands recorded shortcuts to Rust in the format it registers", () => {
+    // What the settings kit's recorder says, and what `parse_shortcut` understands.
+    expect(toAccelerator("Ctrl+Alt+Space")).toBe("Ctrl+Alt+Space");
+    expect(toAccelerator("Shift+Win+N")).toBe("Shift+Super+N");
+    expect(toAccelerator("Alt+4")).toBe("Alt+4");
+    expect(toAccelerator("Ctrl+Up")).toBe("Ctrl+ArrowUp");
+    expect(toAccelerator("Ctrl+Alt+Esc")).toBe("Ctrl+Alt+Escape");
+    // Removing the shortcut is the empty string Rust takes as "none".
+    expect(toAccelerator(null)).toBe("");
+  });
+
+  it("shows stored shortcuts with the names on a German keyboard", () => {
+    expect(shortcutText("Ctrl+Alt+Space")).toBe("Strg+Alt+Leertaste");
+    expect(shortcutText("Super+Shift+KeyN")).toBe("Win+Shift+N");
+    expect(shortcutText("")).toBeNull();
   });
 
   it("labels shortcuts for display", () => {
@@ -590,8 +590,8 @@ describe("conversation helpers", () => {
     expect(usesNovaVoice("Hi! Womit kann ich dir helfen?", "")).toBe(true);
     expect(usesNovaVoice("Hallo", "nova:eva")).toBe(true);
     expect(voiceDescription("", { state: "downloading", percent: 42 })).toMatch(/42 %/);
-    expect(voiceDescription("Microsoft Katja", { state: "ready" })).toMatch(/Windows voice/);
-    expect(voiceDescription("online:gemini:Kore", { state: "missing" })).toMatch(/online voice/);
+    expect(voiceDescription("Microsoft Katja", { state: "ready" })).toMatch(/Windows-Stimme/);
+    expect(voiceDescription("online:gemini:Kore", { state: "missing" })).toMatch(/Online-Stimme/);
     expect(isOnlineVoice("online:elevenlabs:abc") && !isOnlineVoice(NOVA_VOICE) && !isOnlineVoice("")).toBe(true);
   });
 
@@ -664,10 +664,10 @@ describe("AssistantSettings", () => {
   it("turns Start with Windows on and off", async () => {
     const user = userEvent.setup();
     renderWithQuery(<AssistantSettings />);
-    const toggle = await screen.findByRole("switch", { name: "Start with Windows" });
+    const toggle = await screen.findByRole("switch", { name: "Mit Windows starten" });
     await waitFor(() => expect(toggle).toBeEnabled());
     expect(toggle).not.toBeChecked();
-    expect(screen.getByText(/starts in the background with just the dot/)).toBeInTheDocument();
+    expect(screen.getByText(/startet im Hintergrund, nur mit dem Punkt/)).toBeInTheDocument();
     await user.click(toggle);
     expect(call).toHaveBeenCalledWith("autostart_set", { enabled: true });
     await waitFor(() => expect(toggle).toBeChecked());
@@ -680,33 +680,49 @@ describe("AssistantSettings", () => {
     const user = userEvent.setup();
     renderWithQuery(<AssistantSettings />);
     // While the dot is shown, NOVA always stays available after the window closes.
-    expect(await screen.findByRole("switch", { name: "Keep NOVA AI available when the window is closed" })).toBeDisabled();
-    await user.click(screen.getByRole("switch", { name: "Show the NOVA dot" }));
+    expect(await screen.findByRole("switch", { name: "Im Hintergrund verfügbar bleiben" })).toBeDisabled();
+    await user.click(screen.getByRole("switch", { name: "NOVA-Punkt anzeigen" }));
     expect(call).toHaveBeenCalledWith("assistant_configure", {
       update: { enabled: false, placement: "taskbar", corner: "bottomRight", look: DEFAULT_DOT_LOOK, shortcut: "Ctrl+Alt+Space", background: false, hideInFullscreen: false },
     });
-    await user.click(screen.getByRole("switch", { name: "Keep NOVA AI available when the window is closed" }));
-    await user.click(screen.getByRole("switch", { name: "Show the NOVA dot" }));
+    await user.click(screen.getByRole("switch", { name: "Im Hintergrund verfügbar bleiben" }));
+    await user.click(screen.getByRole("switch", { name: "NOVA-Punkt anzeigen" }));
     // Corners appear once the dot leaves the taskbar.
-    expect(screen.queryByRole("radio", { name: "Top left" })).toBeNull();
-    await user.click(screen.getByRole("radio", { name: "In a corner" }));
-    await user.click(await screen.findByRole("radio", { name: "Top left" }));
+    expect(screen.queryByRole("radio", { name: "Oben links" })).toBeNull();
+    await user.click(screen.getByRole("radio", { name: "In einer Ecke" }));
+    await user.click(await screen.findByRole("radio", { name: "Oben links" }));
     await waitFor(() => expect(call).toHaveBeenLastCalledWith("assistant_configure", { update: expect.objectContaining({ enabled: true, placement: "corner", corner: "topLeft", background: true }) }));
   });
 
   it("records a new shortcut and shows why one was rejected", async () => {
     const user = userEvent.setup();
     renderWithQuery(<AssistantSettings />);
-    await user.click(await screen.findByRole("button", { name: "Change keyboard shortcut" }));
-    fireEvent.keyDown(window, { code: "KeyA", key: "a" });
-    expect(screen.getByText("Add Ctrl, Alt or Win")).toBeInTheDocument();
-    fireEvent.keyDown(window, { code: "KeyN", key: "n", ctrlKey: true, shiftKey: true });
+    // The stored shortcut reads with the names on a German keyboard.
+    const recorder = await screen.findByRole("button", { name: "Tastenkürzel: Strg+Alt+Leertaste. Ändern" });
+    await user.click(recorder);
+    fireEvent.keyDown(recorder, { code: "KeyA", key: "a" });
+    expect(screen.getByRole("alert")).toHaveTextContent(/Strg, Alt oder der Windows-Taste/);
+    fireEvent.keyDown(recorder, { code: "KeyN", key: "n", ctrlKey: true, shiftKey: true });
     await waitFor(() => expect(call).toHaveBeenCalledWith("assistant_configure", { update: expect.objectContaining({ shortcut: "Ctrl+Shift+N" }) }));
 
-    await user.click(screen.getByRole("button", { name: "Change keyboard shortcut" }));
-    fireEvent.keyDown(window, { code: "KeyJ", key: "j", ctrlKey: true, altKey: true });
-    expect(await screen.findByText(/already used by another app/)).toBeInTheDocument();
+    // Rust's own reason stays in view when it turns a shortcut down.
+    await user.click(await screen.findByRole("button", { name: "Tastenkürzel: Strg+Shift+N. Ändern" }));
+    fireEvent.keyDown(screen.getByRole("button", { name: "Tastenkürzel: Tasten drücken" }), { code: "KeyJ", key: "j", ctrlKey: true, altKey: true });
+    expect(await screen.findByRole("alert")).toHaveTextContent(/already used by another app/);
     expect(status.shortcut).toBe("Ctrl+Shift+N");
+  });
+
+  it("records the Windows key as Rust calls it, and offers the default once the shortcut is gone", async () => {
+    const user = userEvent.setup();
+    renderWithQuery(<AssistantSettings />);
+    const recorder = await screen.findByRole("button", { name: /^Tastenkürzel: .*Ändern$/ });
+    await user.click(recorder);
+    fireEvent.keyDown(recorder, { code: "KeyN", key: "n", metaKey: true, shiftKey: true });
+    await waitFor(() => expect(call).toHaveBeenCalledWith("assistant_configure", { update: expect.objectContaining({ shortcut: "Shift+Super+N" }) }));
+    await user.click(await screen.findByRole("button", { name: "Tastenkürzel entfernen" }));
+    await waitFor(() => expect(status.shortcut).toBe(""));
+    await user.click(await screen.findByRole("button", { name: "Strg+Alt+Leertaste nehmen" }));
+    await waitFor(() => expect(status.shortcut).toBe("Ctrl+Alt+Space"));
   });
 
   it("offers to move a dragged dot back", async () => {
@@ -714,16 +730,16 @@ describe("AssistantSettings", () => {
     status.docked = false;
     const user = userEvent.setup();
     const view = renderWithQuery(<AssistantSettings />);
-    expect(await screen.findByText(/Where you dragged it/)).toBeInTheDocument();
+    expect(await screen.findByText(/Wo du ihn hingezogen hast/)).toBeInTheDocument();
     view.unmount();
 
     // Moved along the taskbar: still in it.
     status.docked = true;
     renderWithQuery(<AssistantSettings />);
-    expect(await screen.findByText(/Where you put it in the taskbar/)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Put it back" }));
+    expect(await screen.findByText(/Wo du ihn in der Taskleiste abgelegt hast/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Zurück an seinen Platz" }));
     expect(call).toHaveBeenCalledWith("assistant_reset_position");
-    expect(await screen.findByText(/In the taskbar, right after your app buttons/)).toBeInTheDocument();
+    expect(await screen.findByText(/In der Taskleiste, direkt hinter deinen App-Symbolen/)).toBeInTheDocument();
   });
 
   it("previews look changes at once and saves them", async () => {
@@ -731,17 +747,23 @@ describe("AssistantSettings", () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     renderWithQuery(<AssistantSettings />);
     await user.click(await screen.findByRole("radio", { name: "Ring" }));
-    expect(screen.getByRole("button", { name: "Talk to NOVA" })).toHaveAttribute("data-style", "ring");
+    const dot = () => screen.getByRole("group", { name: /Vorschau: der NOVA-Punkt/ }).querySelector<HTMLElement>(".nova-dot")!;
+    expect(dot()).toHaveAttribute("data-style", "ring");
     await waitFor(() => expect(call).toHaveBeenLastCalledWith("assistant_configure", { update: expect.objectContaining({ look: expect.objectContaining({ style: "ring" }) }) }));
 
-    fireEvent.change(screen.getByRole("slider", { name: "Dot size" }), { target: { value: "40" } });
-    expect(screen.getByRole("button", { name: "Talk to NOVA" }).style.getPropertyValue("--dot")).toBe("40px");
+    fireEvent.change(screen.getByRole("slider", { name: "Größe" }), { target: { value: "40" } });
+    expect(dot().style.getPropertyValue("--dot")).toBe("40px");
     act(() => vi.advanceTimersByTime(300));
     await waitFor(() => expect(call).toHaveBeenLastCalledWith("assistant_configure", { update: expect.objectContaining({ look: expect.objectContaining({ style: "ring", diameter: 40 }) }) }));
 
-    await user.click(screen.getByRole("radio", { name: "White" }));
+    // White keeps the name Rust knows it by, not the picker's hex value.
+    await user.click(screen.getByRole("radio", { name: "Weiß" }));
     await waitFor(() => expect(status.look.color).toBe("white"));
-    await user.click(screen.getByRole("button", { name: "Back to the default look" }));
+    await waitFor(() => expect(screen.getByRole("radio", { name: "Weiß" })).toHaveAttribute("aria-checked", "true"));
+    // Going back to the default look takes a second click, so a stray one throws nothing away.
+    await user.click(screen.getByRole("button", { name: "Standard-Aussehen" }));
+    expect(status.look.color).toBe("white");
+    await user.click(screen.getByRole("button", { name: "Wirklich zurücksetzen" }));
     await waitFor(() => expect(status.look).toEqual(DEFAULT_DOT_LOOK));
     vi.useRealTimers();
   });
@@ -749,11 +771,37 @@ describe("AssistantSettings", () => {
   it("previews the dot as pointed at", async () => {
     const user = userEvent.setup();
     renderWithQuery(<AssistantSettings />);
-    const preview = await screen.findByRole("group", { name: "Dot preview" });
-    expect(screen.getByRole("button", { name: "Talk to NOVA" })).not.toHaveAttribute("data-hover");
-    await user.click(screen.getByRole("radio", { name: "Hover" }));
+    const preview = await screen.findByRole("group", { name: /Vorschau: der NOVA-Punkt/ });
+    expect(preview.querySelector(".nova-dot")).not.toHaveAttribute("data-hover");
+    await user.click(screen.getByRole("radio", { name: "Zeiger" }));
     expect(preview.querySelector(".nova-dot")).toHaveAttribute("data-hover", "true");
     expect(preview.querySelector(".nova-dot")).toHaveAttribute("data-state", "idle");
+  });
+
+  it("shows the dot listening, thinking and speaking, by the control or by clicking the dot", async () => {
+    const user = userEvent.setup();
+    renderWithQuery(<AssistantSettings />);
+    const preview = await screen.findByRole("group", { name: /Vorschau: der NOVA-Punkt/ });
+    const state = () => preview.querySelector(".nova-dot")?.getAttribute("data-state");
+    await user.click(screen.getByRole("radio", { name: "Spricht" }));
+    expect(state()).toBe("speaking");
+    await user.click(screen.getByRole("radio", { name: "Denkt" }));
+    expect(state()).toBe("thinking");
+    // The dot on the stage says what a click on it does there, and does it.
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Nächsten Zustand zeigen" }), { button: 0 });
+    fireEvent.pointerUp(screen.getByRole("button", { name: "Nächsten Zustand zeigen" }), { button: 0 });
+    expect(state()).toBe("speaking");
+    // None of this reaches the dot on the desktop.
+    expect(call).not.toHaveBeenCalledWith("assistant_configure", expect.anything());
+  });
+
+  it("puts the stage's dot where the real one sits", async () => {
+    status = { ...status, placement: "corner", corner: "topLeft", docked: false, look: { ...DEFAULT_DOT_LOOK, edgeGap: 20 } };
+    renderWithQuery(<AssistantSettings />);
+    const preview = await screen.findByRole("group", { name: /Vorschau: der NOVA-Punkt/ });
+    const place = preview.querySelector<HTMLElement>(".nova-dot")!.parentElement!;
+    expect(place.style.left).toBe("20px");
+    expect(place.style.top).toBe("20px");
   });
 });
 
@@ -790,35 +838,39 @@ describe("WakeSettings", () => {
   it("turns on the double clap and shows that NOVA listens", async () => {
     const user = userEvent.setup();
     renderWithQuery(<WakeSettings />);
-    await user.click(await screen.findByRole("switch", { name: "Wake with a double clap" }));
+    await user.click(await screen.findByRole("switch", { name: "Mit Doppelklatschen wecken" }));
     expect(call).toHaveBeenCalledWith("wake_configure", { prefs: { ...OFF.prefs, clap: true } });
-    expect(await screen.findByRole("status")).toHaveTextContent("Listening");
-    expect(screen.getByRole("radio", { name: "Very precise" })).toHaveAttribute("aria-checked", "true");
+    expect(await screen.findByRole("status")).toHaveTextContent("Hört zu");
+    expect(screen.getByRole("radio", { name: "Sehr genau" })).toHaveAttribute("aria-checked", "true");
   });
 
   it("offers to resume listening paused from the dot's menu", async () => {
     status = { ...status, prefs: { ...status.prefs, clap: true, muted: true }, clap: { state: "paused", reason: "muted" } };
     const user = userEvent.setup();
     renderWithQuery(<WakeSettings />);
-    expect(await screen.findByText(/Paused from the dot's menu/)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Resume" }));
+    expect(await screen.findByText(/Pausiert über das Menü des Punkts/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Fortsetzen" }));
     expect(call).toHaveBeenCalledWith("wake_configure", { prefs: expect.objectContaining({ clap: true, muted: false }) });
   });
 
   it("explains that listening after waking needs online speech recognition", async () => {
     const user = userEvent.setup();
     renderWithQuery(<WakeSettings />);
-    await user.click(await screen.findByRole("button", { name: "Turn it on" }));
+    await user.click(await screen.findByRole("button", { name: "Einschalten" }));
     expect(call).toHaveBeenCalledWith("voice_open_settings", { page: "privacy-speech" });
   });
 
   it("runs a test that opens nothing", async () => {
     const user = userEvent.setup();
     renderWithQuery(<WakeSettings />);
-    await user.click(await screen.findByRole("button", { name: "Start test" }));
+    const stage = await screen.findByRole("group", { name: "Probelauf: was NOVA hört" });
+    expect(stage.querySelector(".nova-dot")).toHaveAttribute("data-state", "idle");
+    await user.click(screen.getByRole("button", { name: "Probelauf starten" }));
     expect(call).toHaveBeenCalledWith("wake_test", { on: true });
-    expect(await screen.findByRole("meter", { name: "Microphone level" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Stop" }));
+    expect(await screen.findByRole("meter", { name: "Mikrofonpegel" })).toBeInTheDocument();
+    // The dot on the stage listens along.
+    expect(stage.querySelector(".nova-dot")).toHaveAttribute("data-state", "listening");
+    await user.click(screen.getByRole("button", { name: "Stopp" }));
     expect(call).toHaveBeenLastCalledWith("wake_test", { on: false });
   });
 
@@ -828,30 +880,32 @@ describe("WakeSettings", () => {
     status.prefs.clap = true;
     const user = userEvent.setup();
     renderWithQuery(<WakeSettings />);
-    expect(await screen.findByText(/How to clap/)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Start test" }));
-    expect(await screen.findByText(/left$/)).toHaveTextContent("2:00 left");
+    expect(await screen.findByText(/So klatschst du/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Probelauf starten" }));
+    expect(await screen.findByText(/^noch /)).toHaveTextContent("noch 2:00");
     const heard = await waitFor(() => {
       const found = [...vi.mocked(listen).mock.calls].reverse().find(([event]) => event === ASSISTANT_EVENTS.wakeHeard);
       expect(found).toBeDefined();
       return found![1] as (event: { payload: unknown }) => void;
     });
     act(() => heard({ payload: { kind: "double", veto: null } }));
-    const log = screen.getByRole("list", { name: "What NOVA heard" });
+    const log = screen.getByRole("list", { name: "Was NOVA gehört hat" });
     expect(log).toHaveTextContent("0:00");
-    expect(log).toHaveTextContent("Double clap — NOVA would open");
-    await user.click(screen.getByRole("button", { name: "Clear" }));
-    expect(log).not.toHaveTextContent("Double clap");
-    expect(log).toHaveTextContent("Listening…");
+    expect(log).toHaveTextContent("Doppelklatschen: NOVA würde sich öffnen");
+    // The dot on the stage shows that it would have woken.
+    expect(screen.getByRole("group", { name: "Probelauf: was NOVA hört" }).querySelector(".nova-dot")).toHaveAttribute("data-state", "completed");
+    await user.click(screen.getByRole("button", { name: "Leeren" }));
+    expect(log).not.toHaveTextContent("Doppelklatschen");
+    expect(log).toHaveTextContent("NOVA hört zu …");
   });
 
   it("describes what it heard", () => {
-    expect(describeHeard({ kind: "double", veto: null })).toEqual({ text: "Double clap — NOVA would open", tone: "good" });
+    expect(describeHeard({ kind: "double", veto: null })).toEqual({ text: "Doppelklatschen: NOVA würde sich öffnen", tone: "good" });
     expect(describeHeard({ kind: "double", veto: "typing" })?.tone).toBe("warn");
-    expect(describeHeard({ kind: "notAClap", levelDb: -20, reason: "tonal" })?.text).toMatch(/tone or a glass/);
-    expect(describeHeard({ kind: "phrase", text: "hey noah", confidence: "high", accepted: false })?.text).toBe("Heard “hey noah” (high) — ignored");
+    expect(describeHeard({ kind: "notAClap", levelDb: -20, reason: "tonal" })?.text).toMatch(/Ton oder ein Glas/);
+    expect(describeHeard({ kind: "phrase", text: "hey noah", confidence: "high", accepted: false })?.text).toBe("„hey noah“ gehört (sicher): ignoriert");
     expect(describeHeard({ kind: "level", value: 0.4 })).toBeNull();
-    expect(listenerLabel({ state: "paused", reason: "dictation" })).toBe("Paused while you dictate");
+    expect(listenerLabel({ state: "paused", reason: "dictation" })).toBe("Pausiert, solange du diktierst");
     expect(listenerLabel({ state: "unavailable", message: "No microphone was found.", settings: null })).toBe("No microphone was found.");
   });
 });

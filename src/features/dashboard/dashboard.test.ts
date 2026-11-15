@@ -60,9 +60,10 @@ describe("layout helpers", () => {
 describe("widget config", () => {
   it("resolves defaults and rejects invalid values", () => {
     const clock = getWidget("clock")!;
-    expect(resolveConfig(clock.configSchema, undefined)).toEqual({ style: "digital", timeZone: "local", showSeconds: false });
+    expect(resolveConfig(clock.configSchema, undefined)).toEqual({ style: "digital", font: "classic", timeZone: "local", showSeconds: false });
     expect(resolveConfig(clock.configSchema, { timeZone: "Asia/Tokyo", showSeconds: "yes", extra: 1 })).toEqual({
       style: "digital",
+      font: "classic",
       timeZone: "Asia/Tokyo",
       showSeconds: false,
     });

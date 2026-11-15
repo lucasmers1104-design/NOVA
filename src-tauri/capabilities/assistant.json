@@ -15,6 +15,7 @@
     "allow-assistant-panel-hidden",
     "allow-assistant-dot-ready",
     "allow-assistant-panel-ready",
+    "allow-assistant-panel-retire",
     "allow-assistant-dot-menu",
     "allow-assistant-open-main",
     "allow-open-url",

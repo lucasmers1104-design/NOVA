@@ -255,3 +255,46 @@ export const useConversation = create<ConversationState>()((set, get) => ({
   setAttachments: (attachments) => set({ attachments }),
   setState: (state, detail = null) => set({ state, detail }),
 }));
+
+const SNAPSHOT_VERSION = 1;
+
+function isItem(value: unknown): value is Item {
+  if (typeof value !== "object" || value === null) return false;
+  const item = value as Partial<Item>;
+  if (typeof item.id !== "string") return false;
+  if (item.kind === "user") return typeof item.text === "string" && Array.isArray(item.attachments);
+  return item.kind === "assistant" && Array.isArray(item.segments) && Array.isArray(item.usage);
+}
+
+/**
+ * The conversation as text, for the panel that comes after this one: a panel
+ * that has been closed for a while ends itself to give its memory back.
+ * `null` while something is under way that would be lost with the page.
+ */
+export function snapshotConversation(): string | null {
+  const { items, busy, attachments } = useConversation.getState();
+  if (busy || attachments.length > 0 || items.some((item) => item.kind === "assistant" && item.streaming)) return null;
+  return JSON.stringify({ version: SNAPSHOT_VERSION, items });
+}
+
+/**
+ * Shows the conversation of the panel before this one again. NOVA AI itself
+ * (in Rust) still knows it, so it simply goes on. Anything unreadable is
+ * left out: an empty panel is better than a broken one.
+ */
+export function restoreConversation(snapshot: string): boolean {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(snapshot);
+  } catch {
+    return false;
+  }
+  const saved = parsed as { version?: unknown; items?: unknown } | null;
+  if (saved?.version !== SNAPSHOT_VERSION || !Array.isArray(saved.items) || !saved.items.every(isItem)) return false;
+  const items: Item[] = saved.items;
+  // New messages must not get an id that is already on screen.
+  const highest = Math.max(0, ...items.map((item) => Number(/^m(\d+)$/.exec(item.id)?.[1] ?? 0)));
+  nextId = Math.max(nextId, highest + 1);
+  useConversation.setState({ items, lastPrompt: items.findLast((item) => item.kind === "user")?.text ?? null });
+  return true;
+}

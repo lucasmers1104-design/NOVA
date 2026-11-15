@@ -5,8 +5,8 @@ import { noteDraft } from "@/features/productivity/store";
 import { isDesktop } from "@/lib/native";
 import { cn } from "@/lib/cn";
 
-/** Windows-style caption buttons for the frameless main window. */
-export function WindowControls() {
+/** Whether the main window fills the screen (maximized or snapped full), kept up to date. */
+export function useMaximized(): boolean {
   const [maximized, setMaximized] = useState(false);
   const desktop = isDesktop();
 
@@ -29,6 +29,13 @@ export function WindowControls() {
       unlisten?.();
     };
   }, [desktop]);
+  return maximized;
+}
+
+/** Windows-style caption buttons for the frameless main window. */
+export function WindowControls() {
+  const maximized = useMaximized();
+  const desktop = isDesktop();
 
   if (!desktop) return null;
   const win = getCurrentWindow();

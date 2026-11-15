@@ -8,7 +8,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -47,14 +47,18 @@ const PANEL_MIN_HEIGHT: f64 = 340.0;
 const DRAG_SETTLE: Duration = Duration::from_millis(250);
 /// The panel hides by itself if its exit animation never reports back.
 const COLLAPSE_FALLBACK: Duration = Duration::from_millis(600);
+/// How often a closed panel is looked at: has it been closed for long enough to go?
+const PANEL_IDLE_CHECK: Duration = Duration::from_secs(30);
+/// A conversation larger than this (screenshots in it) stays with its page instead of being kept for a new one.
+const LARGEST_SNAPSHOT: usize = 4 << 20;
 
 const EVENT_EXPAND: &str = "assistant://expand";
 const EVENT_COLLAPSE: &str = "assistant://collapse";
 const EVENT_PANEL: &str = "assistant://panel";
 const EVENT_DOT: &str = "assistant://dot";
 const EVENT_PREFS: &str = "assistant://prefs";
-const EVENT_NAVIGATE: &str = "nova://navigate";
 const EVENT_WAKE: &str = "assistant://wake";
+const EVENT_RETIRE: &str = "assistant://retire";
 const EVENT_NOTICE: &str = "assistant://notice";
 
 // ---------------------------------------------------------------------------
@@ -94,6 +98,16 @@ pub enum DotStyle {
     Solid,
     /// A thin ring.
     Ring,
+    /// Clear liquid glass: a bright rim and a hint of color, the most see-through.
+    Liquid,
+    /// A soft, matte pearl with a colored sparkle.
+    Pearl,
+    /// A fine glowing ring around a small point of light.
+    Halo,
+    /// Dark graphite with a fine edge, the quietest.
+    Mono,
+    /// A soft gradient of the dot's color and two neighbors.
+    Aura,
 }
 
 /// How the dot looks.
@@ -272,6 +286,15 @@ struct Inner {
     panel_placed_at: Option<PhysicalPosition<i32>>,
     /// Latest dragged position of the panel, saved once the drag settles.
     panel_dragged_to: Option<PhysicalPosition<i32>>,
+    /// Since when the panel's page has nothing to do: its window is closed and
+    /// no voice-only turn runs in it. After the idle time it is ended.
+    panel_idle_since: Option<Instant>,
+    /// The panel is being ended; until it is gone, a new one can't take its place.
+    panel_retiring: bool,
+    /// The conversation of a panel that was ended, for the next one to show again.
+    panel_snapshot: Option<String>,
+    /// When the panel was asked for and had to be made first (for the time that takes).
+    panel_asked_at: Option<Instant>,
 }
 
 #[derive(Default)]
@@ -284,6 +307,7 @@ pub struct AssistantState {
     collapse_generation: AtomicU64,
     watching_fullscreen: AtomicBool,
     watching_taskbar: AtomicBool,
+    watching_panel: AtomicBool,
 }
 
 /// The dot's window handle while it sits in the taskbar (0 otherwise); the
@@ -304,8 +328,19 @@ fn state<R: Runtime>(app: &AppHandle<R>) -> &AssistantState {
 /// Whether closing the main window should keep NOVA running for the assistant.
 /// The dot stays on the desktop after the window closes; quit from the tray or the dot's menu.
 pub fn runs_in_background<R: Runtime>(app: &AppHandle<R>) -> bool {
+    let island = crate::island::enabled(app);
     let inner = state(app).lock();
-    inner.prefs.background || inner.prefs.enabled
+    inner.prefs.background || inner.prefs.enabled || island
+}
+
+/// The dot has its own window: it is on and Nova Island doesn't carry it ("Island only").
+fn dot_window_wanted<R: Runtime>(app: &AppHandle<R>, prefs: &AssistantPrefs) -> bool {
+    dot_needs_window(prefs.enabled, crate::island::replaces_dot(app))
+}
+
+/// A dot the island carries has no window, no page and no WebView2 renderer of its own.
+fn dot_needs_window(enabled: bool, island_carries_it: bool) -> bool {
+    enabled && !island_carries_it
 }
 
 // ---------------------------------------------------------------------------
@@ -582,7 +617,7 @@ pub fn panel_at(screen: Screen, (x, y): (i32, i32)) -> PanelPlacement {
     PanelPlacement { window, origin }
 }
 
-fn screen_of(monitor: &Monitor) -> Screen {
+pub(crate) fn screen_of(monitor: &Monitor) -> Screen {
     let area = monitor.work_area();
     Screen {
         work: Rect { x: area.position.x, y: area.position.y, w: area.size.width as i32, h: area.size.height as i32 },
@@ -592,6 +627,11 @@ fn screen_of(monitor: &Monitor) -> Screen {
 
 fn screens<R: Runtime>(app: &AppHandle<R>) -> Vec<Screen> {
     app.available_monitors().map(|monitors| monitors.iter().map(screen_of).collect()).unwrap_or_default()
+}
+
+/// Every connected monitor's work area and scale (Nova Island places itself with these).
+pub(crate) fn all_screens<R: Runtime>(app: &AppHandle<R>) -> Vec<Screen> {
+    screens(app)
 }
 
 fn primary_screen<R: Runtime>(app: &AppHandle<R>) -> Option<Screen> {
@@ -633,6 +673,9 @@ fn dot_target<R: Runtime>(app: &AppHandle<R>, prefs: &AssistantPrefs) -> Option<
 
 /// The dot's window rectangle: where it is, or where it would be while hidden.
 fn dot_rect<R: Runtime>(app: &AppHandle<R>) -> Option<(Screen, Rect)> {
+    if let Some(island) = crate::island::dot_anchor(app) {
+        return Some(island);
+    }
     if let Some(dot) = app.get_webview_window(DOT_LABEL) {
         if let (Ok(pos), Ok(size)) = (dot.outer_position(), dot.outer_size()) {
             let rect = Rect { x: pos.x, y: pos.y, w: size.width as i32, h: size.height as i32 };
@@ -665,6 +708,11 @@ fn disable_system_animations<R: Runtime>(window: &WebviewWindow<R>) {
 
 #[cfg(not(windows))]
 fn disable_system_animations<R: Runtime>(_: &WebviewWindow<R>) {}
+
+/// For Nova Island's window, which animates itself the same way.
+pub(crate) fn disable_animations<R: Runtime>(window: &WebviewWindow<R>) {
+    disable_system_animations(window);
+}
 
 /// Creates the dot window, hidden until its page reports ready. Must not run
 /// on the main thread's event handlers (WebView2 deadlocks there).
@@ -700,7 +748,20 @@ fn place_dot<R: Runtime>(app: &AppHandle<R>, window: &WebviewWindow<R>) {
     let _ = window.set_position(pos);
 }
 
+/// The panel's window, unless it is on its way out (ended for being idle).
+fn panel_window<R: Runtime>(app: &AppHandle<R>) -> Option<WebviewWindow<R>> {
+    app.get_webview_window(PANEL_LABEL).filter(|_| !state(app).lock().panel_retiring)
+}
+
+/// Creates the panel window, hidden. Must not run on the main thread's event
+/// handlers (WebView2 deadlocks there), which also lets it wait for a panel
+/// that is just being ended: two windows can't share the label.
 fn create_panel<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<WebviewWindow<R>> {
+    let asked = Instant::now();
+    while app.get_webview_window(PANEL_LABEL).is_some() && asked.elapsed() < Duration::from_secs(2) {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    state(app).lock().panel_asked_at = Some(asked);
     let window = WebviewWindowBuilder::new(app, PANEL_LABEL, WebviewUrl::App("assistant.html".into()))
         .title("NOVA AI")
         .inner_size(PANEL_WIDTH + 2.0 * PANEL_PAD, PANEL_MAX_HEIGHT + 2.0 * PANEL_PAD)
@@ -727,10 +788,14 @@ fn position_panel<R: Runtime>(app: &AppHandle<R>, panel: &WebviewWindow<R>) -> C
     let all = screens(app);
     let placement = match moved.and_then(|p| screen_containing(&all, (p.x + 40, p.y + 40)).map(|screen| panel_at(screen, (p.x, p.y)))) {
         Some(placement) => placement,
-        None => {
-            let Some((screen, dot)) = dot_rect(app) else { return Corner::default() };
-            panel_placement(screen, dot, room)
-        }
+        None => match crate::island::dot_anchor(app) {
+            // Below the island that carries the dot.
+            Some((screen, island)) => panel_placement(screen, island, crate::island::PAD),
+            None => {
+                let Some((screen, dot)) = dot_rect(app) else { return Corner::default() };
+                panel_placement(screen, dot, room)
+            }
+        },
     };
     let rect = placement.window;
     let pos = PhysicalPosition::new(rect.x, rect.y);
@@ -848,10 +913,11 @@ pub fn expand<R: Runtime>(app: &AppHandle<R>) {
         let mut inner = state.lock();
         inner.panel_open = true;
         inner.collapsing = false;
+        inner.panel_idle_since = None;
         (inner.panel_loaded, inner.panel_creating)
     };
     let _ = app.emit_to(DOT_LABEL, EVENT_PANEL, PanelEvent { open: true });
-    if let Some(panel) = app.get_webview_window(PANEL_LABEL) {
+    if let Some(panel) = panel_window(app) {
         let origin = position_panel(app, &panel);
         if loaded {
             show_panel(app, &panel, origin);
@@ -913,12 +979,67 @@ fn hide_panel<R: Runtime>(app: &AppHandle<R>, generation: u64) {
         inner.collapsing = false;
         // A wake-up cancelled before the page loaded mustn't fire at the next opening.
         inner.pending_wake = None;
+        inner.panel_idle_since = Some(Instant::now());
     }
     if let Some(panel) = app.get_webview_window(PANEL_LABEL) {
         let _ = panel.hide();
         crate::desktop::set_page_visible(&panel, false);
     }
     let _ = app.emit_to(DOT_LABEL, EVENT_PANEL, PanelEvent { open: false });
+    watch_panel_idle(app);
+}
+
+/// Whether a panel's page has been of no use for long enough to be ended.
+/// `idle`: for how long its window has been closed with nothing going on in
+/// it; `minutes`: the user's limit, 0 keeps it. A timer that is still running
+/// keeps it too: the page is what rings when it runs out.
+fn panel_may_retire(open: bool, loaded: bool, idle: Option<Duration>, minutes: u32, timers_running: bool) -> bool {
+    !open && loaded && !timers_running && minutes > 0 && idle.is_some_and(|idle| idle >= Duration::from_secs(minutes as u64 * 60))
+}
+
+/// While a closed panel exists, looks now and then whether its time is up,
+/// and then asks its page to go. The page knows what would be lost (a reply
+/// still coming in, something being said) and answers with
+/// `assistant_panel_retire` only when nothing would.
+pub fn watch_panel_idle<R: Runtime>(app: &AppHandle<R>) {
+    if state(app).watching_panel.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        loop {
+            let (open, loaded, idle) = {
+                let inner = state(&app).lock();
+                (inner.panel_open || inner.panel_creating || inner.panel_retiring, inner.panel_loaded, inner.panel_idle_since.map(|since| since.elapsed()))
+            };
+            // Nothing to wait for: `hide_panel` starts this again when a panel closes.
+            if app.get_webview_window(PANEL_LABEL).is_none() || open {
+                break;
+            }
+            let minutes = crate::performance::prefs(&app).panel_idle_minutes;
+            if panel_may_retire(open, loaded, idle, minutes, !crate::agent::everyday::timers().is_empty()) {
+                let _ = app.emit_to(PANEL_LABEL, EVENT_RETIRE, ());
+            }
+            std::thread::sleep(PANEL_IDLE_CHECK);
+        }
+        state(&app).watching_panel.store(false, Ordering::SeqCst);
+        // Closed just while this was on its way out: that call found a watcher still there.
+        let closed = {
+            let inner = state(&app).lock();
+            !(inner.panel_open || inner.panel_creating || inner.panel_retiring) && inner.panel_idle_since.is_some()
+        };
+        if closed && app.get_webview_window(PANEL_LABEL).is_some() {
+            watch_panel_idle(&app);
+        }
+    });
+}
+
+/// The panel's window is gone.
+pub fn on_panel_destroyed<R: Runtime>(app: &AppHandle<R>) {
+    let mut inner = state(app).lock();
+    inner.panel_loaded = false;
+    inner.panel_retiring = false;
+    inner.panel_idle_since = None;
 }
 
 pub fn notify<R: Runtime>(app: &AppHandle<R>, title: &str, body: &str) {
@@ -933,9 +1054,11 @@ pub fn announce<R: Runtime>(app: &AppHandle<R>, text: String) {
     std::thread::spawn(move || {
         let (loaded, creating) = {
             let mut inner = state(&app).lock();
-            let exists = inner.panel_creating || app.get_webview_window(PANEL_LABEL).is_some();
+            let exists = inner.panel_creating || (!inner.panel_retiring && app.get_webview_window(PANEL_LABEL).is_some());
             inner.panel_creating |= !exists;
-            (inner.panel_loaded, exists)
+            // The page is about to speak: it isn't idle until it says so (`assistant_headless_done`).
+            inner.panel_idle_since = None;
+            (inner.panel_loaded && !inner.panel_retiring, exists)
         };
         if !loaded && !creating {
             let created = create_panel(&app);
@@ -971,6 +1094,8 @@ pub fn in_game<R: Runtime>(app: &AppHandle<R>) -> bool {
 /// Wakes NOVA in the panel's page without showing its window or taking the
 /// game's focus. The page counts as visible meanwhile, so its timers keep their pace.
 fn wake_without_panel<R: Runtime>(app: &AppHandle<R>, call: WakeCall, loaded: bool) {
+    // A voice-only turn begins in the page: it isn't idle until the turn is over.
+    state(app).lock().panel_idle_since = None;
     if loaded {
         if let Some(panel) = app.get_webview_window(PANEL_LABEL) {
             crate::desktop::set_page_visible(&panel, true);
@@ -983,7 +1108,7 @@ fn wake_without_panel<R: Runtime>(app: &AppHandle<R>, call: WakeCall, loaded: bo
         inner.pending_wake = Some(call);
         std::mem::replace(&mut inner.panel_creating, true)
     };
-    if creating || app.get_webview_window(PANEL_LABEL).is_some() {
+    if creating || panel_window(app).is_some() {
         state(app).lock().panel_creating = creating;
         return;
     }
@@ -1001,8 +1126,16 @@ fn wake_without_panel<R: Runtime>(app: &AppHandle<R>, call: WakeCall, loaded: bo
 /// The voice-only turn in a game is over.
 #[tauri::command]
 pub async fn assistant_headless_done<R: Runtime>(app: AppHandle<R>, window: WebviewWindow<R>) -> CommandResult<()> {
-    if !state(&app).lock().panel_open {
+    let closed = {
+        let mut inner = state(&app).lock();
+        if !inner.panel_open {
+            inner.panel_idle_since = Some(Instant::now());
+        }
+        !inner.panel_open
+    };
+    if closed {
         crate::desktop::set_page_visible(&window, false);
+        watch_panel_idle(&app);
     }
     Ok(())
 }
@@ -1024,7 +1157,7 @@ pub fn wake<R: Runtime>(app: &AppHandle<R>, source: crate::wake::Source, listen:
     tauri::async_runtime::spawn(async move { crate::agent::prewarm(&handle).await });
     let (open, loaded) = {
         let inner = state(app).lock();
-        (inner.panel_open && !inner.collapsing, inner.panel_loaded)
+        (inner.panel_open && !inner.collapsing, inner.panel_loaded && !inner.panel_retiring)
     };
     if headless {
         wake_without_panel(app, call, loaded);
@@ -1084,7 +1217,7 @@ fn register_shortcut<R: Runtime>(app: &AppHandle<R>, shortcut: Option<Shortcut>)
 /// Startup: show the dot and register the shortcut according to the saved preferences.
 pub fn init<R: Runtime>(app: &AppHandle<R>, prefs: AssistantPrefs) {
     let shortcut = parse_shortcut(&prefs.shortcut).ok().flatten();
-    let enabled = prefs.enabled;
+    let enabled = dot_window_wanted(app, &prefs);
     state(app).lock().prefs = prefs;
     if enabled {
         if let Err(error) = create_dot(app) {
@@ -1097,10 +1230,11 @@ pub fn init<R: Runtime>(app: &AppHandle<R>, prefs: AssistantPrefs) {
         let inner = state(app).lock();
         (inner.prefs.enabled && inner.prefs.hide_in_fullscreen && !docked(&inner.prefs), docked(&inner.prefs))
     };
-    if fullscreen {
+    // Without a dot window there is nothing to hide or to keep in place.
+    if fullscreen && enabled {
         watch_fullscreen(app);
     }
-    if taskbar {
+    if taskbar && enabled {
         watch_taskbar(app);
     }
 }
@@ -1140,6 +1274,8 @@ fn watch_taskbar<R: Runtime>(app: &AppHandle<R>) {
             let hide = !open && fullscreen_in_front();
             if hide != hidden {
                 let _ = if hide { dot.hide() } else { dot.show() };
+                // Hidden, its page rests too: no animation, and as little memory as it can do with.
+                crate::desktop::set_page_visible(&dot, !hide);
                 hidden = hide;
             }
             // Not while the user drags it around.
@@ -1163,6 +1299,7 @@ fn watch_taskbar<R: Runtime>(app: &AppHandle<R>) {
         if hidden {
             if let Some(dot) = app.get_webview_window(DOT_LABEL) {
                 let _ = dot.show();
+                crate::desktop::set_page_visible(&dot, true);
             }
         }
         self::state(&app).watching_taskbar.store(false, Ordering::SeqCst);
@@ -1210,10 +1347,13 @@ fn watch_fullscreen<R: Runtime>(app: &AppHandle<R>) {
                 let inner = self::state(&app).lock();
                 (inner.prefs.enabled && inner.prefs.hide_in_fullscreen && !docked(&inner.prefs), inner.panel_open)
             };
+            // The island took the dot in: `apply` starts this again when it gives it back.
+            let enabled = enabled && app.get_webview_window(DOT_LABEL).is_some();
             let hide = enabled && !open && fullscreen_in_front();
             if hide != hidden {
                 if let Some(dot) = app.get_webview_window(DOT_LABEL) {
                     let _ = if hide { dot.hide() } else { dot.show() };
+                    crate::desktop::set_page_visible(&dot, !hide);
                 }
                 hidden = hide;
             }
@@ -1228,10 +1368,7 @@ fn watch_fullscreen<R: Runtime>(app: &AppHandle<R>) {
 
 /// Brings the windows in line with changed preferences.
 fn apply<R: Runtime>(app: &AppHandle<R>, previous: &AssistantPrefs, prefs: &AssistantPrefs) {
-    if prefs.hide_in_fullscreen && prefs.enabled && !docked(prefs) {
-        watch_fullscreen(app);
-    }
-    match (prefs.enabled, app.get_webview_window(DOT_LABEL)) {
+    match (dot_window_wanted(app, prefs), app.get_webview_window(DOT_LABEL)) {
         (true, Some(dot)) => {
             place_dot(app, &dot);
             if previous.look != prefs.look {
@@ -1248,6 +1385,10 @@ fn apply<R: Runtime>(app: &AppHandle<R>, previous: &AssistantPrefs, prefs: &Assi
         }
         (false, None) => {}
     }
+    // After the window: the watchers end by themselves when there is none.
+    if prefs.hide_in_fullscreen && prefs.enabled && !docked(prefs) {
+        watch_fullscreen(app);
+    }
     if docked(prefs) {
         watch_taskbar(app);
     }
@@ -1256,6 +1397,13 @@ fn apply<R: Runtime>(app: &AppHandle<R>, previous: &AssistantPrefs, prefs: &Assi
             position_panel(app, &panel);
         }
     }
+}
+
+/// Nova Island took the dot in or gave it back: make or remove the dot's window.
+pub fn refresh_dot<R: Runtime>(app: &AppHandle<R>) {
+    let prefs = state(app).lock().prefs.clone();
+    apply(app, &prefs, &prefs);
+    let _ = app.emit(EVENT_PREFS, status(app));
 }
 
 /// Called for every move of the dot window. Moves NOVA made itself are
@@ -1386,7 +1534,7 @@ pub fn on_menu_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
         }
         MENU_TALK => toggle(app),
         MENU_OPEN => open_main(app, None),
-        MENU_SETTINGS => open_main(app, Some("assistant")),
+        MENU_SETTINGS => open_main(app, Some(("settings", "assistant"))),
         MENU_HIDE => {
             // Off the main thread: hiding destroys the window that owns this menu.
             let app = app.clone();
@@ -1422,21 +1570,15 @@ fn hide_dot<R: Runtime>(app: &AppHandle<R>) {
     let _ = app.notification().builder().title("NOVA dot hidden").body(body).show();
 }
 
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct NavigateEvent {
-    route: &'static str,
-    section: &'static str,
-}
-
-fn open_main<R: Runtime>(app: &AppHandle<R>, section: Option<&'static str>) {
+/// Opens NOVA's main window, at `route` (and in Settings at `section`) if one is given.
+fn open_main<R: Runtime>(app: &AppHandle<R>, at: Option<(&'static str, &'static str)>) {
     // The always-on-top panel would cover the window it opens; a pinned one stays on purpose.
     if !state(app).lock().prefs.panel_pinned {
         request_collapse(app);
     }
-    crate::desktop::show_main_window(app);
-    if let Some(section) = section {
-        let _ = app.emit_to("main", EVENT_NAVIGATE, NavigateEvent { route: "settings", section });
+    match at {
+        Some((route, section)) => crate::desktop::open_main_at(app, route, section),
+        None => crate::desktop::show_main_window(app),
     }
 }
 
@@ -1465,10 +1607,13 @@ pub struct AssistantStatus {
     default_shortcut: &'static str,
     panel_open: bool,
     panel_pinned: bool,
+    /// Nova Island carries the dot ("Island only"); the dot has no window of its own.
+    in_island: bool,
 }
 
 fn status<R: Runtime>(app: &AppHandle<R>) -> AssistantStatus {
     let taskbar_available = find_taskbar().is_some();
+    let in_island = crate::island::replaces_dot(app);
     let inner = state(app).lock();
     AssistantStatus {
         enabled: inner.prefs.enabled,
@@ -1485,6 +1630,7 @@ fn status<R: Runtime>(app: &AppHandle<R>) -> AssistantStatus {
         default_shortcut: DEFAULT_SHORTCUT,
         panel_open: inner.panel_open,
         panel_pinned: inner.prefs.panel_pinned,
+        in_island,
     }
 }
 
@@ -1650,6 +1796,8 @@ pub struct PanelView {
     open: bool,
     origin: Corner,
     wake: Option<WakeCall>,
+    /// The conversation of the panel before this one (ended for being idle), as its page wrote it.
+    snapshot: Option<String>,
 }
 
 /// The panel's page has loaded: show it if it was requested meanwhile.
@@ -1658,13 +1806,16 @@ pub async fn assistant_panel_ready<R: Runtime>(app: AppHandle<R>, window: Webvie
     if window.label() != PANEL_LABEL {
         return Err("only the assistant panel can do this".into());
     }
-    let (open, origin, wake) = {
+    let (open, origin, wake, snapshot, asked_at) = {
         let mut inner = state(&app).lock();
         inner.panel_loaded = true;
         let waiting = inner.pending_wake.as_ref().is_some_and(|call| call.headless);
         let wake = if inner.panel_open || waiting { inner.pending_wake.take() } else { None };
-        (inner.panel_open, inner.panel_origin, wake)
+        (inner.panel_open, inner.panel_origin, wake, inner.panel_snapshot.take(), inner.panel_asked_at.take())
     };
+    if let Some(asked_at) = asked_at {
+        crate::performance::note_panel_opened(&app, asked_at.elapsed().as_millis() as u64);
+    }
     if open {
         // Closed and reopened during the first load: the page may have been marked hidden.
         crate::desktop::set_page_visible(&window, true);
@@ -1673,7 +1824,38 @@ pub async fn assistant_panel_ready<R: Runtime>(app: AppHandle<R>, window: Webvie
     } else if wake.is_some() {
         crate::desktop::set_page_visible(&window, true);
     }
-    Ok(PanelView { open, origin, wake })
+    Ok(PanelView { open, origin, wake, snapshot })
+}
+
+/// The panel's page agrees to go (see `watch_panel_idle`): nothing is under way
+/// in it. Its conversation is kept for the next panel, and the window with its
+/// page ends. Refused if the panel was opened or woken in the meantime.
+#[tauri::command]
+pub async fn assistant_panel_retire<R: Runtime>(app: AppHandle<R>, window: WebviewWindow<R>, snapshot: String) -> CommandResult<()> {
+    if window.label() != PANEL_LABEL {
+        return Err("only the assistant panel can do this".into());
+    }
+    if snapshot.len() > LARGEST_SNAPSHOT {
+        return Err("this conversation is too large to keep without its page".into());
+    }
+    {
+        let mut inner = state(&app).lock();
+        if inner.panel_open || inner.panel_idle_since.is_none() || inner.pending_wake.is_some() || inner.panel_retiring {
+            return Err("the panel is in use".into());
+        }
+        inner.panel_retiring = true;
+        inner.panel_loaded = false;
+        inner.panel_snapshot = Some(snapshot);
+    }
+    if let Err(error) = window.destroy() {
+        // Still there after all: it goes on as before.
+        let mut inner = state(&app).lock();
+        inner.panel_retiring = false;
+        inner.panel_loaded = true;
+        inner.panel_snapshot = None;
+        return Err(error.to_string());
+    }
+    Ok(())
 }
 
 /// The dot's right-click menu. Synchronous so the menu runs on the main thread.
@@ -1713,8 +1895,7 @@ pub fn assistant_dot_menu<R: Runtime>(app: AppHandle<R>, window: WebviewWindow<R
 #[tauri::command]
 pub async fn assistant_open_main<R: Runtime>(app: AppHandle<R>, section: Option<String>) -> CommandResult<()> {
     if let Some(route) = ["productivity", "routines", "media"].into_iter().find(|route| section.as_deref() == Some(route)) {
-        open_main(&app, None);
-        let _ = app.emit_to("main", EVENT_NAVIGATE, NavigateEvent { route, section: "" });
+        open_main(&app, Some((route, "")));
         return Ok(());
     }
     let section = match section.as_deref() {
@@ -1723,7 +1904,7 @@ pub async fn assistant_open_main<R: Runtime>(app: AppHandle<R>, section: Option<
         Some("ai") => Some("ai"),
         Some(other) => return Err(format!("unknown settings section \"{other}\"")),
     };
-    open_main(&app, section);
+    open_main(&app, section.map(|section| ("settings", section)));
     Ok(())
 }
 
@@ -1948,6 +2129,29 @@ mod tests {
         assert_eq!(old.look, DotLook::default());
         assert_eq!(old.placement, Placement::Taskbar);
         assert!(serde_json::from_str::<PrefsUpdate>(r#"{"enabled":true,"placement":"corner","corner":"topLeft","look":{},"shortcut":"","background":false,"position":{"x":0,"y":0}}"#).is_err());
+    }
+
+    #[test]
+    fn a_dot_in_the_island_has_no_window_of_its_own() {
+        assert!(dot_needs_window(true, false));
+        assert!(!dot_needs_window(true, true), "the island carries it");
+        assert!(!dot_needs_window(false, false), "the dot is off");
+        assert!(!dot_needs_window(false, true));
+    }
+
+    #[test]
+    fn a_closed_panel_goes_after_its_idle_time() {
+        let minutes = |m: u64| Some(Duration::from_secs(m * 60));
+        assert!(panel_may_retire(false, true, minutes(5), 5, false));
+        assert!(panel_may_retire(false, true, minutes(90), 5, false));
+        assert!(!panel_may_retire(false, true, Some(Duration::from_secs(299)), 5, false), "not yet");
+        // Open, still loading, or busy with a voice-only turn (no idle time runs): it stays.
+        assert!(!panel_may_retire(true, true, minutes(60), 5, false));
+        assert!(!panel_may_retire(false, false, minutes(60), 5, false));
+        assert!(!panel_may_retire(false, true, None, 5, false));
+        // A timer rings in the panel's page; and 0 minutes means "keep it".
+        assert!(!panel_may_retire(false, true, minutes(60), 5, true));
+        assert!(!panel_may_retire(false, true, minutes(600), 0, false));
     }
 
     #[test]

@@ -18,6 +18,8 @@ export interface PluginInfo {
   pages: { id: string; title: string }[];
   widgets: { key: string; id: string; name: string; description: string; w: number; h: number }[];
   themes: { id: string; name: string; accent: string }[];
+  /** One of NOVA's icon names (see icons.ts), or none. */
+  icon?: string | null;
 }
 
 export interface PendingInstall {

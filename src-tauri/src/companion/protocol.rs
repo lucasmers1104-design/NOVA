@@ -153,6 +153,55 @@ pub enum PhoneMessage {
     NoticesAck { id: String, ts: u64, ids: Vec<String> },
     #[serde(rename = "tasks.list")]
     TasksList { id: String, ts: u64 },
+    /// A notification on the phone, for Nova Island (island.rs). Never stored.
+    #[serde(rename = "phone.notification", rename_all = "camelCase")]
+    PhoneNotification { id: String, ts: u64, notif_id: String, app: String, app_name: String, title: String, text: String, icon: Option<String>, posted: u64 },
+    /// A call on the phone, for Nova Island; `can_*` say what the phone can really do.
+    #[serde(rename = "phone.call", rename_all = "camelCase")]
+    PhoneCall {
+        id: String,
+        ts: u64,
+        call_id: String,
+        state: CallState,
+        name: Option<String>,
+        number: Option<String>,
+        photo: Option<String>,
+        can_answer: bool,
+        can_decline: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CallState {
+    Ringing,
+    Active,
+    Ended,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CallAction {
+    Accept,
+    Decline,
+}
+
+/// Largest pictures a phone may attach (base64 characters), as in messages.ts.
+pub const MAX_ICON_CHARS: usize = 16_000;
+pub const MAX_PHOTO_CHARS: usize = 24_000;
+
+/// Android's notification keys and package names: printable ASCII, no spaces.
+pub fn is_key(value: &str) -> bool {
+    (1..=200).contains(&value.len()) && value.bytes().all(|b| (0x21..=0x7e).contains(&b))
+}
+
+fn is_base64(value: &str) -> bool {
+    let body = value.trim_end_matches('=');
+    !body.is_empty() && value.len() - body.len() <= 2 && body.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/')
+}
+
+fn fits(value: &str, most: usize) -> bool {
+    value.chars().count() <= most
 }
 
 impl PhoneMessage {
@@ -176,6 +225,16 @@ impl PhoneMessage {
             }
             PhoneMessage::NoticesAck { ids, .. } => check(ids.len() <= 100 && ids.iter().all(|i| is_id(i)), "invalid ids")?,
             PhoneMessage::StatusGet { .. } | PhoneMessage::NoticesGet { .. } | PhoneMessage::TasksList { .. } => {}
+            PhoneMessage::PhoneNotification { notif_id, app, app_name, title, text, icon, .. } => {
+                check(is_key(notif_id) && is_key(app), "invalid notification key")?;
+                check(!app_name.is_empty() && fits(app_name, 100) && fits(title, 200) && fits(text, 1000), "invalid notification text")?;
+                check(icon.as_deref().is_none_or(|i| i.len() <= MAX_ICON_CHARS && is_base64(i)), "invalid icon")?;
+            }
+            PhoneMessage::PhoneCall { call_id, name, number, photo, .. } => {
+                check(is_key(call_id), "invalid call id")?;
+                check(name.as_deref().is_none_or(|n| fits(n, 100)) && number.as_deref().is_none_or(|n| fits(n, 40)), "invalid caller")?;
+                check(photo.as_deref().is_none_or(|p| p.len() <= MAX_PHOTO_CHARS && is_base64(p)), "invalid photo")?;
+            }
         }
         Ok(message)
     }
@@ -188,7 +247,9 @@ impl PhoneMessage {
             | PhoneMessage::StatusGet { id, .. }
             | PhoneMessage::NoticesGet { id, .. }
             | PhoneMessage::NoticesAck { id, .. }
-            | PhoneMessage::TasksList { id, .. } => id,
+            | PhoneMessage::TasksList { id, .. }
+            | PhoneMessage::PhoneNotification { id, .. }
+            | PhoneMessage::PhoneCall { id, .. } => id,
         }
     }
 }
@@ -373,6 +434,8 @@ pub enum PcMessage {
     Error { id: String, ts: u64, code: ErrorCode, message: String, reply_to: Option<String> },
     #[serde(rename = "device.revoked")]
     DeviceRevoked { id: String, ts: u64 },
+    #[serde(rename = "call.action", rename_all = "camelCase")]
+    CallAction { id: String, ts: u64, call_id: String, action: CallAction },
 }
 
 /// A fresh message id: 16 random bytes, base64url.

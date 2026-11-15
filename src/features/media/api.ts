@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { notifyError } from "@/features/notifications/store";
 import { callNative } from "@/lib/native";
+import { whileVisible } from "@/lib/time";
 
 /** Mirrors `MediaState` in src-tauri/src/media.rs. */
 export interface MediaState {
@@ -198,6 +199,15 @@ export function currentLine(lines: readonly LyricLine[], positionMs: number): nu
   return current;
 }
 
+/**
+ * The scroll top of `box` that puts `line` in its middle. offsetTop counts from the
+ * nearest positioned ancestor, which is only the box when the box is positioned itself.
+ */
+export function centeredScrollTop(box: HTMLElement, line: HTMLElement): number {
+  const top = line.offsetParent === box ? line.offsetTop : line.offsetTop - box.offsetTop - box.clientTop;
+  return Math.max(0, top - box.clientHeight / 2 + line.offsetHeight / 2);
+}
+
 export function useSleepTimer() {
   return useQuery({ queryKey: mediaKeys.sleep, queryFn: () => callNative<SleepTimer | null>("media_sleep", { minutes: null }), refetchInterval: 30_000, refetchIntervalInBackground: false });
 }
@@ -244,8 +254,12 @@ export function useLivePosition(state: MediaState | null | undefined): number | 
   const playing = state?.status === "playing";
   useEffect(() => {
     if (!playing) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 500);
-    return () => window.clearInterval(timer);
+    // Not in a hidden window: nobody sees the position move there.
+    return whileVisible(() => {
+      setNow(Date.now());
+      const timer = window.setInterval(() => setNow(Date.now()), 500);
+      return () => window.clearInterval(timer);
+    });
   }, [playing]);
   if (!state || state.positionMs === null) return null;
   const elapsed = playing ? Math.max(0, now - state.sampledAtMs) : 0;

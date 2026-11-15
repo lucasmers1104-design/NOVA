@@ -120,7 +120,42 @@ export interface TasksList extends Base {
   type: "tasks.list";
 }
 
-export type PhoneMessage = TaskCreate | TaskCancel | ApprovalAnswer | StatusGet | NoticesGet | NoticesAck | TasksList;
+/** A notification on the phone, forwarded to Nova Island (1.12). Nothing of it is stored on the PC. */
+export interface PhoneNotification extends Base {
+  type: "phone.notification";
+  /** The phone's own key for it, to replace an update of the same notification. */
+  notifId: string;
+  /** Android package, e.g. "com.whatsapp". */
+  app: string;
+  appName: string;
+  /** Empty when the phone sends only the app's name (its privacy setting). */
+  title: string;
+  text: string;
+  /** The app's icon as base64 PNG or WebP, at most 16 000 characters; null to save room. The PC shows nothing else. */
+  icon: string | null;
+  posted: number;
+}
+
+export type CallState = "ringing" | "active" | "ended";
+
+/** A phone call, shown on Nova Island. `canAnswer`/`canDecline` say what the phone can really do. */
+export interface PhoneCall extends Base {
+  type: "phone.call";
+  callId: string;
+  state: CallState;
+  name: string | null;
+  number: string | null;
+  /** The caller's picture as base64 PNG or JPEG, at most 24 KB. */
+  photo: string | null;
+  canAnswer: boolean;
+  canDecline: boolean;
+}
+
+export type PhoneMessage = TaskCreate | TaskCancel | ApprovalAnswer | StatusGet | NoticesGet | NoticesAck | TasksList | PhoneNotification | PhoneCall;
+
+/** Largest picture a phone may attach to a notification or call (base64 characters). */
+export const MAX_ICON_CHARS = 16_000;
+export const MAX_PHOTO_CHARS = 24_000;
 
 export interface Media {
   title: string;
@@ -224,4 +259,11 @@ export interface DeviceRevoked extends Base {
   type: "device.revoked";
 }
 
-export type PcMessage = Status | TaskEvent | TaskResult | ApprovalRequest | ApprovalClosed | Notices | Tasks | ErrorMessage | DeviceRevoked;
+/** Answer or decline a ringing call, clicked on Nova Island. */
+export interface CallAction extends Base {
+  type: "call.action";
+  callId: string;
+  action: "accept" | "decline";
+}
+
+export type PcMessage = Status | TaskEvent | TaskResult | ApprovalRequest | ApprovalClosed | Notices | Tasks | ErrorMessage | DeviceRevoked | CallAction;

@@ -194,6 +194,13 @@ pub fn handle<R: Runtime>(app: &AppHandle<R>, device_id: &str, message: PhoneMes
         PhoneMessage::TaskCreate { id, text, want_screenshot, schedule, .. } => create(app, device_id, id, text, want_screenshot, schedule),
         PhoneMessage::TaskCancel { id, task_id, .. } => cancel(app, device_id, &id, &task_id),
         PhoneMessage::ApprovalAnswer { id, request_id, approved, proof, .. } => answer(app, device_id, &id, &request_id, approved, proof.as_deref()),
+        // Shown on Nova Island only; nothing of it reaches NOVA AI or the database.
+        PhoneMessage::PhoneNotification { notif_id, app: package, app_name, title, text, icon, posted, .. } => {
+            crate::island::phone_notification(app, device_id, crate::island::PhoneNotice { notif_id, app: package, app_name, title, text, icon, posted })
+        }
+        PhoneMessage::PhoneCall { call_id, state, name, number, photo, can_answer, can_decline, .. } => {
+            crate::island::phone_call(app, device_id, crate::island::PhoneCallView { call_id, state, name, number, photo, can_answer, can_decline, device_id: String::new() })
+        }
     }
 }
 

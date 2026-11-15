@@ -7,7 +7,7 @@ import { QuickLaunchWidget } from "./builtin/QuickLaunchWidget";
 import { TasksWidget } from "./builtin/TasksWidget";
 import { CalendarWidget } from "./builtin/CalendarWidget";
 import { AnalogClockWidget } from "./builtin/AnalogClockWidget";
-import { CLOCK_STYLE_FIELD } from "./builtin/clocks/time";
+import { CLOCK_FONT_FIELD, CLOCK_STYLE_FIELD } from "./builtin/clocks/time";
 import { CLOCK_TIME_ZONES, ClockWidget, LOCAL_TIME_ZONE } from "./builtin/ClockWidget";
 import { CpuWidget } from "./builtin/CpuWidget";
 import { DeviceWidget } from "./builtin/DeviceWidget";
@@ -34,6 +34,7 @@ export const WIDGETS: readonly WidgetDefinition[] = [
     dataSource: "system",
     configSchema: [
       CLOCK_STYLE_FIELD,
+      CLOCK_FONT_FIELD,
       { type: "boolean", key: "showSeconds", label: "Show seconds", default: true },
       { type: "boolean", key: "showPulse", label: "Live system status", description: "CPU, memory and uptime chips.", default: true },
     ],
@@ -51,6 +52,7 @@ export const WIDGETS: readonly WidgetDefinition[] = [
     dataSource: "local",
     configSchema: [
       CLOCK_STYLE_FIELD,
+      CLOCK_FONT_FIELD,
       { type: "select", key: "timeZone", label: "Time zone", default: LOCAL_TIME_ZONE, options: CLOCK_TIME_ZONES },
       { type: "boolean", key: "showSeconds", label: "Show seconds", default: false },
     ],

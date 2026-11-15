@@ -1,17 +1,21 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
-import { AudioLines, FolderSearch, History, Plus, RefreshCw, Trash } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { AudioLines, BrainCircuit, Coins, Download, FolderSearch, History, Play, Plus, RefreshCw, Square, Trash, Volume2 } from "lucide-react";
+import { type FormEvent, useEffect, useId, useState } from "react";
+import { PreviewStage, SegmentedControl, SettingCard, SettingLine, SliderRow } from "@/components/settings-kit";
 import { Button, IconButton } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
-import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { Switch } from "@/components/ui/Switch";
 import { PROVIDERS, providerInfo, useModels } from "@/features/ai/api";
 import { notifyError, notify } from "@/features/notifications/store";
-import { MoreOptions, SettingRow, SettingsSection } from "@/features/settings/SettingsLayout";
+import { recordChange } from "@/features/settings/recent";
+import { FIELD, MoreOptions, SettingsNotice, SettingsSection } from "@/features/settings/SettingsLayout";
+import { cn } from "@/lib/cn";
 import { isDesktop } from "@/lib/native";
 import {
   agentStatus,
+  ASSISTANT_STATUS_KEY,
+  assistantStatus,
   clearHistory,
   configureAgent,
   finderAddAllDrives,
@@ -22,22 +26,23 @@ import {
   finderSetContent,
   finderStatus,
 } from "./api";
-import { ASSISTANT_EVENTS, type AgentPrefs, type AgentStatus, type FinderStatus, type ProviderId } from "./types";
+import { NovaDot } from "./components/NovaDot";
+import { ASSISTANT_EVENTS, type AgentPrefs, type AgentStatus, type AssistantState, DEFAULT_DOT_LOOK, type FinderStatus, type ProviderId } from "./types";
 import { useSpeech } from "./speech/api";
 import { GEMINI_VOICES, OnlineVoiceKeyRow, serviceOf, useOnlineVoices } from "./OnlineVoiceSettings";
-import { installNovaVoice, isOnlineVoice, NOVA_VOICE, type NovaVoiceStatus, speak, useVoice, voices, watchNovaVoice } from "./voice";
+import { installNovaVoice, isOnlineVoice, NOVA_VOICE, type NovaVoiceStatus, speak, stopSpeaking, useVoice, voices, watchNovaVoice } from "./voice";
 
 const AGENT_KEY = ["assistant", "agent"] as const;
 const FINDER_KEY = ["assistant", "finder"] as const;
 
 const EFFORTS = [
-  { value: "low", label: "Fast" },
-  { value: "medium", label: "Balanced" },
-  { value: "high", label: "Thorough" },
+  { value: "low", label: "Schnell" },
+  { value: "medium", label: "Ausgewogen" },
+  { value: "high", label: "Gründlich" },
 ] as const satisfies readonly { value: AgentPrefs["effort"]; label: string }[];
 
 const LANGUAGES = [
-  { value: "auto", label: "Same as Windows" },
+  { value: "auto", label: "Wie Windows" },
   { value: "de-DE", label: "Deutsch (Deutschland)" },
   { value: "de-AT", label: "Deutsch (Österreich)" },
   { value: "de-CH", label: "Deutsch (Schweiz)" },
@@ -45,7 +50,11 @@ const LANGUAGES = [
   { value: "en-GB", label: "English (UK)" },
 ];
 
-const selectClass = "h-9 max-w-64 rounded-control border border-line bg-black/25 px-2.5 text-[13px] text-fg outline-none focus:border-line-strong disabled:opacity-50";
+// Wide enough for the longest choice ("Automatisch (Thorsten für Deutsch, sonst Windows)"):
+// a select cuts its text off without a word, and then the choice can't be read.
+const SELECT = cn(FIELD, "max-w-[22rem]");
+
+const TITLE = "Modell & Stimme";
 
 export function useAgent() {
   const client = useQueryClient();
@@ -58,7 +67,7 @@ export function useAgent() {
   const save = useMutation({
     mutationFn: configureAgent,
     onSuccess: (next) => client.setQueryData(AGENT_KEY, next),
-    onError: (error) => notifyError("Couldn't save the assistant settings", error),
+    onError: (error) => notifyError("Die Einstellungen von NOVA AI ließen sich nicht speichern", error),
   });
   const update = (patch: Partial<AgentPrefs>) => {
     const current = query.data?.prefs;
@@ -67,10 +76,53 @@ export function useAgent() {
   return { status: query.data, update, saving: save.isPending };
 }
 
-/** Settings → Assistant model & voice. */
+interface AskProps {
+  open: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}
+
+/** Asked before auto mode goes on, wherever Settings offers the switch. */
+export function AutoModeDialog({ open, onClose, onConfirm }: AskProps) {
+  return (
+    <ConfirmDialog
+      open={open}
+      title="Auto-Modus einschalten?"
+      description="NOVA tut dann alles, ohne zu fragen: Dateien löschen, Programme beenden, Fenster schließen, Tasten drücken und in anderen Apps klicken, deinen Bildschirm lesen. Ein falsch verstandener Satz oder ein Trick auf einer Webseite, die es liest, kann echten Schaden anrichten, und nichts hält es vorher auf. Du nutzt das auf eigene Gefahr."
+      confirmLabel="Auf eigene Gefahr einschalten"
+      cancelLabel="Abbrechen"
+      danger
+      onClose={onClose}
+      onConfirm={onConfirm}
+    />
+  );
+}
+
+/** Asked before NOVA Finder takes in every drive. */
+export function WholePcDialog({ open, onClose, onConfirm }: AskProps) {
+  return (
+    <ConfirmDialog
+      open={open}
+      title="Den ganzen PC zu NOVA Finder hinzufügen?"
+      description="NOVA indiziert im Hintergrund die Dateinamen auf allen Laufwerken und kann dann mit den Dateien dort arbeiten; bevor es etwas ändert, fragt es weiterhin. Windows, installierte Programme und App-Daten bleiben tabu. Der Index bleibt auf diesem PC."
+      confirmLabel="Ganzen PC hinzufügen"
+      cancelLabel="Abbrechen"
+      onClose={onClose}
+      onConfirm={onConfirm}
+    />
+  );
+}
+
+const multiple = (value: number) => `${value.toFixed(1)}×`;
+const percentOf = (value: number) => `${Math.round(value * 100)} %`;
+
+/** Settings → Modell & Stimme. */
 export function AgentSettings() {
   const { status, update, saving } = useAgent();
   const limitId = useId();
+  const voiceId = useId();
+  const providerId = useId();
+  const languageId = useId();
   const [limitDraft, setLimitDraft] = useState<string | null>(null);
   const [voiceList, setVoiceList] = useState<SpeechSynthesisVoice[]>(() => voices());
   const novaVoice = useVoice((s) => s.novaVoice);
@@ -93,8 +145,8 @@ export function AgentSettings() {
 
   if (!isDesktop()) {
     return (
-      <SettingsSection id="assistant-brain" title="Assistant model & voice" description="Which AI answers and how NOVA speaks." icon={AudioLines}>
-        <p className="text-[13px] text-fg-muted">Available in the NOVA desktop app.</p>
+      <SettingsSection id="assistant-brain" title={TITLE} description="Welche KI antwortet und wie NOVA spricht." icon={AudioLines}>
+        <SettingsNotice>Das gibt es in der NOVA-Desktop-App.</SettingsNotice>
       </SettingsSection>
     );
   }
@@ -104,241 +156,263 @@ export function AgentSettings() {
   const chosen: ProviderId | null = prefs?.provider ?? null;
   const usage = status?.usageThisMonth;
   const spent = (usage?.costMicros ?? 0) / 1_000_000;
+  // Turning it on is decided in a dialog outside this page, so the change is noted here.
+  const setAutoMode = (autoMode: boolean) => {
+    update({ autoMode });
+    recordChange("assistant-brain", "Auto-Modus");
+  };
+  // German for NOVA's own voices and German Windows voices, else for a German system.
+  const germanVoice = prefs ? prefs.voice.startsWith("nova:") || /^de/i.test(voiceList.find((v) => v.name === prefs.voice)?.lang ?? navigator.language) : false;
 
   return (
-    <SettingsSection id="assistant-brain" title="Assistant model & voice" description="Which AI answers NOVA AI, what it may spend, and how it speaks." icon={AudioLines}>
-      <SettingRow
-        label="AI provider"
-        description={
-          status?.activeProvider
-            ? `Answering now: ${status.activeProvider} · ${status.activeModel}`
-            : configured.length === 0
-              ? "No provider connected — NOVA AI only understands local commands (find files, open apps). Add a key under AI providers."
-              : "Choose a model for this provider below."
-        }
-      >
-        <select
-          aria-label="AI provider"
-          className={selectClass}
-          disabled={!prefs || saving}
-          value={chosen ?? "auto"}
-          onChange={(e) => update({ provider: e.target.value === "auto" ? null : (e.target.value as ProviderId) })}
+    <SettingsSection id="assistant-brain" title={TITLE} description="Welche KI NOVA AI antworten lässt, was sie kosten darf und wie NOVA klingt." icon={AudioLines}>
+      {prefs && <VoiceStage prefs={prefs} german={germanVoice} name={voiceName(prefs.voice, novaVoices, online.elevenlabs)} />}
+
+      <SettingCard title="Stimme" description="Wähl eine Stimme und hör sie dir oben an. Tempo und Lautstärke gelten sofort." icon={Volume2}>
+        <SettingLine label="Stimme" htmlFor={voiceId} description={onlineProblem && isOnlineVoice(prefs?.voice ?? "") ? `Die Online-Stimme hat nicht funktioniert, deshalb ist eine andere eingesprungen: ${onlineProblem}` : voiceDescription(prefs?.voice ?? "", novaVoice)}>
+          <div className="flex items-center gap-1.5">
+            <select id={voiceId} className={SELECT} disabled={!prefs} value={prefs?.voice ?? ""} onChange={(event) => update({ voice: event.target.value })}>
+              <option value="">Automatisch (Thorsten für Deutsch, sonst Windows)</option>
+              <option value={NOVA_VOICE}>Thorsten, NOVAs natürliche Stimme</option>
+              {novaVoices.map((v) => (
+                <option key={v.id} value={`nova:${v.id}`}>
+                  {v.label}, NOVA-Stimme{v.experimental ? " (experimentell)" : ""}
+                </option>
+              ))}
+              <optgroup label="Online: Google Gemini (kostenlos, am natürlichsten)">
+                {GEMINI_VOICES.map((v) => (
+                  <option key={v.id} value={`online:gemini:${v.id}`}>
+                    {v.name}
+                  </option>
+                ))}
+              </optgroup>
+              <optgroup label="Online: ElevenLabs (Freikontingent)">
+                {online.elevenlabs.map((v) => (
+                  <option key={v.id} value={`online:elevenlabs:${v.id}`}>
+                    {v.name}
+                  </option>
+                ))}
+              </optgroup>
+              {/* A voice from an account list that can't be read right now stays selectable. */}
+              {prefs?.voice.startsWith("online:elevenlabs:") && !online.elevenlabs.some((v) => prefs.voice.endsWith(`:${v.id}`)) && <option value={prefs.voice}>ElevenLabs-Stimme</option>}
+              {voiceList.map((v) => (
+                <option key={v.name} value={v.name}>
+                  {v.name} ({v.lang})
+                </option>
+              ))}
+            </select>
+            {(prefs?.voice === "" || prefs?.voice.startsWith("nova:")) && (novaVoice?.state === "missing" || novaVoice?.state === "failed") && (
+              <Button size="sm" variant="ghost" icon={<Download size={13} aria-hidden />} onClick={() => void installNovaVoice()}>
+                {novaVoice.state === "failed" ? "Noch mal" : "Laden"}
+              </Button>
+            )}
+          </div>
+        </SettingLine>
+        {prefs && isOnlineVoice(prefs.voice) && <OnlineVoiceKeyRow service={serviceOf(prefs.voice)} />}
+        <SliderRow label="Tempo" value={prefs?.speechRate ?? 1} min={0.5} max={2} step={0.1} defaultValue={1} format={multiple} disabled={!prefs} onChange={(speechRate) => update({ speechRate })} />
+        <SliderRow label="Lautstärke" value={prefs?.speechVolume ?? 1} min={0} max={1} step={0.05} defaultValue={1} format={percentOf} disabled={!prefs} onChange={(speechVolume) => update({ speechVolume })} />
+        <SettingLine label="Antworten vorlesen" description="NOVA liest seine Antworten vor. Auf Gesprochenes antwortet es immer mit der Stimme.">
+          <Switch label="Antworten vorlesen" checked={prefs?.speakReplies ?? false} disabled={!prefs} onChange={(speakReplies) => update({ speakReplies })} />
+        </SettingLine>
+        <SettingLine label="Weiter zuhören" description="Nach einer gesprochenen Antwort öffnet sich das Mikrofon wieder, und du redest einfach weiter. Sagst du nichts, schließt es sich von selbst.">
+          <Switch label="Weiter zuhören" checked={prefs?.keepListening ?? true} disabled={!prefs} onChange={(keepListening) => update({ keepListening })} />
+        </SettingLine>
+      </SettingCard>
+
+      <SettingCard title="KI" description="Wer antwortet, und wie viel NOVA von sich aus tun darf." icon={BrainCircuit}>
+        <SettingLine
+          label="KI-Anbieter"
+          htmlFor={providerId}
+          description={
+            status?.activeProvider
+              ? `Antwortet gerade: ${status.activeProvider} · ${status.activeModel}`
+              : configured.length === 0
+                ? "Kein Anbieter verbunden. NOVA AI versteht dann nur lokale Befehle (Dateien finden, Apps öffnen). Hinterleg einen Schlüssel unter KI-Anbieter."
+                : "Wähl unter „Modelle, Kostenlimit und Sprache“ ein Modell für diesen Anbieter."
+          }
         >
-          <option value="auto">Automatic (first connected)</option>
-          {PROVIDERS.map((p) => (
-            <option key={p.id} value={p.id} disabled={!status?.keys[p.id]}>
-              {p.name}
-              {status?.keys[p.id] ? "" : " — no key"}
-            </option>
-          ))}
-        </select>
-      </SettingRow>
-      <SettingRow label="Spoken replies" description="NOVA reads its answers aloud. Replies to spoken questions are always read aloud.">
-        <Switch label="Spoken replies" checked={prefs?.speakReplies ?? false} disabled={!prefs} onChange={(speakReplies) => update({ speakReplies })} />
-      </SettingRow>
-      <SettingRow label="Keep listening" description="After NOVA has answered a spoken request, the microphone opens again so you can just keep talking. It closes by itself if you say nothing.">
-        <Switch label="Keep listening" checked={prefs?.keepListening ?? true} disabled={!prefs} onChange={(keepListening) => update({ keepListening })} />
-      </SettingRow>
-      <SettingRow
-        label="Auto mode"
-        description={
-          prefs?.autoMode
-            ? "On, at your own risk: NOVA acts without asking first. Everything it does is listed in the action history."
-            : "NOVA acts without asking you first, including deleting files and ending programs. At your own risk."
-        }
-      >
-        <Switch label="Auto mode" checked={prefs?.autoMode ?? false} disabled={!prefs} onChange={(on) => (on ? setConfirmingAuto(true) : update({ autoMode: false }))} />
-      </SettingRow>
-      <ConfirmDialog
-        open={confirmingAuto}
-        title="Turn on auto mode?"
-        description="NOVA will then do everything without asking: delete files, end programs, close windows, press keys and click in other apps, read your screen. A misheard sentence or a trick on a website it reads can cause real damage, and nothing stops it first. You use this at your own risk."
-        confirmLabel="Turn on at my own risk"
-        danger
-        onClose={() => setConfirmingAuto(false)}
-        onConfirm={() => {
-          setConfirmingAuto(false);
-          update({ autoMode: true });
-        }}
-      />
-      <SettingRow label="Voice" description={onlineProblem && isOnlineVoice(prefs?.voice ?? "") ? `The online voice didn't work, so another one took over: ${onlineProblem}` : voiceDescription(prefs?.voice ?? "", novaVoice)}>
-        <div className="flex items-center gap-1.5">
-          <select aria-label="Voice" className={selectClass} disabled={!prefs} value={prefs?.voice ?? ""} onChange={(e) => update({ voice: e.target.value })}>
-            <option value="">Automatic (Thorsten for German, else Windows)</option>
-            <option value={NOVA_VOICE}>Thorsten — NOVA's natural voice</option>
-            {novaVoices.map((v) => (
-              <option key={v.id} value={`nova:${v.id}`}>
-                {v.label} — NOVA voice{v.experimental ? " (experimental)" : ""}
-              </option>
-            ))}
-            <optgroup label="Online: Google Gemini (free, most natural)">
-              {GEMINI_VOICES.map((v) => (
-                <option key={v.id} value={`online:gemini:${v.id}`}>
-                  {v.name}
-                </option>
-              ))}
-            </optgroup>
-            <optgroup label="Online: ElevenLabs (free credits)">
-              {online.elevenlabs.map((v) => (
-                <option key={v.id} value={`online:elevenlabs:${v.id}`}>
-                  {v.name}
-                </option>
-              ))}
-            </optgroup>
-            {/* A voice from an account list that can't be read right now stays selectable. */}
-            {prefs?.voice.startsWith("online:elevenlabs:") && !online.elevenlabs.some((v) => prefs.voice.endsWith(`:${v.id}`)) && <option value={prefs.voice}>ElevenLabs voice</option>}
-            {voiceList.map((v) => (
-              <option key={v.name} value={v.name}>
-                {v.name} ({v.lang})
+          <select id={providerId} className={SELECT} disabled={!prefs || saving} value={chosen ?? "auto"} onChange={(event) => update({ provider: event.target.value === "auto" ? null : (event.target.value as ProviderId) })}>
+            <option value="auto">Automatisch (der erste verbundene)</option>
+            {PROVIDERS.map((p) => (
+              <option key={p.id} value={p.id} disabled={!status?.keys[p.id]}>
+                {p.name}
+                {status?.keys[p.id] ? "" : " (kein Schlüssel)"}
               </option>
             ))}
           </select>
-          {(prefs?.voice === "" || prefs?.voice.startsWith("nova:")) && (novaVoice?.state === "missing" || novaVoice?.state === "failed") && (
-            <Button size="sm" variant="ghost" onClick={() => void installNovaVoice()}>
-              {novaVoice.state === "failed" ? "Retry" : "Download"}
-            </Button>
-          )}
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={!prefs}
-            onClick={() =>
-              prefs &&
-              void speak(
-                prefs.voice.startsWith("nova:") || /^de/i.test(voiceList.find((v) => v.name === prefs.voice)?.lang ?? navigator.language) ? "Hallo, ich bin NOVA. So klinge ich." : "Hi, I'm NOVA. This is how I sound.",
-                prefs,
-                "test",
-              )
-            }
+        </SettingLine>
+        {/* Flipping the switch may only open the dialog: no change yet. */}
+        <div data-no-record>
+          <SettingLine
+            label="Auto-Modus"
+            description={prefs?.autoMode ? "An, auf deine Gefahr: NOVA handelt, ohne vorher zu fragen. Alles, was es tut, steht im Aktionsverlauf." : "NOVA handelt, ohne dich vorher zu fragen, auch wenn es Dateien löscht oder Programme beendet. Auf deine Gefahr."}
           >
-            Test
-          </Button>
+            <Switch label="Auto-Modus" checked={prefs?.autoMode ?? false} disabled={!prefs} onChange={(on) => (on ? setConfirmingAuto(true) : setAutoMode(false))} />
+          </SettingLine>
         </div>
-      </SettingRow>
-      {prefs && isOnlineVoice(prefs.voice) && <OnlineVoiceKeyRow service={serviceOf(prefs.voice)} />}
-      <SettingRow label="Speed and volume">
-        <div className="flex items-center gap-3 text-[12px] text-fg-muted">
-          <label className="flex items-center gap-2">
-            Speed
-            <input
-              type="range"
-              min={0.5}
-              max={2}
-              step={0.1}
-              value={prefs?.speechRate ?? 1}
-              onChange={(e) => update({ speechRate: Number(e.target.value) })}
-              className="nova-range w-24"
-              style={{ "--range-fill": `${(((prefs?.speechRate ?? 1) - 0.5) / 1.5) * 100}%` } as React.CSSProperties}
-            />
-          </label>
-          <label className="flex items-center gap-2">
-            Volume
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.05}
-              value={prefs?.speechVolume ?? 1}
-              onChange={(e) => update({ speechVolume: Number(e.target.value) })}
-              className="nova-range w-24"
-              style={{ "--range-fill": `${(prefs?.speechVolume ?? 1) * 100}%` } as React.CSSProperties}
-            />
-          </label>
-        </div>
-      </SettingRow>
-      <MoreOptions label="Models, cost limit and language">
-      {PROVIDERS.filter((p) => status?.keys[p.id] || p.id === "anthropic").map((p) => (
-        <ModelRow
-          key={p.id}
-          provider={p.id}
-          name={p.name}
-          hasKey={status?.keys[p.id] ?? false}
-          value={prefs?.models[p.id] ?? ""}
-          disabled={!prefs || saving}
-          onChange={(model) => {
-            const models = { ...prefs?.models };
-            if (model) models[p.id] = model;
-            else delete models[p.id];
-            update({ models });
-          }}
-        />
-      ))}
-      <SettingRow label="Thoroughness" description="Fast answers sooner; Thorough thinks longer on hard requests (Claude models).">
-        <SegmentedControl label="Thoroughness" value={prefs?.effort ?? "medium"} options={EFFORTS} onChange={(effort) => update({ effort })} />
-      </SettingRow>
-      <SettingRow
-        label="Monthly limit"
-        htmlFor={limitId}
-        description={
-          <>
-            This month: {usage?.requests ?? 0} requests · {((usage?.inputTokens ?? 0) / 1000).toFixed(1)}k in · {((usage?.outputTokens ?? 0) / 1000).toFixed(1)}k out
-            {spent > 0 && ` · ≈ $${spent.toFixed(2)}`}
-            {(usage?.unpricedRequests ?? 0) > 0 && ` · ${usage?.unpricedRequests} without a price estimate (these don't count toward the limit)`}. Costs are estimates for Claude models, so the limit only covers those; your provider's bill is authoritative.
-          </>
-        }
-      >
-        <div className="flex items-center gap-1.5">
-          <span className="text-[13px] text-fg-muted">$</span>
-          <input
-            id={limitId}
-            inputMode="decimal"
-            placeholder="No limit"
-            value={limitDraft ?? (prefs?.monthlyLimitUsd != null ? String(prefs.monthlyLimitUsd) : "")}
-            onChange={(e) => setLimitDraft(e.target.value)}
-            onBlur={() => {
-              if (limitDraft === null) return;
-              const value = limitDraft.trim().replace(",", ".");
-              const limit = value === "" ? null : Number(value);
-              setLimitDraft(null);
-              if (limit === null || (Number.isFinite(limit) && limit >= 0)) update({ monthlyLimitUsd: limit });
-              else notify("Enter a positive amount, or leave it empty for no limit", { kind: "warning" });
+      </SettingCard>
+      <AutoModeDialog open={confirmingAuto} onClose={() => setConfirmingAuto(false)} onConfirm={() => setAutoMode(true)} />
+
+      <MoreOptions title="Modelle, Kostenlimit und Sprache" description="Welches Modell je Anbieter, wie gründlich es denkt und was ein Monat kosten darf." icon={Coins}>
+        {PROVIDERS.filter((p) => status?.keys[p.id] || p.id === "anthropic").map((p) => (
+          <ModelRow
+            key={p.id}
+            provider={p.id}
+            name={p.name}
+            hasKey={status?.keys[p.id] ?? false}
+            value={prefs?.models[p.id] ?? ""}
+            disabled={!prefs || saving}
+            onChange={(model) => {
+              const models = { ...prefs?.models };
+              if (model) models[p.id] = model;
+              else delete models[p.id];
+              update({ models });
             }}
-            className="h-9 w-24 rounded-control border border-line bg-black/25 px-2.5 text-[13px] text-fg outline-none select-text focus:border-line-strong"
           />
-        </div>
-      </SettingRow>
-      <SettingRow label="Speech recognition language" description="Windows speech recognition may need “Online speech recognition” in Windows Settings → Privacy → Speech. NOVA's offline recognizer (Local AI & performance) understands German and English by itself.">
-        <select aria-label="Speech recognition language" className={selectClass} disabled={!prefs} value={prefs?.language ?? "auto"} onChange={(e) => update({ language: e.target.value })}>
-          {LANGUAGES.map((l) => (
-            <option key={l.value} value={l.value}>
-              {l.label}
-            </option>
-          ))}
-        </select>
-      </SettingRow>
+        ))}
+        <SettingLine label="Gründlichkeit" description="„Schnell“ antwortet früher, „Gründlich“ denkt bei schweren Bitten länger nach (Claude-Modelle).">
+          <SegmentedControl label="Gründlichkeit" value={prefs?.effort ?? "medium"} options={EFFORTS} onChange={(effort) => update({ effort })} />
+        </SettingLine>
+        <SettingLine
+          label="Monatslimit"
+          htmlFor={limitId}
+          description={
+            <>
+              Diesen Monat: {usage?.requests ?? 0} Anfragen · {((usage?.inputTokens ?? 0) / 1000).toFixed(1)}k rein · {((usage?.outputTokens ?? 0) / 1000).toFixed(1)}k raus
+              {spent > 0 && ` · ≈ ${spent.toFixed(2)} $`}
+              {(usage?.unpricedRequests ?? 0) > 0 && ` · ${usage?.unpricedRequests} ohne Preisschätzung (sie zählen nicht zum Limit)`}. Die Kosten sind Schätzungen für Claude-Modelle, nur die deckt das Limit ab. Verbindlich ist die Rechnung deines Anbieters.
+            </>
+          }
+        >
+          <div className="flex items-center gap-1.5">
+            <input
+              id={limitId}
+              inputMode="decimal"
+              placeholder="Kein Limit"
+              value={limitDraft ?? (prefs?.monthlyLimitUsd != null ? String(prefs.monthlyLimitUsd) : "")}
+              onChange={(event) => setLimitDraft(event.target.value)}
+              onBlur={() => {
+                if (limitDraft === null) return;
+                const value = limitDraft.trim().replace(",", ".");
+                const limit = value === "" ? null : Number(value);
+                setLimitDraft(null);
+                if (limit === null || (Number.isFinite(limit) && limit >= 0)) update({ monthlyLimitUsd: limit });
+                else notify("Gib einen positiven Betrag ein, oder lass das Feld leer für kein Limit", { kind: "warning" });
+              }}
+              className={cn(FIELD, "w-24")}
+            />
+            <span className="text-[13px] text-fg-muted">$</span>
+          </div>
+        </SettingLine>
+        <SettingLine
+          label="Sprache der Spracherkennung"
+          htmlFor={languageId}
+          description="Die Windows-Spracherkennung braucht dafür womöglich „Online-Spracherkennung“ unter Windows-Einstellungen → Datenschutz → Spracherkennung. NOVAs Offline-Erkennung (Sprache auf diesem PC) versteht Deutsch und Englisch von selbst."
+        >
+          <select id={languageId} className={SELECT} disabled={!prefs} value={prefs?.language ?? "auto"} onChange={(event) => update({ language: event.target.value })}>
+            {LANGUAGES.map((l) => (
+              <option key={l.value} value={l.value}>
+                {l.label}
+              </option>
+            ))}
+          </select>
+        </SettingLine>
       </MoreOptions>
     </SettingsSection>
   );
 }
 
+/** What the chosen voice is called on the stage. */
+function voiceName(voice: string, novaVoices: readonly { id: string; label: string }[], elevenlabs: readonly { id: string; name: string }[]): string {
+  if (voice === "") return "Automatisch";
+  if (voice === NOVA_VOICE) return "Thorsten";
+  if (voice.startsWith("nova:")) return novaVoices.find((v) => `nova:${v.id}` === voice)?.label ?? "NOVA-Stimme";
+  if (voice.startsWith("online:gemini:")) return GEMINI_VOICES.find((v) => voice.endsWith(`:${v.id}`))?.name ?? "Google Gemini";
+  if (voice.startsWith("online:elevenlabs:")) return elevenlabs.find((v) => voice.endsWith(`:${v.id}`))?.name ?? "ElevenLabs";
+  return voice;
+}
+
+interface VoiceStageProps {
+  prefs: AgentPrefs;
+  /** The sample sentence is German. */
+  german: boolean;
+  name: string;
+}
+
+/**
+ * NOVA's voice, to listen to: the dot (in the look it has on the desktop) thinks
+ * while the voice is being made and follows it while it speaks, with the real level.
+ */
+function VoiceStage({ prefs, german, name }: VoiceStageProps) {
+  const { data: assistant } = useQuery({ queryKey: ASSISTANT_STATUS_KEY, queryFn: assistantStatus });
+  const speaking = useVoice((s) => s.mode === "speaking");
+  const level = useVoice((s) => s.level);
+  // From the click until the first sound: the voice is being made.
+  const [preparing, setPreparing] = useState(false);
+  const [phrase, setPhrase] = useState("");
+  const state: AssistantState = speaking ? "speaking" : preparing ? "thinking" : "idle";
+
+  // Leaving the page ends the sample.
+  useEffect(() => () => stopSpeaking(), []);
+
+  const audition = (event: FormEvent) => {
+    event.preventDefault();
+    if (speaking || preparing) {
+      stopSpeaking();
+      setPreparing(false);
+      return;
+    }
+    setPreparing(true);
+    void speak(phrase.trim() || (german ? "Hallo, ich bin NOVA. So klinge ich." : "Hi, I'm NOVA. This is how I sound."), prefs, "test", german).finally(() => setPreparing(false));
+  };
+
+  return (
+    <PreviewStage label="Probe: so klingt NOVA" backdrop="dusk" height={212}>
+      <div className="flex h-full flex-col items-center justify-center gap-3 px-6">
+        {/* A picture of the dot at work: nothing to click, so it is no stop for the keyboard. */}
+        <div inert className="flex">
+          <NovaDot look={{ ...(assistant?.look ?? DEFAULT_DOT_LOOK), diameter: 56, idleOpacity: 100, activity: true }} open={false} state={state} level={level} onToggle={() => {}} onMenu={() => {}} onDragStart={() => {}} />
+        </div>
+        <p className="text-[12.5px] text-white/75" role="status">
+          {speaking ? `${name} spricht …` : preparing ? `${name} holt Luft …` : name}
+        </p>
+        <form onSubmit={audition} className="flex w-full max-w-md items-center gap-2">
+          <input value={phrase} onChange={(event) => setPhrase(event.target.value)} placeholder="Was soll NOVA sagen?" aria-label="Was NOVA sagen soll" maxLength={200} className={cn(FIELD, "min-w-0 flex-1 backdrop-blur-md")} />
+          <Button size="sm" variant="primary" type="submit" icon={speaking || preparing ? <Square size={11} aria-hidden /> : <Play size={13} aria-hidden />}>
+            {speaking || preparing ? "Stopp" : "Anhören"}
+          </Button>
+        </form>
+      </div>
+    </PreviewStage>
+  );
+}
+
 /** What the voice row says about the chosen voice and NOVA's own voice. */
 export function voiceDescription(voice: string, nova: NovaVoiceStatus | null): string {
-  if (isOnlineVoice(voice)) return "An online voice: very natural, needs the internet and a key. If it fails or the free limit is reached, NOVA's own voice takes over.";
-  if (voice.startsWith("nova:") && voice !== NOVA_VOICE && nova?.state === "ready") return "One of NOVA's own voices, running on this PC (see Local AI & performance).";
-  if (voice !== "" && !voice.startsWith("nova:")) return "A Windows voice installed on this PC.";
+  if (isOnlineVoice(voice)) return "Eine Online-Stimme: sehr natürlich, braucht das Internet und einen Schlüssel. Fällt sie aus oder ist das Freikontingent verbraucht, springt NOVAs eigene Stimme ein.";
+  if (voice.startsWith("nova:") && voice !== NOVA_VOICE && nova?.state === "ready") return "Eine von NOVAs eigenen Stimmen. Sie läuft auf diesem PC (siehe Sprache auf diesem PC).";
+  if (voice !== "" && !voice.startsWith("nova:")) return "Eine Windows-Stimme, die auf diesem PC installiert ist.";
   switch (nova?.state) {
     case "downloading":
-      return `Downloading Thorsten (about 85 MB, once) … ${nova.percent} %. Until then NOVA speaks with a Windows voice.`;
+      return `Thorsten wird geladen (etwa 85 MB, einmalig) … ${nova.percent} %. Bis dahin spricht NOVA mit einer Windows-Stimme.`;
     case "failed":
-      return `${nova.message}. NOVA speaks with a Windows voice meanwhile.`;
+      return `${nova.message}. NOVA spricht solange mit einer Windows-Stimme.`;
     case "missing":
-      return "Thorsten is a natural-sounding voice that runs on this PC. It's downloaded once (about 85 MB); until then NOVA speaks with a Windows voice.";
+      return "Thorsten klingt natürlich und läuft auf diesem PC. Die Stimme wird einmal geladen (etwa 85 MB); bis dahin spricht NOVA mit einer Windows-Stimme.";
     default:
-      return "Thorsten is a natural-sounding voice that runs on this PC, offline.";
+      return "Thorsten klingt natürlich und läuft auf diesem PC, ganz ohne Internet.";
   }
 }
 
 function ModelRow({ provider, name, hasKey, value, disabled, onChange }: { provider: ProviderId; name: string; hasKey: boolean; value: string; disabled: boolean; onChange: (model: string) => void }) {
   const { data: models, isLoading, error } = useModels(provider, hasKey);
+  const id = useId();
   // Without a key the suggested models are offered, so the choice can be made up front.
-  const list = models ?? providerInfo(provider).suggestedModels.map((id) => ({ id, name: id }));
+  const list = models ?? providerInfo(provider).suggestedModels.map((model) => ({ id: model, name: model }));
   return (
-    <SettingRow
-      label={`${name} model`}
-      description={error ? `Couldn't load models: ${error instanceof Error ? error.message : String(error)}` : value ? undefined : "Follows the model chosen in the NOVA AI tab."}
-    >
-      <select aria-label={`${name} model`} className={selectClass} disabled={disabled || isLoading} value={value} onChange={(e) => onChange(e.target.value)}>
-        <option value="">Same as the NOVA AI tab</option>
+    <SettingLine label={`Modell für ${name}`} htmlFor={id} description={error ? `Die Modelle ließen sich nicht laden: ${error instanceof Error ? error.message : String(error)}` : value ? undefined : "Folgt dem Modell, das im Tab NOVA AI gewählt ist."}>
+      <select id={id} className={SELECT} disabled={disabled || isLoading} value={value} onChange={(event) => onChange(event.target.value)}>
+        <option value="">Wie im Tab NOVA AI</option>
         {value && !list.some((m) => m.id === value) && <option value={value}>{value}</option>}
         {list.map((m) => (
           <option key={m.id} value={m.id}>
@@ -346,7 +420,7 @@ function ModelRow({ provider, name, hasKey, value, disabled, onChange }: { provi
           </option>
         ))}
       </select>
-    </SettingRow>
+    </SettingLine>
   );
 }
 
@@ -356,7 +430,7 @@ export function FinderSettings() {
   const desktop = isDesktop();
   const { data: status } = useQuery({ queryKey: FINDER_KEY, queryFn: finderStatus, enabled: desktop });
   const set = (next: FinderStatus) => client.setQueryData(FINDER_KEY, next);
-  const run = (action: () => Promise<FinderStatus>, failure: string) => void action().then(set, (e: unknown) => notifyError(failure, e));
+  const run = (action: () => Promise<FinderStatus>, failure: string) => void action().then(set, (error: unknown) => notifyError(failure, error));
 
   useEffect(() => {
     if (!desktop) return;
@@ -366,68 +440,76 @@ export function FinderSettings() {
 
   const [confirmingPc, setConfirmingPc] = useState(false);
   const progress = status?.progress;
-  const total = status?.folders.reduce((s, f) => s + f.files, 0) ?? 0;
+  const total = status?.folders.reduce((sum, folder) => sum + folder.files, 0) ?? 0;
+  const count = (value: number) => value.toLocaleString("de-DE");
   return (
-    <SettingsSection id="finder" title="NOVA Finder" description="The folders NOVA AI searches. The index stays on this PC; nothing is indexed until you add a folder." icon={FolderSearch}>
+    <SettingsSection id="finder" title="NOVA Finder" description="Die Ordner, die NOVA AI durchsucht. Der Index bleibt auf diesem PC, und nichts wird indiziert, bis du einen Ordner hinzufügst." icon={FolderSearch}>
       {!desktop ? (
-        <p className="text-[13px] text-fg-muted">Available in the NOVA desktop app.</p>
+        <SettingsNotice>Das gibt es in der NOVA-Desktop-App.</SettingsNotice>
       ) : (
         <>
-          <div className="pb-4">
-            {status?.folders.length === 0 && <p className="text-[13px] text-fg-muted">No folders yet. Searches only scan file names in your standard folders.</p>}
-            <ul className="space-y-1">
-              {status?.folders.map((folder) => (
-                <li key={folder.path} className="flex items-center gap-3 rounded-[12px] border border-line bg-white/[0.025] px-3 py-2">
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[13px] text-fg">{folder.path}</span>
-                    <span className="text-[11.5px] text-fg-subtle">{folder.exists ? `${folder.files.toLocaleString()} items indexed` : "Folder not found"}</span>
-                  </span>
-                  <IconButton label={`Stop indexing ${folder.path}`} size="sm" onClick={() => run(() => finderRemoveFolder(folder.path), "Couldn't remove the folder")}>
-                    <Trash size={14} aria-hidden />
-                  </IconButton>
-                </li>
-              ))}
-            </ul>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Button size="sm" variant="secondary" icon={<Plus size={14} aria-hidden />} onClick={() => run(finderPickFolder, "Couldn't add the folder")}>
-                Add folder…
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => run(finderAddStandardFolders, "Couldn't add the folders")}>
-                Add Documents, Desktop, Downloads & more
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => setConfirmingPc(true)}>
-                Add the whole PC
-              </Button>
-              {(status?.folders.length ?? 0) > 0 && (
-                <Button size="sm" variant="ghost" icon={<RefreshCw size={13} aria-hidden />} disabled={progress?.running} onClick={() => run(finderReindex, "Couldn't start indexing")}>
-                  Refresh index
+          <SettingCard
+            title="Ordner"
+            description="Hier sucht NOVA, wenn du nach einer Datei fragst."
+            icon={FolderSearch}
+            actions={
+              (status?.folders.length ?? 0) > 0 && (
+                <Button size="sm" variant="ghost" icon={<RefreshCw size={13} aria-hidden />} disabled={progress?.running} onClick={() => run(finderReindex, "Das Indizieren ließ sich nicht starten")}>
+                  Index auffrischen
                 </Button>
-              )}
+              )
+            }
+          >
+            <div data-setting="Ordner für NOVA Finder">
+              {status?.folders.length === 0 && <p className="rounded-[14px] border border-dashed border-line-strong px-3 py-4 text-center text-[12.5px] text-fg-muted">Noch keine Ordner. NOVA sucht nur nach Dateinamen in deinen Standardordnern.</p>}
+              <ul className="space-y-1.5">
+                {status?.folders.map((folder) => (
+                  <li key={folder.path} className="flex items-center gap-3 rounded-[14px] border border-line bg-white/[0.02] px-3 py-2">
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px] text-fg">{folder.path}</span>
+                      <span className={cn("text-[11.5px]", folder.exists ? "text-fg-subtle" : "text-warning")}>{folder.exists ? `${count(folder.files)} Einträge im Index` : "Ordner nicht gefunden"}</span>
+                    </span>
+                    <IconButton label={`${folder.path} nicht mehr durchsuchen`} size="sm" data-records onClick={() => run(() => finderRemoveFolder(folder.path), "Der Ordner ließ sich nicht entfernen")}>
+                      <Trash size={14} aria-hidden />
+                    </IconButton>
+                  </li>
+                ))}
+              </ul>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button size="sm" variant="secondary" icon={<Plus size={14} aria-hidden />} data-records onClick={() => run(finderPickFolder, "Der Ordner ließ sich nicht hinzufügen")}>
+                  Ordner hinzufügen …
+                </Button>
+                <Button size="sm" variant="ghost" data-records onClick={() => run(finderAddStandardFolders, "Die Ordner ließen sich nicht hinzufügen")}>
+                  Dokumente, Desktop, Downloads & mehr
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setConfirmingPc(true)}>
+                  Ganzen PC hinzufügen
+                </Button>
+              </div>
+              <p className="mt-2.5 text-[12px] text-fg-muted" aria-live="polite">
+                {progress?.running
+                  ? `Wird indiziert … ${count(progress.scanned)} Einträge geprüft${progress.current ? ` in ${progress.current}` : ""}`
+                  : progress?.error
+                    ? `Das letzte Indizieren ist fehlgeschlagen: ${progress.error}`
+                    : total > 0
+                      ? `${count(total)} Einträge im Index${progress?.lastFinished ? ` · Stand ${new Date(progress.lastFinished).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}` : ""}. NOVA frischt den Index im Hintergrund auf.`
+                      : null}
+              </p>
             </div>
-            <p className="mt-2 text-[12px] text-fg-muted" aria-live="polite">
-              {progress?.running
-                ? `Indexing… ${progress.scanned.toLocaleString()} items checked${progress.current ? ` in ${progress.current}` : ""}`
-                : progress?.error
-                  ? `Last indexing failed: ${progress.error}`
-                  : total > 0
-                    ? `${total.toLocaleString()} items indexed${progress?.lastFinished ? ` · updated ${new Date(progress.lastFinished).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" })}` : ""}. NOVA refreshes the index in the background.`
-                    : null}
-            </p>
-          </div>
-          <ConfirmDialog
+          </SettingCard>
+          <WholePcDialog
             open={confirmingPc}
-            title="Add the whole PC to NOVA Finder?"
-            description="NOVA indexes the file names on all your drives in the background and can then work with the files there, still asking before it changes anything. Windows, installed programs and app data stay off limits. The index stays on this PC."
-            confirmLabel="Add the whole PC"
             onClose={() => setConfirmingPc(false)}
             onConfirm={() => {
-              setConfirmingPc(false);
-              run(finderAddAllDrives, "Couldn't add the drives");
+              run(finderAddAllDrives, "Die Laufwerke ließen sich nicht hinzufügen");
+              recordChange("finder", "Ordner für NOVA Finder");
             }}
           />
-          <SettingRow label="Search inside text files" description="Also indexes the beginning of text files (.txt, .md, .csv, code…) so NOVA can find them by content. Turning it off deletes the stored text.">
-            <Switch label="Search inside text files" checked={status?.content ?? true} disabled={!status} onChange={(enabled) => run(() => finderSetContent(enabled), "Couldn't change the setting")} />
-          </SettingRow>
+          <SettingCard title="Inhalt">
+            <SettingLine label="In Textdateien suchen" description="Nimmt auch den Anfang von Textdateien (.txt, .md, .csv, Code …) in den Index, damit NOVA sie über ihren Inhalt findet. Ausschalten löscht den gespeicherten Text.">
+              <Switch label="In Textdateien suchen" checked={status?.content ?? true} disabled={!status} onChange={(enabled) => run(() => finderSetContent(enabled), "Das ließ sich nicht ändern")} />
+            </SettingLine>
+          </SettingCard>
         </>
       )}
     </SettingsSection>
@@ -435,22 +517,25 @@ export function FinderSettings() {
 }
 
 /** Clears NOVA AI's action log and usage records. */
-export function AssistantHistoryRow() {
+export function AssistantHistoryCard() {
   const [confirming, setConfirming] = useState(false);
   const client = useQueryClient();
   if (!isDesktop()) return null;
   return (
     <>
-      <SettingRow label="Action history and usage" description="NOVA AI logs what it did (searches, opened items, documents, file changes, screenshots) and its token usage, locally. Conversations are never stored.">
-        <Button size="sm" variant="secondary" icon={<History size={14} aria-hidden />} onClick={() => setConfirming(true)}>
-          Clear
-        </Button>
-      </SettingRow>
+      <SettingCard title="Verlauf von NOVA AI" icon={History}>
+        <SettingLine label="Aktionsverlauf und Nutzung" description="NOVA AI hält lokal fest, was es getan hat (Suchen, Geöffnetes, Dokumente, Dateiänderungen, Screenshots), und wie viele Tokens es verbraucht hat. Unterhaltungen werden nie gespeichert.">
+          <Button size="sm" variant="secondary" icon={<History size={14} aria-hidden />} onClick={() => setConfirming(true)}>
+            Löschen …
+          </Button>
+        </SettingLine>
+      </SettingCard>
       <ConfirmDialog
         open={confirming}
-        title="Clear NOVA AI history?"
-        description="Deletes the action log and usage records on this PC. This can't be undone."
-        confirmLabel="Clear history"
+        title="Verlauf von NOVA AI löschen?"
+        description="Löscht den Aktionsverlauf und die Nutzungsdaten auf diesem PC. Das lässt sich nicht rückgängig machen."
+        confirmLabel="Verlauf löschen"
+        cancelLabel="Abbrechen"
         danger
         onClose={() => setConfirming(false)}
         onConfirm={() => {
@@ -458,9 +543,9 @@ export function AssistantHistoryRow() {
           void clearHistory().then(
             () => {
               void client.invalidateQueries({ queryKey: AGENT_KEY });
-              notify("NOVA AI history cleared", { kind: "success" });
+              notify("Verlauf von NOVA AI gelöscht", { kind: "success" });
             },
-            (e: unknown) => notifyError("Couldn't clear the history", e),
+            (error: unknown) => notifyError("Der Verlauf ließ sich nicht löschen", error),
           );
         }}
       />

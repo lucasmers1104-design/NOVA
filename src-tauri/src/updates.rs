@@ -20,6 +20,12 @@ type CommandResult<T> = Result<T, String>;
 #[derive(Default)]
 pub struct PendingUpdate(Mutex<Option<Update>>);
 
+/// An update was found and waits: the main window's page counts down to it, so that page must stay.
+pub fn waiting<R: tauri::Runtime>(app: &AppHandle<R>) -> bool {
+    use tauri::Manager;
+    app.state::<PendingUpdate>().0.lock().is_ok_and(|pending| pending.is_some())
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateInfo {

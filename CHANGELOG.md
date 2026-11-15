@@ -1,5 +1,48 @@
 # Changelog
 
+## 1.12.0 — 2026-11-15
+
+### Added
+- **NOVA writes and speaks in Discord**: „Schreib in die Jungs, dass ich in 10 Minuten online komme“ posts in a Discord channel as „Max · via Nova“, and „Sag im Zocken-Call, dass ich gleich komme“ says it out loud in a call, then leaves. Both go through a relay bot you or a friend runs; NOVA always shows what goes out and waits for your yes. The new **Discord** tab sets it up in four short steps (paste the invite, name your channels, link your profile picture, done) and then shows your channels and who is in a call right now.
+- **Your own profile picture in Discord**: NOVA shows a code, you type `/nova code:<code>` in Discord, and your messages carry your picture instead of Discord's default one.
+- **NOVA Island and Discord in the sidebar**: Island Studio has its own tab now. Media and Files are hidden by default; bring them back under Settings → Navigation.
+- **More looks for the NOVA dot**: Liquid Glass, Pearl, Halo, Graphite and Aura, next to Glass, Flat, Ring and Orb.
+- **Clocks like a lock screen**: the Welcome and World clock widgets have two new styles, Glass and Stacked, and seven typefaces: Classic, Thin, Bold, Rounded, Serif, Condensed and Mono.
+- **Rounded window**: NOVA's window has the same round corners as its sidebar (square when maximized).
+- Plugins show their own icon in the sidebar and the plugin list, the Phone plugin a phone.
+- **Nova Island**: a small island at the top of your screen that grows when something happens. It shows what plays in Spotify, your browser or any player Windows knows, with cover, play/pause, next and previous, a visualizer that follows your speakers' real level, and lyrics when you open it. It shows your phone's notifications (WhatsApp and every other app) and calls, what NOVA AI is doing, the step it works on and the start of its reply, and, if you want, your PC's CPU, graphics card, memory, temperature and network. At most two things at once, a call first. Click it to open, right-click for NOVA's menu. With nothing to show, a click opens NOVA AI.
+- **Island Studio**: Settings → Nova Island is a designer now. On top, a stage shows the real island, and you grab things directly: drag the island along the top edge (it snaps to left, center and right, or stays where you drop it), drag the NOVA dot into the island or out of it, drag what the closed island carries at its left and right end (cover, visualizer, app icon, time, time left, progress ring, NOVA AI's status) for music, calls, NOVA AI, notifications and the system each, and sort which module leads when several things happen at once. Buttons play every scene with its real transitions, also on the island on your desktop for ten seconds. Everything works with the keyboard too.
+- **Your own look**: size, corners and height without steps, three designs (Black, White, Glass) or a material of your own from color, opacity, a matt veil, rim (off, fine, glowing) and shadow, an accent color of its own, and how it moves: springy, soft or minimal, at your tempo. Six presets (Classic, Glass Pro, Minimal, Neon, Paper, Aurora), your own presets, and a short code to pass a look on. Ctrl+Z and Ctrl+Y take changes back and forth.
+- Still under Settings → Nova Island: the display (now on a small map of your screens), closing by itself, hiding in fullscreen apps, and privacy: hide notification previews (the text never reaches the island) and the caller's number.
+- **The NOVA dot in the island**: the dot stays beside the island, moves into it (drag it there in Island Studio) or is turned off. In the island it needs no window of its own, and NOVA AI opens below the island.
+- **Calls on the PC**: a ringing phone grows the island with the caller's name and picture. Answer and decline are there only when your phone can really do them (Android 12+ phone apps with call buttons, or when NOVA Companion may manage calls), and they act on the phone.
+- **Phone tab, all new**: a clearer page with the connection, pairing with a countdown, the app's newest version, your phones, Nova Island and a network check.
+- **Phones reach PCs on a LAN cable**: the page “Phone” finds out when Windows' firewall blocks phones, which is typical for wired networks Windows calls “Public”, and allows NOVA with one click and Windows' administrator question. The rule lets in only NOVA, only on its port, and only from your local network. Without any WLAN, a phone on a USB cable with USB tethering works too.
+- **NOVA Companion 1.2 for Android**: forwarding of notifications and calls to Nova Island (off until you turn it on, and Android asks for notification access), for each app or only app names if you want, PC addresses you can type in, and updates from GitHub inside the app: it checks at start, downloads with a progress bar you can cancel, checks the file against GitHub and hands it to Android's installer, with a hint for Play Protect's warning. All screens are new: pairing in three steps that finds your PC on the network and shows each permission's state, a start page with the connection, its delay and quick actions, a chat you can copy from, tasks you swipe away with an undo, approvals with a clear danger level, grouped settings, a light and a dark design. The app asks for fewer permissions: those its libraries had brought along without NOVA needing them are blocked.
+- **Settings you can see**: every settings page is built from the same cards now, in German, with a live preview on top where there is something to see: a small NOVA window for accent, background, glass, corners and motion, the real dot at its place with its states, the voice to listen to, “Hey NOVA” to try. The sidebar's sections are sorted by dragging. The first page finds a setting as you type and jumps to it, shows every section as a tile and what you changed last.
+- **Settings → Leistung**: how much memory NOVA uses right now — NOVA itself, its speech processes and its windows — measured every two seconds while you look at the page, with how long the windows last took to come back.
+
+### Changed
+- The active page in the sidebar is marked by its glass alone, without the blue bar.
+- NOVA keeps running in the background while Nova Island is on, like with the dot.
+- **NOVA needs less memory.** Its voices and the offline speech recognition now run in processes of their own, which end after a pause (the voice 20 minutes after its last sentence, the recognition 5 minutes after its last turn; sooner in low-resource mode). That gives their memory back to Windows completely; before, it stayed in NOVA for as long as NOVA ran. “Hey NOVA” with the offline recognition is as quick as before, and keeps the recognition loaded while it listens, since that is what hears you.
+- A graphics driver that crashes while NOVA speaks or listens now takes only that speech process with it: NOVA says what happened, uses the processor from then on, and starts a new process the next time.
+- **Closing NOVA to the tray ends the main window** instead of hiding it, and it opens again where you were. Task reminders keep coming, and “Pair this phone?” brings the window back. You can keep the old behavior under Settings → Leistung.
+- **NOVA AI's panel ends after five minutes closed** (you choose how long, or never, under Settings → Leistung). Your conversation is there again when you open it.
+- Windows nobody sees (hidden in the tray, minimized, hidden behind a fullscreen app) ask for as little memory as they can do with, clocks and song positions no longer tick in them, and the chart library is only loaded with the first chart.
+- Nova Island speaks German, like the settings. The rest of NOVA's pages are still in English.
+
+### Fixed
+- **Lyrics follow the singer again**: the lyrics on Nova Island scrolled about eight lines too far, so the line being sung was out of sight. NOVA also keeps synced lyrics only from a version as long as the song, and shows other versions unsynced.
+- **Nova Island closes in one smooth motion**: it no longer shrinks past its size and wobbles back at the end.
+- **Real app logos on Nova Island**: Spotify and other PC players show their logo instead of a letter, and phone notifications bring their app's icon more reliably (with NOVA Companion's next update). Well-known apps get a colored symbol when no logo arrives.
+- **„Spiel meine Playlist“**: when Spotify continues the paused song of that playlist, NOVA no longer says it didn't work. It says where it continued.
+- The memory ring no longer shows a faint square around its glow.
+- „Allow NOVA in the firewall“ on the Phone page now waits for Windows and says whether it worked, also when another firewall like Avast still decides on its own.
+- A call no longer keeps ringing on Nova Island after the phone it rings on has lost its connection. The phone reports it again when it is back.
+- NOVA Companion: a connection that died silently is noticed after 10 seconds, all of a PC's addresses are tried at once, approvals from before a reconnect no longer linger, and an update is never offered for an older build. The full list is in docs/mobile/AUDIT-1.12.md.
+- The Phone page no longer says phones can reach this PC when another firewall is in charge. With Avast, Norton or similar switched on, "Check network" names it and says what to allow there. The Companion app's connection help mentions it too.
+
 ## 1.11.2 — 2026-11-08
 
 ### Added

@@ -23,11 +23,19 @@ export interface PairedPc {
   hosts: string[];
 }
 
+function isPairedPc(value: unknown): value is PairedPc {
+  if (typeof value !== "object" || value === null) return false;
+  const pc = value as Record<string, unknown>;
+  const texts = [pc.pcId, pc.pcPub, pc.pcName, pc.deviceId].every((field) => typeof field === "string");
+  return texts && Array.isArray(pc.hosts) && pc.hosts.every((host) => typeof host === "string");
+}
+
 export async function loadPc(): Promise<PairedPc | null> {
-  const raw = await SecureStore.getItemAsync(PC_KEY);
-  if (!raw) return null;
   try {
-    return JSON.parse(raw) as PairedPc;
+    const raw = await SecureStore.getItemAsync(PC_KEY);
+    const value: unknown = raw ? JSON.parse(raw) : null;
+    // A damaged entry counts as "not paired": pairing again repairs it, a crash on `hosts` wouldn't.
+    return isPairedPc(value) ? value : null;
   } catch {
     return null;
   }
@@ -42,42 +50,66 @@ export async function identity(pc: PairedPc): Promise<Identity | null> {
   return secret ? { pcId: pc.pcId, pcPub: unb64(pc.pcPub), deviceId: pc.deviceId, deviceSecret: unb64(secret) } : null;
 }
 
+/**
+ * Stores the keys of a new pairing. The approval key goes first: writing it asks for
+ * the fingerprint, and if the user cancels there nothing of an earlier pairing has
+ * been overwritten yet.
+ */
 export async function saveKeys(deviceSecret: Uint8Array, approvalKey: Uint8Array): Promise<void> {
-  await SecureStore.setItemAsync(DEVICE_SECRET, b64(deviceSecret));
   await SecureStore.setItemAsync(APPROVAL_KEY, b64(approvalKey), { requireAuthentication: true, authenticationPrompt: "Schlüssel für Freigaben sichern" });
+  await SecureStore.setItemAsync(DEVICE_SECRET, b64(deviceSecret));
 }
 
-/** Asks for the fingerprint or face; `null` if the user cancelled. */
-export async function approvalKey(): Promise<Uint8Array | null> {
-  const value = await SecureStore.getItemAsync(APPROVAL_KEY, { requireAuthentication: true, authenticationPrompt: "Freigabe bestätigen" });
-  return value ? unb64(value) : null;
+export type ApprovalKey = { key: Uint8Array } | { missing: "cancelled" | "lost" };
+
+/**
+ * Asks for the fingerprint or face. "lost" means Android threw the key away, which it
+ * does when the fingerprints on the phone change: only pairing again brings one back.
+ */
+export async function approvalKey(): Promise<ApprovalKey> {
+  try {
+    const value = await SecureStore.getItemAsync(APPROVAL_KEY, { requireAuthentication: true, authenticationPrompt: "Freigabe bestätigen" });
+    return value ? { key: unb64(value) } : { missing: "lost" };
+  } catch {
+    return { missing: "cancelled" };
+  }
 }
 
 export async function forgetPc(): Promise<void> {
   await Promise.all([PC_KEY, DEVICE_SECRET, APPROVAL_KEY].map((key) => SecureStore.deleteItemAsync(key)));
-  await saveState(emptyState);
+  await saveState({ ...emptyState, hiddenTasks: [] });
+}
+
+/** The saved part of the app's state: the protocol's, and what the user hid on the Tasks tab. */
+export interface SavedState extends PhoneState {
+  hiddenTasks: string[];
 }
 
 const stateFile = () => new File(Paths.document, "nova-companion.json");
 
+function list<T>(value: unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : [];
+}
+
 /** Chat, tasks and the outbox survive a restart; approvals don't (they expire anyway). */
-export async function loadState(): Promise<PhoneState> {
+export async function loadState(): Promise<SavedState> {
+  const empty: SavedState = { ...emptyState, hiddenTasks: [] };
   try {
     const file = stateFile();
-    if (!file.exists) return emptyState;
-    const saved = JSON.parse(await file.text()) as Partial<PhoneState>;
-    return { ...emptyState, chat: saved.chat ?? [], tasks: saved.tasks ?? [], outbox: saved.outbox ?? [] };
+    if (!file.exists) return empty;
+    const saved = JSON.parse(await file.text()) as Record<string, unknown>;
+    return { ...empty, chat: list(saved.chat), tasks: list(saved.tasks), outbox: list(saved.outbox), hiddenTasks: list<unknown>(saved.hiddenTasks).filter((id): id is string => typeof id === "string") };
   } catch {
-    return emptyState;
+    return empty;
   }
 }
 
-export async function saveState(state: PhoneState): Promise<void> {
-  const { chat, tasks, outbox } = state;
+export async function saveState(state: SavedState): Promise<void> {
+  const { chat, tasks, outbox, hiddenTasks } = state;
   // Screenshots stay out of the file: they are large and only for the moment.
   const light = chat.map((entry) => (entry.screenshot ? { ...entry, screenshot: null } : entry));
   try {
-    await stateFile().write(JSON.stringify({ chat: light, tasks, outbox }));
+    await stateFile().write(JSON.stringify({ chat: light, tasks, outbox, hiddenTasks }));
   } catch {
     // Saving is best effort; the PC keeps the real log.
   }

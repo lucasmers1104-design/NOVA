@@ -124,7 +124,10 @@ pub fn listen(recognizer: &mut Recognizer, stop: &AtomicBool, on_heard: &dyn Fn(
             let probability = match vad.probability(&frame) {
                 Ok(p) => p,
                 Err(error) => {
+                    // The recognizer is gone (its speech process ended): listening ends
+                    // here, and the supervisor starts over with a new one.
                     failure = Some(error);
+                    stop.store(true, Ordering::SeqCst);
                     return;
                 }
             };
@@ -254,6 +257,97 @@ mod tests {
             }
             println!("=== {folder}: {sure} sure, {near} near, of {total}");
         }
+    }
+
+    fn env_path(name: &str) -> std::path::PathBuf {
+        std::env::var_os(name).map(std::path::PathBuf::from).unwrap_or_else(|| panic!("set {name}"))
+    }
+
+    /// "Hey Nova" as the microphone delivers it: spoken by NOVA's own voice, at 48 kHz,
+    /// with the pre-roll before it and the silence that ends the phrase after it.
+    fn spoken_call(runtime: &'static crate::speech::runtime::Runtime) -> Vec<f32> {
+        let voice = env_path("NOVA_VOICE_DIR");
+        let cpu = crate::speech::runtime::Device::Cpu { threads: 2 };
+        let mut piper = crate::speech::piper::Piper::open(runtime, &voice.join("thorsten.onnx"), &voice.join("thorsten.onnx.json"), &cpu, None, &voice.join("piper")).unwrap();
+        let speech = piper.synthesize("Hey Nova", 1.0).unwrap();
+        crate::speech::phonemize::stop();
+        let quiet = |duration: Duration| std::iter::repeat_n(0.0, (48_000.0 * duration.as_secs_f64()) as usize);
+        quiet(PRE_ROLL).chain(crate::speech::wav::resample(&speech.samples, speech.rate, 48_000)).chain(quiet(Duration::from_millis(PHRASE_END_MS as u64))).collect()
+    }
+
+    fn summary(label: &str, unit: &str, mut values: Vec<f64>) {
+        values.sort_by(f64::total_cmp);
+        let at = |q: f64| values[((values.len() - 1) as f64 * q).round() as usize];
+        println!("{label:<34} median {:>8.2} {unit}   p95 {:>8.2} {unit}   min {:>8.2} {unit}   ({} runs)", at(0.5), at(0.95), values[0], values.len());
+    }
+
+    /// Times what `listen` does with a phrase and with each frame, on `recognizer`.
+    fn measure(label: &str, recognizer: &mut Recognizer, call: &[f32]) {
+        use std::time::Instant;
+        let Recognizer { asr, vad, .. } = recognizer;
+        let text = asr.transcribe(&prepared(&crate::speech::wav::resample(call, 48_000, 16_000))).unwrap();
+        println!("{label}: heard {text:?} → {:?}", read_call(&text).0);
+        let decodes = (0..20)
+            .map(|_| {
+                let started = Instant::now();
+                asr.transcribe(&prepared(&crate::speech::wav::resample(call, 48_000, 16_000))).unwrap();
+                started.elapsed().as_secs_f64() * 1000.0
+            })
+            .collect();
+        summary(&format!("{label}: phrase end → wake-up"), "ms", decodes);
+        let frames: Vec<f32> = crate::speech::wav::resample(call, 48_000, 16_000);
+        let per_frame = frames
+            .chunks_exact(FRAME)
+            .cycle()
+            .take(600)
+            .map(|frame| {
+                let started = Instant::now();
+                vad.probability(frame).unwrap();
+                started.elapsed().as_secs_f64() * 1_000_000.0
+            })
+            .collect();
+        summary(&format!("{label}: one 32 ms VAD frame"), "µs", per_frame);
+    }
+
+    /// What "Hey NOVA" costs between the end of the phrase and the wake-up, and what
+    /// each 32 ms of listening costs — with the models in this process, as before
+    /// 1.12, and in NOVA's speech process, as now. By hand, after `cargo build`:
+    /// `cargo test --lib -- --ignored wake_latency --nocapture`, with NOVA_RUNTIME,
+    /// NOVA_PARAKEET and NOVA_VOICE_DIR set (NOVA_THREADS: processor threads, 4
+    /// unless set; NOVA_EXE: the nova.exe to start, the built one unless set).
+    #[test]
+    #[ignore]
+    fn wake_latency() {
+        use std::time::Instant;
+        let runtime_dir = env_path("NOVA_RUNTIME");
+        let runtime = crate::speech::runtime::get(&runtime_dir).unwrap();
+        let dir = env_path("NOVA_PARAKEET");
+        let threads = std::env::var("NOVA_THREADS").ok().and_then(|t| t.parse().ok()).unwrap_or(4);
+        let device = crate::speech::runtime::Device::Cpu { threads };
+        let call = spoken_call(runtime);
+        println!("clip: {:.2} s at 48 kHz, recognizer on {}", call.len() as f64 / 48_000.0, device.label());
+
+        let opened = Instant::now();
+        let asr = crate::speech::stt::parakeet::Parakeet::open(runtime, &dir, &device).unwrap();
+        let vad = crate::speech::stt::vad::Vad::open(runtime, &dir.join("silero_vad.onnx")).unwrap();
+        println!("{:<34} {:>8.0} ms", "in-process: recognizer loaded in", opened.elapsed().as_secs_f64() * 1000.0);
+        let mut here = Recognizer::in_process(asr, vad, device.clone());
+        measure("in-process", &mut here, &call);
+        drop(here);
+
+        // The test runs from target/debug/deps; the app's exe is one folder up.
+        let exe = std::env::var_os("NOVA_EXE").map(std::path::PathBuf::from).unwrap_or_else(|| std::env::current_exe().unwrap().parent().unwrap().parent().unwrap().join("nova.exe"));
+        let helper = Arc::new(crate::speech::helper::Helper::with_program("recognizer", exe));
+        let spec = crate::speech::helper::RecognizerSpec { runtime: runtime_dir, dir, device: device.clone() };
+        let opened = Instant::now();
+        let session = helper.open_recognizer(&spec).unwrap();
+        println!("{:<34} {:>8.0} ms", "helper: started and loaded in", opened.elapsed().as_secs_f64() * 1000.0);
+        let mut there = Recognizer::remote(session, device);
+        measure("helper", &mut there, &call);
+        drop(there);
+        let stopping = Instant::now();
+        helper.stop();
+        println!("{:<34} {:>8.0} ms", "helper: ended in", stopping.elapsed().as_secs_f64() * 1000.0);
     }
 
     /// All from what Parakeet really wrote for spoken "Hey Nova"s and other phrases.

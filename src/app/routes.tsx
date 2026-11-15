@@ -8,6 +8,8 @@ const AppsPage = lazy(() => import("@/features/apps/AppsPage"));
 const AiPage = lazy(() => import("@/features/ai/AiPage"));
 const ProductivityPage = lazy(() => import("@/features/productivity/ProductivityPage"));
 const RoutinesPage = lazy(() => import("@/features/routines/RoutinesPage"));
+const IslandPage = lazy(() => import("@/features/island/IslandPage"));
+const DiscordPage = lazy(() => import("@/features/discord/DiscordPage"));
 const MediaPage = lazy(() => import("@/features/media/MediaPage"));
 const FilesPage = lazy(() => import("@/features/files/FilesPage"));
 const LivePage = lazy(() => import("@/features/live/LivePage"));
@@ -23,6 +25,8 @@ export const ROUTES: Record<RouteId, ComponentType> = {
   ai: AiPage,
   productivity: ProductivityPage,
   routines: RoutinesPage,
+  island: IslandPage,
+  discord: DiscordPage,
   media: MediaPage,
   files: FilesPage,
   live: LivePage,

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { RouteId } from "@/app/navigation";
+import { openingView, rememberRoute } from "@/app/opening";
 
 export interface PluginPageRef {
   pluginId: string;
@@ -20,11 +21,14 @@ interface UiState {
   openPluginPage: (page: PluginPageRef) => void;
 }
 
+// A main window that came back from the tray opens where the last one was.
+const opening = openingView();
+
 /** Session-only UI state (not persisted). */
 export const useUi = create<UiState>()((set) => ({
-  route: "home",
+  route: opening.route,
   paletteOpen: false,
-  settingsSection: null,
+  settingsSection: opening.settingsSection,
   pluginPage: null,
   navigate: (route) => set({ route, pluginPage: null }),
   setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
@@ -32,3 +36,7 @@ export const useUi = create<UiState>()((set) => ({
   clearSettingsSection: () => set({ settingsSection: null }),
   openPluginPage: (pluginPage) => set({ route: "plugins", pluginPage }),
 }));
+
+useUi.subscribe((state, previous) => {
+  if (state.route !== previous.route) rememberRoute(state.route);
+});

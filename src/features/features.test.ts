@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parseBlocks } from "@/components/ui/Markdown";
 import { searchApps, sanitizeAppPreferences } from "@/features/apps/api";
 import { describeWeather, mergeFeeds, parseFeedDate } from "@/features/live/api";
-import { currentLine, formatTrackTime, sourceAppName } from "@/features/media/api";
+import { centeredScrollTop, currentLine, formatTrackTime, sourceAppName } from "@/features/media/api";
 import { useNotifications } from "@/features/notifications/store";
 import { addDays, dueReminders, groupTasks, isOverdue, noteTitle, relativeDueLabel, reminderKey, searchTasks, type Task, toISODate } from "@/features/productivity/model";
 import { newTask } from "@/features/productivity/store";
@@ -124,6 +124,19 @@ describe("media", () => {
     expect(currentLine(lines, 8999)).toBe(1);
     expect(currentLine(lines, 60_000)).toBe(2);
     expect(currentLine([{ atMs: null, text: "ohne Zeit" }], 5000)).toBe(-1);
+  });
+
+  it("centers the sung line in its own list, whatever the list's offset parent is", () => {
+    const element = (props: Partial<HTMLElement>) => props as HTMLElement;
+    // The island: cover and controls above the list (offsetTop 170) in the same positioned layer.
+    const layer = element({});
+    const island = element({ offsetTop: 170, clientTop: 0, clientHeight: 120, offsetParent: layer });
+    const sung = element({ offsetTop: 170 + 8 + 10 * 26, offsetHeight: 20, offsetParent: layer });
+    expect(centeredScrollTop(island, sung)).toBe(8 + 10 * 26 - 60 + 10);
+    // A positioned list counts from itself.
+    const page = element({ offsetTop: 400, clientTop: 0, clientHeight: 120 });
+    expect(centeredScrollTop(page, element({ offsetTop: 268, offsetHeight: 20, offsetParent: page }))).toBe(268 - 60 + 10);
+    expect(centeredScrollTop(page, element({ offsetTop: 0, offsetHeight: 20, offsetParent: page }))).toBe(0);
   });
 
   it("formats track times", () => {

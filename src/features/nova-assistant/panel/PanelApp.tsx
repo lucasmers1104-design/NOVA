@@ -3,14 +3,15 @@ import { AnimatePresence, MotionConfig } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { callNative } from "@/lib/native";
 import type { MotionPreference } from "@/stores/settings";
-import { agentStatus, assistantStatus, collapseAssistant, configureAgent, finderAddStandardFolders, finderStatus, openNova, panelHidden, panelReady, pinPanel, unmovePanel } from "../api";
+import { agentStatus, assistantStatus, collapseAssistant, configureAgent, finderAddStandardFolders, finderStatus, openNova, panelHidden, panelReady, pinPanel, retirePanel, unmovePanel } from "../api";
 import { useAssistantAppearance } from "../appearance";
 import { NovaPanel } from "../components/NovaPanel";
-import { onReply, useConversation } from "../conversation";
+import { onReply, restoreConversation, snapshotConversation, useConversation } from "../conversation";
 import { ReplyDirector } from "../speech/director";
 import { watchScan } from "../scan";
 import { ASSISTANT_EVENTS, type AgentPrefs, type AgentStatus, type AssistantState, type AssistantStatus, type DotCorner, type FinderStatus, type WakeCall } from "../types";
 import { installNovaVoice, isOnlineVoice, listen as listenOnce, prepareNovaLines, speak, speaksGerman, speechActive, speechAudible, stopListening, stopSpeaking, useVoice, voiceLine, watchNovaVoice } from "../voice";
+import { ISLAND_EVENTS, type AiNote } from "@/features/island/types";
 import { playChime } from "../wake";
 import { HeadlessVoice } from "./HeadlessVoice";
 
@@ -27,6 +28,16 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 }
 
 const REDUCED_MOTION: Record<MotionPreference, "user" | "always" | "never"> = { system: "user", reduced: "always", full: "never" };
+
+/** The latest reply (once finished, shortened) and the running step, as one comparable string. */
+export function islandSummary(items: ReturnType<typeof useConversation.getState>["items"]): string {
+  const last = items.findLast((item) => item.kind === "assistant");
+  if (!last || last.kind !== "assistant") return JSON.stringify({ reply: "", task: null } satisfies AiNote);
+  const running = last.segments.findLast((segment) => segment.type === "tool" && (segment.tool.state === "running" || segment.tool.state === "confirm"));
+  const text = last.streaming ? "" : last.segments.map((segment) => (segment.type === "text" ? segment.text : "")).join("").replace(/\s+/g, " ").trim();
+  const reply = text.length > 240 ? `${text.slice(0, 239).trimEnd()}…` : text;
+  return JSON.stringify({ reply, task: running && running.type === "tool" ? running.tool.title : null } satisfies AiNote);
+}
 
 /** What the header and the dot show: voice states win over the conversation's. */
 export function displayedState(conversation: AssistantState, voice: ReturnType<typeof useVoice.getState>["mode"]): AssistantState {
@@ -60,6 +71,8 @@ export function PanelApp() {
   const openRef = useRef(open);
   openRef.current = open;
   const pendingHide = useRef<number | null>(null);
+  const headlessRef = useRef(headless);
+  headlessRef.current = headless;
 
   const conversationState = useConversation((s) => s.state);
   const voiceMode = useVoice((s) => s.mode);
@@ -134,10 +147,19 @@ export function PanelApp() {
       listen<AgentStatus>(ASSISTANT_EVENTS.agent, (event) => setAgent(event.payload)),
       listen<AssistantStatus>(ASSISTANT_EVENTS.prefs, (event) => setPinned(event.payload.panelPinned)),
       listen<FinderStatus["progress"]>(ASSISTANT_EVENTS.finder, () => finderStatus().then((s) => alive && setFinder(s), () => {})),
+      // Closed for a while: this page ends to give its memory back, unless something is under way
+      // that would be lost with it. Rust keeps the conversation for the panel that comes next.
+      listen(ASSISTANT_EVENTS.retire, () => {
+        if (openRef.current || headlessRef.current || speechActive() || useVoice.getState().mode !== "idle") return;
+        const snapshot = snapshotConversation();
+        if (snapshot !== null) void retirePanel(snapshot).catch(() => {});
+      }),
     ];
     assistantStatus().then((status) => alive && setPinned(status.panelPinned), () => {});
     panelReady().then(
       (view) => {
+        // Before anything shows: the conversation of the panel this one replaces.
+        if (alive && view.snapshot) restoreConversation(view.snapshot);
         if (alive && view.open) show(view.origin, view.wake);
         else if (alive && view.wake?.headless) woken(view.wake);
       },
@@ -161,10 +183,18 @@ export function PanelApp() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [open, pinned]);
 
-  // Tell the dot what NOVA is doing (only while it changes).
+  // Tell the dot and Nova Island what NOVA is doing (only while it changes).
   useEffect(() => {
-    void emitTo("dot", ASSISTANT_EVENTS.activity, { state, level: state === "listening" || state === "speaking" ? level : 0 }).catch(() => {});
+    const activity = { state, level: state === "listening" || state === "speaking" ? level : 0 };
+    void emitTo("dot", ASSISTANT_EVENTS.activity, activity).catch(() => {});
+    void emitTo("island", ASSISTANT_EVENTS.activity, activity).catch(() => {});
   }, [state, level]);
+
+  // Nova Island shows the step NOVA works on and, once finished, the start of the reply.
+  const islandNote = useConversation((s) => islandSummary(s.items));
+  useEffect(() => {
+    void emitTo("island", ISLAND_EVENTS.ai, JSON.parse(islandNote) as AiNote).catch(() => {});
+  }, [islandNote]);
 
   // "Done" settles back to "Ready".
   useEffect(() => {

@@ -70,7 +70,7 @@ export function ConsentDialog() {
         <p className="flex items-start gap-2 text-[12px] text-fg-subtle">
           <ShieldCheck size={14} className="mt-0.5 shrink-0" aria-hidden />
           <span>
-            Du kannst jederzeit unter Settings → Privacy widerrufen. NOVA funktioniert auch ohne Zustimmung vollständig.{" "}
+            Du kannst jederzeit unter Einstellungen → Datenschutz widerrufen. NOVA funktioniert auch ohne Zustimmung vollständig.{" "}
             <button type="button" className="text-accent-text underline underline-offset-2" onClick={() => status && void callNative("open_url", { url: status.privacyUrl }).catch((error: unknown) => notifyError("Couldn't open the page", error))}>
               Datenschutzhinweis
             </button>
