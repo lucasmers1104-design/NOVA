@@ -3,6 +3,7 @@ mod ai;
 mod app_icons;
 mod apps;
 mod assistant;
+mod devkey;
 mod capture;
 mod companion;
 mod credentials;
@@ -336,6 +337,8 @@ pub fn run() {
             discord::discord_chat_set,
             discord::discord_bot_set,
             discord::discord_bot_check,
+            devkey::dev_key_status,
+            devkey::dev_key_set,
             relay::relay_status,
             relay::relay_set,
             relay::relay_check,

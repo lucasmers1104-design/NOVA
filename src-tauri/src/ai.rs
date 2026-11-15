@@ -317,6 +317,10 @@ pub async fn ai_key_delete(provider: Provider) -> CommandResult<()> {
 /// Lists models available to the user's key, straight from the provider.
 #[tauri::command]
 pub async fn ai_models(provider: Provider) -> CommandResult<Vec<ModelInfo>> {
+    let locked = !crate::devkey::unlocked();
+    if locked && provider != Provider::Anthropic {
+        return Ok(Vec::new());
+    }
     let key = provider.api_key()?;
     let client = http::client();
     let request = match provider {
@@ -334,7 +338,9 @@ pub async fn ai_models(provider: Provider) -> CommandResult<Vec<ModelInfo>> {
         return Err(http::api_error_message(status, &body));
     }
     let value: Value = serde_json::from_str(&body).map_err(|_| "Unexpected response from the provider".to_string())?;
-    Ok(parse_models(provider, &value))
+    let models = parse_models(provider, &value);
+    // Without the developer key only Claude Haiku can be chosen.
+    Ok(if locked { models.into_iter().filter(|m| crate::devkey::allows(provider, &m.id)).collect() } else { models })
 }
 
 #[derive(Debug, Deserialize)]
@@ -368,6 +374,9 @@ pub async fn ai_chat(
 ) -> CommandResult<()> {
     if !is_valid_model_id(&request.model) {
         return Err("Choose a valid model".into());
+    }
+    if !crate::devkey::allows(request.provider, &request.model) {
+        return Err(crate::devkey::LOCKED_MESSAGE.into());
     }
     let text = request.message.trim();
     if text.is_empty() || text.chars().count() > MAX_MESSAGE_CHARS {

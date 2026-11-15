@@ -158,6 +158,8 @@ fn main() {
         "discord_chat_set",
         "discord_bot_set",
         "discord_bot_check",
+        "dev_key_status",
+        "dev_key_set",
         "relay_status",
         "relay_set",
         "relay_check",

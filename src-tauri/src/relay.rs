@@ -150,6 +150,56 @@ pub fn aliases<R: Runtime>(app: &AppHandle<R>) -> Vec<Alias> {
         .unwrap_or_default()
 }
 
+/// How long the relay makes a key wait after a message and after an announcement, against
+/// spam. The relay decides; NOVA keeps the same clock so it doesn't ask for an approval that
+/// would only be refused. The developer key lifts both.
+pub const COOLDOWN_TEXT: Duration = Duration::from_secs(20 * 60);
+pub const COOLDOWN_VOICE: Duration = Duration::from_secs(30 * 60);
+
+static LAST_USED: std::sync::Mutex<[Option<std::time::Instant>; 2]> = std::sync::Mutex::new([None, None]);
+
+fn slot(kind: Kind) -> (usize, Duration) {
+    match kind {
+        Kind::Text => (0, COOLDOWN_TEXT),
+        Kind::Voice => (1, COOLDOWN_VOICE),
+    }
+}
+
+/// Minutes until `kind` is possible again from this PC; None when it is now.
+pub fn cooling(kind: Kind) -> Option<u64> {
+    if crate::devkey::unlocked() {
+        return None;
+    }
+    let (index, cooldown) = slot(kind);
+    let last = LAST_USED.lock().ok()?[index]?;
+    let left = cooldown.checked_sub(last.elapsed())?;
+    Some(left.as_secs().div_ceil(60).max(1))
+}
+
+/// What NOVA tells the AI while a cooldown runs.
+pub fn cooling_message(kind: Kind, minutes: u64) -> String {
+    let (what, every) = match kind {
+        Kind::Text => ("The next Discord message", "one every 20 minutes"),
+        Kind::Voice => ("The next announcement in a call", "one every 30 minutes"),
+    };
+    format!("{what} is possible in {minutes} minute{} (spam protection: {every}). Nothing was sent; tell the user.", if minutes == 1 { "" } else { "s" })
+}
+
+fn note_used(kind: Kind) {
+    if let Ok(mut last) = LAST_USED.lock() {
+        last[slot(kind).0] = Some(std::time::Instant::now());
+    }
+}
+
+/// The developer key for the relay, which lets its holder skip the cooldowns.
+fn dev_header() -> reqwest::header::HeaderMap {
+    let mut headers = reqwest::header::HeaderMap::new();
+    if let Some(value) = crate::devkey::key().and_then(|key| reqwest::header::HeaderValue::from_str(&key).ok()) {
+        headers.insert("x-nova-dev", value);
+    }
+    headers
+}
+
 async fn finish(response: reqwest::Response) -> Result<Value, String> {
     let status = response.status();
     let body = response.text().await.map_err(crate::http::describe)?;
@@ -169,6 +219,7 @@ async fn request(method: reqwest::Method, path: &str) -> Result<Value, String> {
     let mut call = crate::http::client()
         .request(method.clone(), format!("{base}{path}"))
         .header(reqwest::header::AUTHORIZATION, format!("Bearer {key}"))
+        .headers(dev_header())
         .timeout(Duration::from_secs(15));
     if method == reqwest::Method::POST {
         call = call.header(reqwest::header::CONTENT_TYPE, "application/json").body("{}");
@@ -182,13 +233,16 @@ pub async fn send(channel_id: &str, content: &str) -> Result<String, String> {
     let response = crate::http::client()
         .post(format!("{base}/v1/messages"))
         .header(reqwest::header::AUTHORIZATION, format!("Bearer {key}"))
+        .headers(dev_header())
         .header(reqwest::header::CONTENT_TYPE, "application/json")
         .body(json!({ "channelId": channel_id, "content": content }).to_string())
         .timeout(Duration::from_secs(20))
         .send()
         .await
         .map_err(crate::http::describe)?;
-    Ok(finish(response).await?["channel"].as_str().unwrap_or("Discord").to_string())
+    let channel = finish(response).await?["channel"].as_str().unwrap_or("Discord").to_string();
+    note_used(Kind::Text);
+    Ok(channel)
 }
 
 /// Plays a WAV announcement in a call: `channel_id`, or the busiest call. Returns where it played.
@@ -198,6 +252,7 @@ pub async fn announce(channel_id: Option<&str>, wav: Vec<u8>) -> Result<String, 
     let response = crate::http::client()
         .post(format!("{base}/v1/voice/announce{query}"))
         .header(reqwest::header::AUTHORIZATION, format!("Bearer {key}"))
+        .headers(dev_header())
         .header(reqwest::header::CONTENT_TYPE, "audio/wav")
         .body(wav)
         // Joining, speaking up to 30 seconds and leaving.
@@ -205,7 +260,9 @@ pub async fn announce(channel_id: Option<&str>, wav: Vec<u8>) -> Result<String, 
         .send()
         .await
         .map_err(crate::http::describe)?;
-    Ok(finish(response).await?["channel"].as_str().unwrap_or("the call").to_string())
+    let channel = finish(response).await?["channel"].as_str().unwrap_or("the call").to_string();
+    note_used(Kind::Voice);
+    Ok(channel)
 }
 
 /// The calls with people in them, from the relay's channel list: "Lobby (Zocken)".

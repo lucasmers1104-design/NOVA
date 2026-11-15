@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, Bot, Check, Copy, KeyRound, MessageSquare, Pencil, Plus, Sparkles, Square, Trash } from "lucide-react";
+import { ArrowUp, Bot, Check, Copy, KeyRound, Lock, MessageSquare, Pencil, Plus, Sparkles, Square, Trash } from "lucide-react";
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Page } from "@/components/layout/PageHeader";
 import { Button, IconButton } from "@/components/ui/Button";
@@ -7,6 +7,7 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Markdown } from "@/components/ui/Markdown";
 import { StatusMessage } from "@/components/ui/StatusMessage";
 import { notifyError } from "@/features/notifications/store";
+import { LOCKED_MODEL, useAiLocked } from "@/features/settings/DevKeyCard";
 import { cn } from "@/lib/cn";
 import { callNative } from "@/lib/native";
 import { useUi } from "@/stores/ui";
@@ -44,13 +45,16 @@ export default function AiPage() {
   const { data: messages } = useMessages(activeId);
   const navigate = useUi((s) => s.navigate);
 
-  const hasKey = keys?.[prefs.provider] ?? false;
+  // Without the developer key NOVA AI is Claude Haiku, whatever was chosen before.
+  const locked = useAiLocked();
+  const provider: ProviderId = locked ? "anthropic" : prefs.provider;
+  const hasKey = keys?.[provider] ?? false;
   const anyKey = keys ? Object.values(keys).some(Boolean) : false;
-  const model = prefs.models[prefs.provider];
+  const model = locked ? LOCKED_MODEL : prefs.models[provider];
 
   const send = async (text: string) => {
     if (!model) {
-      setFailure(`Choose a ${providerInfo(prefs.provider).name} model first.`);
+      setFailure(`Choose a ${providerInfo(provider).name} model first.`);
       return;
     }
     const requestId = crypto.randomUUID();
@@ -58,7 +62,7 @@ export default function AiPage() {
     setStreaming({ requestId, conversationId: activeId, userText: text, reply: "" });
     try {
       await streamChat(
-        { requestId, conversationId: activeId, provider: prefs.provider, model, message: text, systemPrompt: prefs.systemPrompt, temperature: prefs.temperature },
+        { requestId, conversationId: activeId, provider, model, message: text, systemPrompt: prefs.systemPrompt, temperature: prefs.temperature },
         {
           onStarted: (conversationId) => {
             setActiveId(conversationId);
@@ -122,6 +126,7 @@ export default function AiPage() {
 
 function ChatHeader({ hasKey }: { hasKey: boolean }) {
   const prefs = useAiPreferences();
+  const locked = useAiLocked();
   const { data: models, error, isFetching } = useModels(prefs.provider, hasKey);
   // Without a key (or before the list loads) the suggested models are offered,
   // so a model can be chosen up front; NOVA AI's assistant follows this choice too.
@@ -140,6 +145,17 @@ function ChatHeader({ hasKey }: { hasKey: boolean }) {
   }, [models, prefs]);
 
   const select = "h-8 rounded-full border border-white/[0.1] bg-white/[0.06] px-3 text-[12.5px] text-fg shadow-[inset_0_1px_0_rgb(255_255_255/0.08)] outline-none focus:border-line-strong [&>option]:bg-canvas-raised";
+  if (locked) {
+    return (
+      <header className="flex items-center gap-2 border-b border-line px-5 py-3">
+        <Sparkles size={16} className="text-accent-text" aria-hidden />
+        <h1 className="mr-auto text-[15px] font-semibold text-fg">NOVA AI</h1>
+        <span className="flex h-8 items-center gap-1.5 rounded-full border border-white/[0.1] bg-white/[0.06] px-3 text-[12.5px] text-fg" title="Other models need the developer key (Settings → Über NOVA).">
+          <Lock size={12} className="text-fg-subtle" aria-hidden /> Claude Haiku
+        </span>
+      </header>
+    );
+  }
   return (
     <header className="flex items-center gap-2 border-b border-line px-5 py-3">
       <Sparkles size={16} className="text-accent-text" aria-hidden />

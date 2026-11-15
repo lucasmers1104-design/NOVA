@@ -1,14 +1,14 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronDown, Hash, ImageUp, Pencil, RefreshCw, Sparkles, Users, Volume2, Wand2 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { LiveDot } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { notifyError } from "@/features/notifications/store";
 import { DiscordBotCard } from "@/features/settings/DiscordBotCard";
 import { cn } from "@/lib/cn";
 import { callNative } from "@/lib/native";
-import { CHANNELS_KEY, examples, hostOf, ME_KEY, type RelayStatus, STATUS_KEY, useRelayChannels, useRelayMe } from "./api";
+import { CHANNELS_KEY, examples, hostOf, ME_KEY, type RelayMe, type RelayStatus, STATUS_KEY, useRelayChannels, useRelayMe } from "./api";
 import { ChannelEditor, type ChannelNames, namesFrom, ServerAvatar, toAliases } from "./ChannelEditor";
 import { ClipDiscordCard } from "./ClipDiscordCard";
 import { Avatar, ProfileLink } from "./ProfileLink";
@@ -100,6 +100,7 @@ function Hero({ status, onSetup, onDisconnected, className }: { status: RelaySta
           </p>
           <p className="mt-0.5 truncate text-[20px] font-semibold text-fg">{ok ? me.data.shownAs : me.isPending ? "…" : "Keine Verbindung"}</p>
           {me.isError && <p className="mt-0.5 text-[12px] text-warning">{String(me.error)}</p>}
+          {ok && <Cooldowns me={me.data} fetchedAt={me.dataUpdatedAt} />}
         </div>
         <div className="flex flex-wrap gap-2">
           <Button size="sm" variant="secondary" icon={<RefreshCw size={13} aria-hidden />} disabled={me.isFetching} onClick={() => void me.refetch()}>
@@ -120,6 +121,30 @@ function Hero({ status, onSetup, onDisconnected, className }: { status: RelaySta
         </div>
       </div>
     </section>
+  );
+}
+
+/** Spam protection: when the next message and announcement may go out. */
+function Cooldowns({ me, fetchedAt }: { me: RelayMe; fetchedAt: number }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 15_000);
+    return () => clearInterval(timer);
+  }, []);
+  if (me.unlimited) {
+    return <p className="mt-2 text-[12px] text-fg-subtle">Entwickler-Schlüssel aktiv: keine Pausen.</p>;
+  }
+  const left = (seconds = 0) => Math.max(0, seconds - (now - fetchedAt) / 1000);
+  const chip = (label: string, seconds: number) => (
+    <span className={cn("rounded-full px-2.5 py-1 text-[11.5px] font-medium", seconds > 0 ? "bg-warning/15 text-warning" : "bg-success/15 text-success")}>
+      {label}: {seconds > 0 ? `in ${Math.ceil(seconds / 60)} Min` : "bereit"}
+    </span>
+  );
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-1.5" title="Schutz vor Spam: eine Nachricht alle 20 Minuten, eine Ansage alle 30 Minuten.">
+      {chip("Nachricht", left(me.cooldowns?.text))}
+      {chip("Ansage", left(me.cooldowns?.voice))}
+    </div>
   );
 }
 

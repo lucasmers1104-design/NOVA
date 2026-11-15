@@ -1275,6 +1275,9 @@ pub fn prepare<R: Runtime>(app: &AppHandle<R>, name: &str, input: &Value) -> Res
             if message.is_empty() {
                 return Err("There's no message to write.".into());
             }
+            if let Some(minutes) = crate::relay::cooling(crate::relay::Kind::Text) {
+                return Err(crate::relay::cooling_message(crate::relay::Kind::Text, minutes));
+            }
             let aliases = crate::relay::aliases(app);
             let target = crate::relay::pick(&aliases, input["channel"].as_str().unwrap_or_default(), crate::relay::Kind::Text)?;
             let name = super::user_name(app).unwrap_or_else(|| "NOVA".into());
@@ -1291,7 +1294,10 @@ pub fn prepare<R: Runtime>(app: &AppHandle<R>, name: &str, input: &Value) -> Res
                 return Err("There's nothing to say.".into());
             }
             if !crate::relay::configured() {
-                return Err("Speaking in calls needs NOVA-Relay. The user sets it up under Settings → Spiele & Clips.".into());
+                return Err("Speaking in calls needs NOVA-Relay. The user sets it up in the Discord tab.".into());
+            }
+            if let Some(minutes) = crate::relay::cooling(crate::relay::Kind::Voice) {
+                return Err(crate::relay::cooling_message(crate::relay::Kind::Voice, minutes));
             }
             let wanted = input["channel"].as_str().unwrap_or_default();
             let aliases = crate::relay::aliases(app);

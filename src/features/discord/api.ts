@@ -38,6 +38,10 @@ export interface RelayMe {
   /** Linked to the user's Discord account with `/nova`: messages carry its picture. */
   linked?: boolean;
   avatar?: string | null;
+  /** The developer key was sent: no cooldowns. */
+  unlimited?: boolean;
+  /** Seconds until the next message and the next announcement are allowed (spam protection). */
+  cooldowns?: { text: number; voice: number };
 }
 
 /** What `relay_link` answers: typed as `/nova code:<code>` in Discord within `expiresIn` seconds. */
@@ -55,7 +59,7 @@ export function useRelayStatus() {
 }
 
 export function useRelayMe(enabled: boolean) {
-  return useQuery({ queryKey: ME_KEY, queryFn: () => callNative<RelayMe>("relay_check"), enabled: enabled && isDesktop(), staleTime: 5 * 60_000, retry: false });
+  return useQuery({ queryKey: ME_KEY, queryFn: () => callNative<RelayMe>("relay_check"), enabled: enabled && isDesktop(), staleTime: 5 * 60_000, refetchInterval: 60_000, retry: false });
 }
 
 /** Live from the relay: who is in which call changes, so it refreshes while the page is open. */

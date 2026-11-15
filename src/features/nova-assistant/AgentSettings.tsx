@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
-import { AudioLines, BrainCircuit, Coins, Download, FolderSearch, History, Play, Plus, RefreshCw, Square, Trash, Volume2 } from "lucide-react";
+import { AudioLines, BrainCircuit, Coins, Download, FolderSearch, History, Lock, Play, Plus, RefreshCw, Square, Trash, Volume2 } from "lucide-react";
 import { type FormEvent, useEffect, useId, useState } from "react";
 import { PreviewStage, SegmentedControl, SettingCard, SettingLine, SliderRow } from "@/components/settings-kit";
 import { Button, IconButton } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Switch } from "@/components/ui/Switch";
 import { PROVIDERS, providerInfo, useModels } from "@/features/ai/api";
+import { useAiLocked } from "@/features/settings/DevKeyCard";
 import { notifyError, notify } from "@/features/notifications/store";
 import { recordChange } from "@/features/settings/recent";
 import { FIELD, MoreOptions, SettingsNotice, SettingsSection } from "@/features/settings/SettingsLayout";
@@ -118,6 +119,7 @@ const percentOf = (value: number) => `${Math.round(value * 100)} %`;
 
 /** Settings → Modell & Stimme. */
 export function AgentSettings() {
+  const aiLocked = useAiLocked();
   const { status, update, saving } = useAgent();
   const limitId = useId();
   const voiceId = useId();
@@ -153,6 +155,7 @@ export function AgentSettings() {
 
   const prefs = status?.prefs;
   const configured = PROVIDERS.filter((p) => status?.keys[p.id]);
+  const locked = aiLocked;
   const chosen: ProviderId | null = prefs?.provider ?? null;
   const usage = status?.usageThisMonth;
   const spent = (usage?.costMicros ?? 0) / 1_000_000;
@@ -231,15 +234,21 @@ export function AgentSettings() {
                 : "Wähl unter „Modelle, Kostenlimit und Sprache“ ein Modell für diesen Anbieter."
           }
         >
-          <select id={providerId} className={SELECT} disabled={!prefs || saving} value={chosen ?? "auto"} onChange={(event) => update({ provider: event.target.value === "auto" ? null : (event.target.value as ProviderId) })}>
-            <option value="auto">Automatisch (der erste verbundene)</option>
-            {PROVIDERS.map((p) => (
-              <option key={p.id} value={p.id} disabled={!status?.keys[p.id]}>
-                {p.name}
-                {status?.keys[p.id] ? "" : " (kein Schlüssel)"}
-              </option>
-            ))}
-          </select>
+          {locked ? (
+            <span className="flex items-center gap-1.5 text-[13px] font-medium text-fg" title={LOCK_NOTE}>
+              <Lock size={13} className="text-fg-subtle" aria-hidden /> Claude Haiku
+            </span>
+          ) : (
+            <select id={providerId} className={SELECT} disabled={!prefs || saving} value={chosen ?? "auto"} onChange={(event) => update({ provider: event.target.value === "auto" ? null : (event.target.value as ProviderId) })}>
+              <option value="auto">Automatisch (der erste verbundene)</option>
+              {PROVIDERS.map((p) => (
+                <option key={p.id} value={p.id} disabled={!status?.keys[p.id]}>
+                  {p.name}
+                  {status?.keys[p.id] ? "" : " (kein Schlüssel)"}
+                </option>
+              ))}
+            </select>
+          )}
         </SettingLine>
         {/* Flipping the switch may only open the dialog: no change yet. */}
         <div data-no-record>
@@ -254,7 +263,14 @@ export function AgentSettings() {
       <AutoModeDialog open={confirmingAuto} onClose={() => setConfirmingAuto(false)} onConfirm={() => setAutoMode(true)} />
 
       <MoreOptions title="Modelle, Kostenlimit und Sprache" description="Welches Modell je Anbieter, wie gründlich es denkt und was ein Monat kosten darf." icon={Coins}>
-        {PROVIDERS.filter((p) => status?.keys[p.id] || p.id === "anthropic").map((p) => (
+        {locked && (
+          <SettingLine label="Modell" description={LOCK_NOTE}>
+            <span className="flex items-center gap-1.5 text-[13px] font-medium text-fg">
+              <Lock size={13} className="text-fg-subtle" aria-hidden /> Claude Haiku
+            </span>
+          </SettingLine>
+        )}
+        {PROVIDERS.filter((p) => !locked && (status?.keys[p.id] || p.id === "anthropic")).map((p) => (
           <ModelRow
             key={p.id}
             provider={p.id}
@@ -403,6 +419,8 @@ export function voiceDescription(voice: string, nova: NovaVoiceStatus | null): s
       return "Thorsten klingt natürlich und läuft auf diesem PC, ganz ohne Internet.";
   }
 }
+
+const LOCK_NOTE = "Ohne Entwickler-Schlüssel antwortet NOVA AI immer mit Claude Haiku (dein Anthropic-Schlüssel). Andere Modelle und Anbieter schaltet der Entwickler-Schlüssel unter Über NOVA frei.";
 
 function ModelRow({ provider, name, hasKey, value, disabled, onChange }: { provider: ProviderId; name: string; hasKey: boolean; value: string; disabled: boolean; onChange: (model: string) => void }) {
   const { data: models, isLoading, error } = useModels(provider, hasKey);

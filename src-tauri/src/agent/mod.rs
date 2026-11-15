@@ -289,6 +289,11 @@ fn resolve_provider(db: &Database, prefs: &AgentPrefs) -> Option<(Provider, Stri
     if provider::dev_endpoint().is_some() {
         return Some((Provider::Anthropic, provider::DEFAULT_ANTHROPIC_MODEL.into(), "dev-mock-key".into()));
     }
+    // Without the developer key only Claude Haiku answers, whatever was chosen.
+    if !crate::devkey::unlocked() {
+        let key = Provider::Anthropic.api_key().ok()?;
+        return Some((Provider::Anthropic, crate::devkey::LOCKED_MODEL.into(), key));
+    }
     let order: Vec<Provider> = match prefs.provider {
         Some(p) => vec![p],
         None => vec![Provider::Anthropic, Provider::Openai, Provider::Gemini],

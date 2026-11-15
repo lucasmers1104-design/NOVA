@@ -139,6 +139,8 @@
     "allow-discord-chat-set",
     "allow-discord-bot-set",
     "allow-discord-bot-check",
+    "allow-dev-key-status",
+    "allow-dev-key-set",
     "allow-relay-status",
     "allow-relay-set",
     "allow-relay-check",

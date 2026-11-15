@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.12.1 — 2026-11-15
+
+### Changed
+- **Spam protection for Discord**: through NOVA, each person can send one Discord message every 20 minutes and make one announcement in a call every 30 minutes. The relay enforces it; NOVA says how long is left instead of asking for an approval that would be refused, and the Discord tab shows when the next one is possible.
+- **NOVA AI answers with Claude Haiku**: the assistant and the NOVA AI page use Claude Haiku with your Anthropic key. Other models and providers need the developer key.
+
+### Added
+- **Developer key** under Settings → Über NOVA: whoever has it can choose every model and provider and has no Discord cooldowns.
+
 ## 1.12.0 — 2026-11-15
 
 ### Added

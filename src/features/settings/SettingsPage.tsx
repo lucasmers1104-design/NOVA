@@ -25,6 +25,7 @@ import { greetingFor } from "@/lib/time";
 import { REFRESH_INTERVALS_MS, type TitleBarClock, useSettings } from "@/stores/settings";
 import { useUi } from "@/stores/ui";
 import { AppearanceSettings } from "./AppearanceSettings";
+import { DevKeyCard } from "./DevKeyCard";
 import { GamesSettings } from "./GamesSettings";
 import { AiProviderSettings, IntegrationsSettings, ProfilesSettings, StartupSettings, UpdatesSettings, useExternalConnections } from "./ExtraSettings";
 import { NavigationSettings } from "./NavigationSettings";
@@ -159,6 +160,7 @@ export const SEARCHABLE: readonly { label: string; section: string; words?: stri
   { label: "Nutzungsstatistik senden", section: "privacy", words: "usage statistics statistik telemetrie zustimmung widerrufen datenschutz" },
   { label: "Version", section: "about", words: "what's new was ist neu" },
   { label: "Einstellungen zurücksetzen", section: "about", words: "reset settings zurücksetzen" },
+  { label: "Entwickler-Schlüssel", section: "about", words: "developer dev key entwickler schlüssel freischalten unlock" },
 ];
 
 /** Words as people type them: split at anything that is no letter or digit ("Auto-Modus" is two). */
@@ -558,6 +560,7 @@ function AboutSection() {
           <ResetButton onReset={resetSettings} />
         </SettingLine>
       </SettingCard>
+      <DevKeyCard />
     </SettingsSection>
   );
 }
