@@ -9,16 +9,20 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { haptic } from "../../src/haptics";
 import { onNotificationTap } from "../../src/notify";
 import { useCompanion } from "../../src/store";
-import { blur, CHROME_FONT_SCALE, fonts, motion, radius, themed, TOUCH, useTheme } from "../../src/theme";
+import { blur, CHROME_FONT_SCALE, fonts, motion, themed, TOUCH, useTheme } from "../../src/theme";
 import { toast } from "../../src/toast";
-import { CountBadge, GradientFill, Icon, type IconName, Screen, SkeletonScreen, Text, useBlurTarget, useKeyboardVisible, useNow } from "../../src/ui";
+import { CountBadge, GlassSheen, GradientFill, Icon, type IconName, Screen, SkeletonScreen, Text, useBlurTarget, useKeyboardVisible, useNow } from "../../src/ui";
 
 const ICONS: Record<string, IconName> = { index: "home", chat: "chat", tasks: "tasks", approvals: "shield" };
-const PILL_WIDTH = 56;
+const PILL_HEIGHT = 50;
+const BAR_HEIGHT = 62;
 // Android blurs with RenderEffect from version 12 (API 31). Older phones get the same bar, just less see-through.
 const CAN_BLUR = Platform.OS !== "android" || Number(Platform.Version) >= 31;
 
-/** The floating bar: glass over the blurred screen, with a pill that springs to the active tab. */
+/**
+ * The floating bar: a capsule of glass over the blurred screen, with a pill that springs to the
+ * active tab, and beside it a round button to talk to NOVA from anywhere.
+ */
 function TabBar({ state, descriptors, navigateToTab, insets }: BottomTabBarProps) {
   const styles = useStyles();
   const { colors, elevation } = useTheme();
@@ -28,36 +32,34 @@ function TabBar({ state, descriptors, navigateToTab, insets }: BottomTabBarProps
   const reduced = useReducedMotion();
   const [width, setWidth] = useState(0);
   const tab = width > 0 ? width / state.routes.length : 0;
+  const pillWidth = Math.min(Math.max(tab - 6, 0), 72);
   const x = useSharedValue(0);
 
   useEffect(() => {
-    const to = state.index * tab + (tab - PILL_WIDTH) / 2;
+    const to = state.index * tab + (tab - pillWidth) / 2;
     x.value = reduced ? to : withSpring(to, motion.spring);
-  }, [state.index, tab, reduced, x]);
+  }, [state.index, tab, pillWidth, reduced, x]);
 
   const pill = useAnimatedStyle(() => ({ transform: [{ translateX: x.value }] }));
 
   // The keyboard needs the room, and a bar floating on top of it helps no one.
   if (keyboard) return null;
 
+  const glass = (
+    <>
+      <BlurView style={StyleSheet.absoluteFill} tint={colors.scheme} intensity={blur.bar} blurMethod="dimezisBlurViewSdk31Plus" blurTarget={target ?? undefined} />
+      <View style={[StyleSheet.absoluteFill, { backgroundColor: blurred ? colors.bar : colors.barSolid }]} />
+      <GlassSheen />
+    </>
+  );
+
   return (
     <View style={[styles.wrap, { bottom: Math.max(insets.bottom, 10) + 6 }]} pointerEvents="box-none">
       {/* A shadow under see-through glass shows through it as a grey smudge, so only the solid bar casts one. */}
       <View style={[styles.bar, !blurred && elevation.floating]}>
-        <BlurView
-          style={StyleSheet.absoluteFill}
-          tint={colors.scheme}
-          intensity={blur.bar}
-          blurMethod="dimezisBlurViewSdk31Plus"
-          blurTarget={target ?? undefined}
-        />
-        <View style={[StyleSheet.absoluteFill, { backgroundColor: blurred ? colors.bar : colors.barSolid }]} />
+        {glass}
         <View style={styles.tabs} accessibilityRole="tablist" onLayout={(event) => setWidth(event.nativeEvent.layout.width)}>
-          {tab > 0 && (
-            <Animated.View style={[styles.pill, pill]} pointerEvents="none">
-              <GradientFill opacity={0.3} />
-            </Animated.View>
-          )}
+          {tab > 0 && <Animated.View style={[styles.pill, { width: pillWidth }, pill]} pointerEvents="none" />}
           {state.routes.map((route, index) => {
             const options = descriptors[route.key]?.options ?? {};
             const focused = state.index === index;
@@ -77,7 +79,7 @@ function TabBar({ state, descriptors, navigateToTab, insets }: BottomTabBarProps
                 style={styles.tab}
               >
                 <View style={styles.icon}>
-                  <Icon name={ICONS[route.name] ?? "home"} size={21} color={focused ? colors.text : colors.subtle} strokeWidth={focused ? 2 : 1.8} />
+                  <Icon name={ICONS[route.name] ?? "home"} size={20} color={focused ? colors.onTabActive : colors.muted} strokeWidth={focused ? 2.1 : 1.8} />
                   {badge > 0 && (
                     <View style={styles.badge}>
                       <CountBadge count={badge} />
@@ -85,7 +87,7 @@ function TabBar({ state, descriptors, navigateToTab, insets }: BottomTabBarProps
                   )}
                 </View>
                 {/* Capped: four labels share the width of the screen, whatever the system font size. */}
-                <Text variant="footnote" maxFontSizeMultiplier={CHROME_FONT_SCALE} numberOfLines={1} style={[styles.label, { color: focused ? colors.text : colors.subtle }]}>
+                <Text variant="footnote" maxFontSizeMultiplier={CHROME_FONT_SCALE} numberOfLines={1} style={[styles.label, { color: focused ? colors.onTabActive : colors.muted }]}>
                   {label}
                 </Text>
               </Pressable>
@@ -93,6 +95,21 @@ function TabBar({ state, descriptors, navigateToTab, insets }: BottomTabBarProps
           })}
         </View>
       </View>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Mit NOVA sprechen"
+        onPress={() => {
+          haptic("select");
+          router.push({ pathname: "/capture", params: { dictate: "1" } });
+        }}
+        style={({ pressed }) => [styles.talk, !blurred && elevation.floating, pressed && styles.pressed]}
+      >
+        {glass}
+        <View style={[StyleSheet.absoluteFill, styles.talkTint]}>
+          <GradientFill from={colors.accent} to={colors.accentDeep} opacity={colors.scheme === "dark" ? 0.5 : 0.9} />
+        </View>
+        <Icon name="mic" size={24} color="#FFFFFF" strokeWidth={2} />
+      </Pressable>
     </View>
   );
 }
@@ -143,12 +160,15 @@ export default function TabsLayout() {
 }
 
 const useStyles = themed(({ colors }) => ({
-  wrap: { position: "absolute", left: 16, right: 16 },
-  bar: { borderRadius: 28, borderWidth: 1, borderColor: colors.border, borderTopColor: colors.borderTop, overflow: "hidden" },
-  tabs: { flexDirection: "row", paddingVertical: 8 },
-  tab: { flex: 1, alignItems: "center", gap: 3, minHeight: TOUCH, justifyContent: "center" },
-  icon: { width: PILL_WIDTH, height: 30, alignItems: "center", justifyContent: "center" },
-  pill: { position: "absolute", top: 8, left: 0, width: PILL_WIDTH, height: 30, borderRadius: radius.pill, backgroundColor: colors.tints.violet.bg, overflow: "hidden" },
-  label: { fontFamily: fonts.semibold, fontSize: 11, lineHeight: 14, letterSpacing: 0.1 },
-  badge: { position: "absolute", top: -4, right: 4 },
+  wrap: { position: "absolute", left: 16, right: 16, flexDirection: "row", alignItems: "center", gap: 10 },
+  bar: { flex: 1, height: BAR_HEIGHT, borderRadius: BAR_HEIGHT / 2, borderWidth: 1, borderColor: colors.border, borderTopColor: colors.borderTop, overflow: "hidden" },
+  tabs: { flex: 1, flexDirection: "row", alignItems: "center", paddingHorizontal: 6 },
+  tab: { flex: 1, alignItems: "center", gap: 1, height: PILL_HEIGHT, minHeight: TOUCH, justifyContent: "center" },
+  icon: { height: 24, alignItems: "center", justifyContent: "center" },
+  pill: { position: "absolute", top: (BAR_HEIGHT - 2 - PILL_HEIGHT) / 2, left: 6, height: PILL_HEIGHT, borderRadius: PILL_HEIGHT / 2, backgroundColor: colors.tabActive },
+  label: { fontFamily: fonts.semibold, fontSize: 10.5, lineHeight: 13, letterSpacing: 0.1 },
+  badge: { position: "absolute", top: -5, right: -12 },
+  talk: { width: BAR_HEIGHT, height: BAR_HEIGHT, borderRadius: BAR_HEIGHT / 2, borderWidth: 1, borderColor: colors.border, borderTopColor: colors.borderTop, overflow: "hidden", alignItems: "center", justifyContent: "center" },
+  talkTint: { borderRadius: BAR_HEIGHT / 2, overflow: "hidden" },
+  pressed: { transform: [{ scale: 0.94 }] },
 }));

@@ -1,9 +1,10 @@
-// NOVA's design tokens for the phone (1.2): two palettes with the same names, one
+// NOVA's design tokens for the phone (1.3): two palettes with the same names, one
 // spacing scale, one type scale in Inter, radii, elevation, blur and motion. Screens
 // and components read these and nothing else, so dark and light can't drift apart.
 //
-// Dark is the look NOVA has on the PC: layered glass over a near-black ground with a
-// light rim from above, violet-to-cyan accents from assets/brand/nova-icon.svg.
+// Dark is "Liquid": clear glass with a bright upper rim over soft coloured light on a
+// near-black ground. Light is "Paper": milky glass on warm paper. In both, colour is
+// for status and the one main action is a plain solid pill (white on dark, ink on light).
 import { type ImageStyle, StyleSheet, type TextStyle, useColorScheme, type ViewStyle } from "react-native";
 import { useAppearance } from "./appearance";
 
@@ -36,6 +37,19 @@ export interface Palette {
   accentDeep: string;
   /** Text on an accent fill. */
   onAccent: string;
+  /** The one main action of a screen: a solid pill. */
+  primary: string;
+  onPrimary: string;
+  /** The user's own chat bubble. */
+  bubble: string;
+  onBubble: string;
+  /** The tab bar's active pill and what is on it. */
+  tabActive: string;
+  onTabActive: string;
+  /** The bright gradient on the upper half of glass (its strongest opacity). */
+  sheen: number;
+  /** The three soft lights of the backdrop: top left, right, bottom. */
+  lights: [string, string, string];
   cyan: string;
   success: string;
   warning: string;
@@ -53,27 +67,35 @@ export interface Palette {
 
 const dark: Palette = {
   scheme: "dark",
-  background: "#05060B",
-  raised: "#11131F",
-  surface: "rgba(255,255,255,0.045)",
-  surfaceStrong: "rgba(255,255,255,0.08)",
-  surfaceHigh: "rgba(255,255,255,0.12)",
-  field: "rgba(0,0,0,0.32)",
-  border: "rgba(255,255,255,0.08)",
-  borderTop: "rgba(255,255,255,0.18)",
-  text: "#F5F6FA",
-  muted: "#A3A6B8",
-  subtle: "#7F839A",
-  accent: "#8B5CF6",
-  accentText: "#A78BFA",
-  accentDeep: "#5B2FD6",
+  background: "#07080D",
+  raised: "#12131D",
+  surface: "rgba(255,255,255,0.05)",
+  surfaceStrong: "rgba(255,255,255,0.09)",
+  surfaceHigh: "rgba(255,255,255,0.14)",
+  field: "rgba(0,0,0,0.3)",
+  border: "rgba(255,255,255,0.13)",
+  borderTop: "rgba(255,255,255,0.3)",
+  text: "#F5F6FB",
+  muted: "#A9ABBA",
+  subtle: "#8A8DA0",
+  accent: "#8B7BFF",
+  accentText: "#B9B0FF",
+  accentDeep: "#6D5CF0",
   onAccent: "#FFFFFF",
+  primary: "#F5F6FB",
+  onPrimary: "#0B0C14",
+  bubble: "#7B69F7",
+  onBubble: "#FFFFFF",
+  tabActive: "rgba(255,255,255,0.15)",
+  onTabActive: "#FFFFFF",
+  sheen: 0.11,
+  lights: ["#7C5CFF", "#22D3EE", "#F472B6"],
   cyan: "#22D3EE",
   success: "#34D399",
   warning: "#FBBF24",
   danger: "#F87171",
-  bar: "rgba(15,16,26,0.62)",
-  barSolid: "rgba(15,16,26,0.96)",
+  bar: "rgba(22,23,34,0.55)",
+  barSolid: "rgba(22,23,34,0.97)",
   scrim: "rgba(2,3,8,0.66)",
   shadow: "#000000",
   glow: 1,
@@ -87,34 +109,42 @@ const dark: Palette = {
   },
 };
 
-// Light keeps the structure and turns the glass into paper: white cards on a cool grey,
-// darker accents so text and icons hold 4.5:1 against them.
+// Light keeps the structure and turns the glass milky: white glass on warm paper, ink
+// for the main action, darker accents so text and icons hold 4.5:1 against them.
 const light: Palette = {
   scheme: "light",
-  background: "#F3F4F9",
+  background: "#F3F2EF",
   raised: "#FFFFFF",
-  surface: "rgba(255,255,255,0.82)",
-  surfaceStrong: "rgba(17,19,40,0.05)",
-  surfaceHigh: "rgba(17,19,40,0.09)",
-  field: "rgba(17,19,40,0.045)",
-  border: "rgba(17,19,40,0.09)",
-  borderTop: "rgba(255,255,255,0.95)",
-  text: "#11131C",
-  muted: "#51566B",
-  subtle: "#6A6F85",
-  accent: "#7C3AED",
-  accentText: "#6D28D9",
-  accentDeep: "#5B21B6",
+  surface: "rgba(255,255,255,0.66)",
+  surfaceStrong: "rgba(21,22,28,0.05)",
+  surfaceHigh: "rgba(21,22,28,0.09)",
+  field: "rgba(21,22,28,0.045)",
+  border: "rgba(21,22,28,0.07)",
+  borderTop: "rgba(255,255,255,1)",
+  text: "#15161C",
+  muted: "#55576A",
+  subtle: "#666879",
+  accent: "#5B4BEA",
+  accentText: "#4B3FD1",
+  accentDeep: "#3A2FB8",
   onAccent: "#FFFFFF",
+  primary: "#15161C",
+  onPrimary: "#FFFFFF",
+  bubble: "#15161C",
+  onBubble: "#FFFFFF",
+  tabActive: "#15161C",
+  onTabActive: "#FFFFFF",
+  sheen: 0.55,
+  lights: ["#8B7BFF", "#67E8F9", "#FDBA74"],
   cyan: "#0E7490",
   success: "#047857",
   warning: "#B45309",
   danger: "#DC2626",
-  bar: "rgba(255,255,255,0.66)",
+  bar: "rgba(255,255,255,0.6)",
   barSolid: "rgba(255,255,255,0.97)",
   scrim: "rgba(17,19,40,0.38)",
-  shadow: "#1B1F3B",
-  glow: 0.45,
+  shadow: "#28245A",
+  glow: 0.7,
   tints: {
     violet: { fg: "#6D28D9", bg: "rgba(124,58,237,0.12)" },
     cyan: { fg: "#0E7490", bg: "rgba(8,145,178,0.12)" },
@@ -130,7 +160,7 @@ export type TintName = keyof Palette["tints"];
 /** One scale for every gap and padding. */
 export const space = { xs: 4, sm: 8, md: 12, lg: 16, xl: 20, xxl: 28, page: 20 } as const;
 
-export const radius = { sm: 10, md: 14, lg: 18, xl: 24, pill: 999 } as const;
+export const radius = { sm: 10, md: 14, lg: 20, xl: 28, pill: 999 } as const;
 
 /** Nothing a finger has to hit is smaller than this (Android's own minimum is 48 dp, Apple's 44 pt). */
 export const TOUCH = 44;
@@ -150,7 +180,7 @@ export type TypeVariant = "display" | "title" | "headline" | "body" | "bodyStron
 
 /** The type scale. Sizes scale with Android's font size setting; line heights follow. */
 export const type: Record<TypeVariant, TextStyle> = {
-  display: { fontFamily: fonts.bold, fontSize: 31, lineHeight: 37, letterSpacing: -0.8 },
+  display: { fontFamily: fonts.bold, fontSize: 31, lineHeight: 36, letterSpacing: -1 },
   title: { fontFamily: fonts.bold, fontSize: 23, lineHeight: 29, letterSpacing: -0.45 },
   headline: { fontFamily: fonts.semibold, fontSize: 16.5, lineHeight: 22, letterSpacing: -0.2 },
   body: { fontFamily: fonts.regular, fontSize: 15.5, lineHeight: 22, letterSpacing: -0.1 },
@@ -164,7 +194,7 @@ export const type: Record<TypeVariant, TextStyle> = {
 export const CHROME_FONT_SCALE = 1.25;
 
 /** Blur strength behind floating surfaces (expo-blur's 1 to 100). */
-export const blur = { bar: 42 } as const;
+export const blur = { bar: 48 } as const;
 
 /**
  * Motion. Presses and the tab pill are springs: they follow the finger and settle.
@@ -190,7 +220,7 @@ function build(colors: Palette): Theme {
     colors,
     elevation: {
       none: {},
-      raised: { elevation: 3, shadowColor: colors.shadow, shadowOpacity: 0.18 * strength, shadowRadius: 10, shadowOffset: { width: 0, height: 4 } },
+      raised: { elevation: 3, shadowColor: colors.shadow, shadowOpacity: 0.22 * strength, shadowRadius: 22, shadowOffset: { width: 0, height: 12 } },
       floating: { elevation: 16, shadowColor: colors.shadow, shadowOpacity: 0.45 * strength, shadowRadius: 18, shadowOffset: { width: 0, height: 8 } },
     },
   };

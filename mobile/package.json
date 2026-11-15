@@ -9,7 +9,8 @@
     "ios": "expo run:ios",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "apk:info": "node scripts/apk-info.mjs"
+    "apk:info": "node scripts/apk-info.mjs",
+    "build:apk": "node scripts/eas-build.mjs"
   },
   "dependencies": {
     "@expo-google-fonts/inter": "^0.4.2",

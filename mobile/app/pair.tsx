@@ -79,10 +79,11 @@ function Corners() {
   const styles = useStyles();
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="none">
-      <View style={[styles.corner, { top: 18, left: 18, borderTopWidth: 3, borderLeftWidth: 3, borderTopLeftRadius: 16 }]} />
-      <View style={[styles.corner, { top: 18, right: 18, borderTopWidth: 3, borderRightWidth: 3, borderTopRightRadius: 16 }]} />
-      <View style={[styles.corner, { bottom: 18, left: 18, borderBottomWidth: 3, borderLeftWidth: 3, borderBottomLeftRadius: 16 }]} />
-      <View style={[styles.corner, { bottom: 18, right: 18, borderBottomWidth: 3, borderRightWidth: 3, borderBottomRightRadius: 16 }]} />
+      <View style={[styles.corner, { top: 0, left: 0, borderTopWidth: 4, borderLeftWidth: 4, borderTopLeftRadius: 40 }]} />
+      <View style={[styles.corner, { top: 0, right: 0, borderTopWidth: 4, borderRightWidth: 4, borderTopRightRadius: 40 }]} />
+      <View style={[styles.corner, { bottom: 0, left: 0, borderBottomWidth: 4, borderLeftWidth: 4, borderBottomLeftRadius: 40 }]} />
+      <View style={[styles.corner, { bottom: 0, right: 0, borderBottomWidth: 4, borderRightWidth: 4, borderBottomRightRadius: 40 }]} />
+      <View style={styles.scanLine} />
     </View>
   );
 }
@@ -375,8 +376,9 @@ const useStyles = themed(({ colors }) => ({
   point: { flexDirection: "row", gap: space.md, alignItems: "flex-start" },
   titleBlock: { gap: space.sm },
   nearby: { flexDirection: "row", alignItems: "center", gap: space.md },
-  camera: { aspectRatio: 1, borderRadius: 28, overflow: "hidden", borderWidth: 1, borderColor: colors.border, backgroundColor: "#000000" },
-  corner: { position: "absolute", width: 44, height: 44, borderColor: colors.cyan },
+  camera: { aspectRatio: 1, borderRadius: 40, overflow: "hidden", backgroundColor: "#000000" },
+  corner: { position: "absolute", width: 58, height: 58, borderColor: "#FFFFFF" },
+  scanLine: { position: "absolute", left: 30, right: 30, top: "47%", height: 2, borderRadius: 1, backgroundColor: colors.accentText, shadowColor: colors.accent, shadowOpacity: 1, shadowRadius: 10, shadowOffset: { width: 0, height: 0 }, elevation: 4 },
   cameraAsk: { gap: space.md, alignItems: "center", paddingVertical: space.xxl },
   center: { flex: 1, alignItems: "center", justifyContent: "center", gap: space.md, paddingHorizontal: space.xxl },
   sectionTitle: { fontFamily: fonts.semibold, paddingHorizontal: space.xs },

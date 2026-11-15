@@ -40,3 +40,6 @@ server/relay/
 plugins/relay-invite/
 dist-plugins/
 docs/prompts/
+
+# A copy of ../packages/companion-protocol, only during a cloud build (scripts/eas-build.mjs).
+mobile/vendor/

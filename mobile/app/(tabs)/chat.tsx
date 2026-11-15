@@ -10,7 +10,7 @@ import { appendDictation } from "../../src/logic";
 import { useCompanion } from "../../src/store";
 import { radius, space, TAB_BAR_ROOM, themed, TOUCH, type, useTheme } from "../../src/theme";
 import { toast } from "../../src/toast";
-import { Button, Dot, GradientFill, Icon, linkText, OfflineBanner, Orb, Press, TabScene, Text, useKeyboardVisible, useLinkColor } from "../../src/ui";
+import { Button, Dot, GlassSheen, GradientFill, Icon, linkText, OfflineBanner, Orb, Press, TabScene, Text, useKeyboardVisible, useLinkColor } from "../../src/ui";
 
 const STATE_TEXT: Partial<Record<ChatEntry["state"], string>> = {
   sending: "Wartet auf deinen PC",
@@ -50,6 +50,7 @@ const NovaReply = memo(function NovaReply({ entry, onRetry }: RowProps) {
       <Orb size={28} active={entry.state === "running"} />
       {/* A plain pressable, not Press: a bubble that shrank under every scrolling finger would be restless. */}
       <Pressable accessibilityHint={entry.text ? "Gedrückt halten zum Kopieren" : undefined} onLongPress={entry.text ? () => void copy(entry.text) : undefined} style={styles.novaBubble}>
+        <GlassSheen />
         {entry.steps.length > 0 && (
           <View style={styles.steps}>
             {entry.steps.map((step) => (
@@ -93,10 +94,12 @@ const UserBubble = memo(function UserBubble({ entry }: { entry: ChatEntry }) {
   const { colors } = useTheme();
   return (
     <Pressable accessibilityHint="Gedrückt halten zum Kopieren" onLongPress={() => void copy(entry.text)} style={styles.userBubble}>
-      <View style={StyleSheet.absoluteFill} pointerEvents="none">
-        <GradientFill from={colors.accent} to={colors.accentDeep} />
-      </View>
-      <Text tone="onAccent">{entry.text}</Text>
+      {colors.scheme === "dark" && (
+        <View style={StyleSheet.absoluteFill} pointerEvents="none">
+          <GradientFill from={colors.accent} to={colors.accentDeep} />
+        </View>
+      )}
+      <Text style={{ color: colors.onBubble }}>{entry.text}</Text>
     </Pressable>
   );
 });
@@ -147,8 +150,9 @@ export default function ChatScreen() {
     <TabScene>
       {/* "padding" adds only what the keyboard really covers, so it is right whether or not Android resizes the window itself. */}
       <KeyboardAvoidingView style={styles.fill} behavior="padding">
-        <View style={[styles.topBar, { paddingTop: insets.top + 10 }]}>
-          <Orb size={34} active={link === "online" && busy} />
+        <View style={[styles.topBar, { marginTop: insets.top + 10 }]}>
+          <GlassSheen />
+          <Orb size={40} active={link === "online" && busy} />
           <View style={styles.fill}>
             <Text variant="headline" accessibilityRole="header">
               NOVA AI
@@ -200,6 +204,7 @@ export default function ChatScreen() {
             </Text>
           )}
           <View style={styles.field}>
+            <GlassSheen />
             <Press
               role="switch"
               state={{ checked: screenshot }}
@@ -223,9 +228,8 @@ export default function ChatScreen() {
               accessibilityLabel="Auftrag an NOVA"
             />
             {text.trim() ? (
-              <Press label="Senden" onPress={() => submit()} haptic={false} style={styles.send}>
-                <GradientFill radius={50} from={colors.accent} to={colors.accentDeep} />
-                <Icon name="send" size={19} color={colors.onAccent} />
+              <Press label="Senden" onPress={() => submit()} haptic={false} style={[styles.send, { backgroundColor: colors.primary }]}>
+                <Icon name="send" size={19} color={colors.onPrimary} />
               </Press>
             ) : (
               <Press
@@ -235,9 +239,9 @@ export default function ChatScreen() {
                   typed.current = text;
                   void dictation.start();
                 }}
-                style={[styles.send, { backgroundColor: dictation.listening ? colors.cyan : colors.surfaceStrong }]}
+                style={[styles.send, { backgroundColor: dictation.listening ? colors.cyan : colors.primary }]}
               >
-                <Icon name="mic" size={20} color={dictation.listening ? colors.background : colors.text} />
+                <Icon name="mic" size={20} color={dictation.listening ? colors.background : colors.onPrimary} />
               </Press>
             )}
           </View>
@@ -254,16 +258,16 @@ export default function ChatScreen() {
 
 const useStyles = themed(({ colors }) => ({
   fill: { flex: 1 },
-  topBar: { flexDirection: "row", alignItems: "center", gap: space.md, paddingHorizontal: space.lg + 2, paddingBottom: space.md, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+  topBar: { flexDirection: "row", alignItems: "center", gap: space.md, marginHorizontal: space.lg, paddingLeft: 10, paddingRight: space.lg, paddingVertical: 10, borderRadius: radius.pill, backgroundColor: colors.bar, borderWidth: 1, borderColor: colors.border, borderTopColor: colors.borderTop, overflow: "hidden" },
   link: { flexDirection: "row", alignItems: "center", gap: 6 },
   list: { padding: space.lg, gap: space.md, flexGrow: 1 },
   // The list is upside down; its empty state has to be turned back.
   empty: { flex: 1, alignItems: "center", justifyContent: "center", gap: space.sm + 2, padding: space.xl, transform: [{ scaleY: -1 }] },
   suggestions: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: space.sm, marginTop: space.sm + 2 },
-  suggestion: { minHeight: TOUCH, justifyContent: "center", paddingHorizontal: 14, paddingVertical: space.sm, borderRadius: radius.pill, backgroundColor: colors.surfaceStrong, borderWidth: 1, borderColor: colors.border },
-  userBubble: { alignSelf: "flex-end", maxWidth: "84%", borderRadius: radius.xl, borderBottomRightRadius: 8, paddingHorizontal: space.lg, paddingVertical: 11, overflow: "hidden" },
+  suggestion: { minHeight: TOUCH, justifyContent: "center", paddingHorizontal: 16, paddingVertical: space.sm, borderRadius: radius.pill, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderTopColor: colors.borderTop },
+  userBubble: { alignSelf: "flex-end", maxWidth: "80%", borderRadius: 22, borderBottomRightRadius: 6, paddingHorizontal: space.lg, paddingVertical: space.md, overflow: "hidden", backgroundColor: colors.bubble },
   novaRow: { flexDirection: "row", gap: space.sm, alignItems: "flex-start", maxWidth: "94%" },
-  novaBubble: { flexShrink: 1, gap: space.sm + 2, padding: 14, borderRadius: radius.xl, borderTopLeftRadius: 8, backgroundColor: colors.surface, borderWidth: StyleSheet.hairlineWidth * 2, borderColor: colors.border, borderTopColor: colors.borderTop },
+  novaBubble: { flexShrink: 1, gap: space.sm + 2, paddingHorizontal: space.lg, paddingVertical: 14, borderRadius: 22, borderTopLeftRadius: 6, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderTopColor: colors.borderTop, overflow: "hidden" },
   steps: { gap: 6, paddingBottom: space.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   step: { flexDirection: "row", gap: space.sm, alignItems: "center" },
   stepIcon: { width: 18, height: 18, borderRadius: 9, alignItems: "center", justifyContent: "center" },
@@ -271,8 +275,8 @@ const useStyles = themed(({ colors }) => ({
   shot: { width: "100%", borderRadius: radius.md, backgroundColor: "#000000" },
   composer: { paddingHorizontal: 14, paddingTop: space.sm, gap: 6 },
   hint: { paddingHorizontal: space.sm },
-  field: { flexDirection: "row", alignItems: "flex-end", gap: 4, padding: 5, borderRadius: 28, backgroundColor: colors.raised, borderWidth: 1, borderColor: colors.border, borderTopColor: colors.borderTop },
+  field: { flexDirection: "row", alignItems: "flex-end", gap: 4, padding: 7, paddingLeft: 9, borderRadius: 32, backgroundColor: colors.barSolid, borderWidth: 1, borderColor: colors.border, borderTopColor: colors.borderTop, overflow: "hidden" },
   inline: { width: TOUCH, height: TOUCH, borderRadius: TOUCH / 2, alignItems: "center", justifyContent: "center" },
   input: { flex: 1, color: colors.text, maxHeight: 130, minHeight: TOUCH, paddingVertical: 10, paddingHorizontal: 4 },
-  send: { width: TOUCH, height: TOUCH, borderRadius: TOUCH / 2, alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  send: { width: 48, height: 48, borderRadius: 24, alignItems: "center", justifyContent: "center", overflow: "hidden" },
 }));

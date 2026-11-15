@@ -5,25 +5,59 @@ import { RefreshControl, ScrollView, useWindowDimensions, View } from "react-nat
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { daySummary, greeting } from "../../src/logic";
 import { useCompanion } from "../../src/store";
-import { fonts, radius, space, TAB_BAR_ROOM, themed, type TintName, useTheme } from "../../src/theme";
+import { CHROME_FONT_SCALE, fonts, radius, space, TAB_BAR_ROOM, themed, type TintName, TOUCH, useTheme } from "../../src/theme";
 import { toast } from "../../src/toast";
 import { useUpdates } from "../../src/updates";
-import { Badge, Card, Icon, IconButton, type IconName, IconTile, linkText, OfflineBanner, Orb, Press, ScreenHeader, SectionHeader, TabScene, Text, useLinkColor, useNow } from "../../src/ui";
+import { Card, GlassSheen, Icon, IconButton, type IconName, IconTile, linkText, OfflineBanner, Orb, Press, ScreenHeader, SectionHeader, TabScene, Text, useLinkColor, useNow } from "../../src/ui";
 
 const NOW = { kind: "now" } as const;
+
+/** "Sonntag, 15. November" in German. */
+function dateLine(date: Date): string {
+  try {
+    return date.toLocaleDateString("de-DE", { weekday: "long", day: "numeric", month: "long" });
+  } catch {
+    return "";
+  }
+}
 
 /** One tile in the "Schnell" grid. `note` says what to expect, e.g. that the PC will ask for an approval. */
 function Action({ icon, tint, title, note, onPress, wide }: { icon: IconName; tint: TintName; title: string; note: string; onPress: () => void; wide: boolean }) {
   const styles = useStyles();
+  const { colors } = useTheme();
   return (
     <Press label={`${title}. ${note}`} onPress={onPress} containerStyle={wide ? styles.actionWide : styles.actionHalf} style={styles.action}>
-      <IconTile name={icon} tint={tint} size={38} />
+      <GlassSheen />
+      <Icon name={icon} size={23} color={colors.tints[tint].fg} />
       <View style={styles.actionText}>
         <Text variant="headline">{title}</Text>
         <Text variant="footnote">{note}</Text>
       </View>
     </Press>
   );
+}
+
+/** A small figure in the PC card: "KI · bereit". */
+function Fact({ label, value }: { label: string; value: string }) {
+  const styles = useStyles();
+  return (
+    <View style={styles.fact} accessible accessibilityLabel={`${label}: ${value}`}>
+      <Text variant="footnote" maxFontSizeMultiplier={CHROME_FONT_SCALE}>
+        {label}
+      </Text>
+      <Text variant="bodyStrong" numberOfLines={1}>
+        {value}
+      </Text>
+    </View>
+  );
+}
+
+/** How long an approval still stands, ticking each second: "1:42". */
+function Countdown({ until }: { until: number }) {
+  const offset = useCompanion((s) => s.clockOffset);
+  const now = useNow(1000);
+  const left = Math.max(0, Math.round((until - (now + offset)) / 1000));
+  return <>{`${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`}</>;
 }
 
 function Stat({ value, label }: { value: number; label: string }) {
@@ -86,45 +120,65 @@ export default function StartScreen() {
         contentContainerStyle={[styles.page, { paddingTop: insets.top + 18, paddingBottom: TAB_BAR_ROOM + insets.bottom }]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void pull()} tintColor={colors.text} colors={[colors.accent]} progressBackgroundColor={colors.raised} />}
       >
-        <ScreenHeader eyebrow={greeting(new Date(now))} title={status?.pcName ?? pc.pcName} right={<IconButton icon="settings" label="Einstellungen" onPress={() => router.push("/settings")} />} />
+        <ScreenHeader eyebrow={dateLine(new Date(now))} title={greeting(new Date(now))} right={<IconButton icon="settings" label="Einstellungen" onPress={() => router.push("/settings")} />} />
 
         <OfflineBanner />
 
-        <Card accent style={styles.status}>
+        <Card style={styles.status}>
           <View style={styles.statusTop}>
-            <Orb size={58} active={Boolean(online && status?.busy)} />
+            <Orb size={50} active={Boolean(online && status?.busy)} />
             <View style={styles.statusText}>
-              <Badge label={linkText(link)} dot={linkColor} />
-              <Text variant="title">{headline}</Text>
-            </View>
-          </View>
-          {online && (
-            <View style={styles.chips}>
-              <View style={styles.secure} accessible accessibilityLabel="Ende-zu-Ende verschlüsselt">
-                <Icon name="lock" size={13} color={colors.success} strokeWidth={2.2} />
-                <Text variant="footnote" style={styles.secureText}>
-                  Ende-zu-Ende verschlüsselt
+              <Text variant="headline" style={styles.statusHeadline}>
+                {headline}
+              </Text>
+              <View style={styles.statusLine}>
+                <View style={[styles.liveDot, { backgroundColor: linkColor, shadowColor: linkColor }]} />
+                <Text variant="footnote" numberOfLines={1} style={styles.statusLineText}>
+                  {status?.pcName ?? pc.pcName} · {online && latency !== null ? `${latency} ms` : linkText(link)}
                 </Text>
               </View>
-              {latency !== null && <Badge label={`${latency} ms`} />}
-              {status && <Badge label={status.aiReady ? "KI bereit" : "Ohne KI"} dot={status.aiReady ? colors.success : colors.warning} />}
-              {status?.inGame && <Badge label="Im Spiel" dot={colors.cyan} />}
-              {status && status.activeTasks > 0 && <Badge label={status.activeTasks === 1 ? "1 Auftrag" : `${status.activeTasks} Aufträge`} dot={colors.accentText} />}
+            </View>
+          </View>
+          {online && status && (
+            <View style={styles.facts}>
+              <Fact label="Aufträge" value={status.activeTasks > 0 ? String(status.activeTasks) : "keine"} />
+              <Fact label="KI" value={status.aiReady ? "bereit" : "aus"} />
+              <Fact label="Läuft" value={status.inGame ? "ein Spiel" : status.media ? status.media.title : "nichts"} />
+            </View>
+          )}
+          {online && (
+            <View style={styles.secure} accessible accessibilityLabel="Ende-zu-Ende verschlüsselt">
+              <Icon name="lock" size={13} color={colors.tints.green.fg} strokeWidth={2.2} />
+              <Text variant="footnote" style={styles.secureText}>
+                Ende-zu-Ende verschlüsselt
+              </Text>
             </View>
           )}
           {online && status && !status.aiReady && <Text variant="footnote">Am PC ist kein KI-Schlüssel hinterlegt. NOVA versteht dann nur einfache Befehle wie „Öffne Spotify“.</Text>}
         </Card>
 
         {approval && (
-          <Card danger={approval.risk === "high"} label={`Freigabe nötig: ${approval.title}`} onPress={() => router.push({ pathname: "/approval/[id]", params: { id: approval.requestId } })} style={styles.row}>
-            <IconTile name="fingerprint" tint={approval.risk === "high" ? "red" : "violet"} />
+          <Card
+            warning={approval.risk !== "high"}
+            danger={approval.risk === "high"}
+            label={`Freigabe nötig: ${approval.title}`}
+            onPress={() => router.push({ pathname: "/approval/[id]", params: { id: approval.requestId } })}
+            style={styles.row}
+          >
+            <IconTile name="shield" tint={approval.risk === "high" ? "red" : "amber"} />
             <View style={styles.rowText}>
-              <Text variant="headline">Freigabe nötig</Text>
-              <Text variant="footnote" numberOfLines={2}>
+              <Text variant="footnote" style={[styles.approvalLabel, { color: colors.tints[approval.risk === "high" ? "red" : "amber"].fg }]}>
+                Freigabe · noch <Countdown until={approval.expiresAt} />
+              </Text>
+              <Text variant="bodyStrong" numberOfLines={2}>
                 {approval.title}
               </Text>
             </View>
-            <Icon name="chevron" size={18} color={colors.subtle} />
+            <View style={styles.approvalButton} pointerEvents="none">
+              <Text variant="callout" style={styles.approvalButtonText}>
+                Ansehen
+              </Text>
+            </View>
           </Card>
         )}
 
@@ -211,12 +265,20 @@ export default function StartScreen() {
 
 const useStyles = themed(({ colors }) => ({
   page: { paddingHorizontal: space.page, gap: space.md + 2 },
-  status: { gap: space.md + 2, padding: space.xl },
-  statusTop: { flexDirection: "row", alignItems: "center", gap: space.lg },
-  statusText: { flex: 1, gap: 6 },
-  chips: { flexDirection: "row", flexWrap: "wrap", gap: space.sm, alignItems: "center" },
-  secure: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.pill, backgroundColor: colors.tints.green.bg },
-  secureText: { fontFamily: fonts.semibold, color: colors.tints.green.fg },
+  status: { gap: space.lg, padding: space.xl },
+  statusTop: { flexDirection: "row", alignItems: "center", gap: space.md + 2 },
+  statusText: { flex: 1, gap: 3 },
+  statusHeadline: { fontSize: 19, lineHeight: 24 },
+  statusLine: { flexDirection: "row", alignItems: "center", gap: 7 },
+  statusLineText: { flexShrink: 1 },
+  liveDot: { width: 7, height: 7, borderRadius: 4, shadowOpacity: 0.9, shadowRadius: 6, shadowOffset: { width: 0, height: 0 }, elevation: 2 },
+  facts: { flexDirection: "row", gap: space.sm },
+  fact: { flex: 1, gap: 1, borderRadius: 16, paddingHorizontal: space.md, paddingVertical: 10, backgroundColor: colors.surfaceStrong },
+  secure: { flexDirection: "row", alignItems: "center", gap: 6 },
+  secureText: { color: colors.tints.green.fg },
+  approvalLabel: { fontFamily: fonts.semibold },
+  approvalButton: { minHeight: TOUCH, paddingHorizontal: space.lg, borderRadius: radius.pill, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center" },
+  approvalButtonText: { fontFamily: fonts.semibold, color: colors.onPrimary },
   row: { flexDirection: "row", alignItems: "center", gap: space.md + 2 },
   rowText: { flex: 1, gap: 2 },
   media: { gap: space.md },
@@ -226,7 +288,7 @@ const useStyles = themed(({ colors }) => ({
   // pressable, the look on the inner view that scales under the finger.
   actionHalf: { flexBasis: "45%", flexGrow: 1 },
   actionWide: { flexBasis: "100%" },
-  action: { flexGrow: 1, minHeight: 124, gap: space.md, padding: space.lg, borderRadius: 22, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderTopColor: colors.borderTop, justifyContent: "space-between" },
+  action: { flexGrow: 1, minHeight: 120, gap: space.lg, padding: space.lg, borderRadius: 24, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderTopColor: colors.borderTop, justifyContent: "space-between", overflow: "hidden" },
   actionText: { gap: 2 },
   stats: { flexDirection: "row", alignItems: "center", paddingVertical: space.lg },
   stat: { flex: 1, alignItems: "center", gap: 2 },

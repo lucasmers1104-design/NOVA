@@ -22,7 +22,7 @@ export function CountBadge({ count }: { count: number }) {
   const styles = useStyles();
   return (
     <View style={styles.count}>
-      <Text variant="footnote" tone="onAccent" maxFontSizeMultiplier={CHROME_FONT_SCALE} style={styles.countText}>
+      <Text variant="footnote" maxFontSizeMultiplier={CHROME_FONT_SCALE} style={styles.countText}>
         {count > 9 ? "9+" : count}
       </Text>
     </View>
@@ -36,6 +36,6 @@ export function Dot({ color, size = 8 }: { color: string; size?: number }) {
 const useStyles = themed(({ colors }) => ({
   badge: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.pill, backgroundColor: colors.surfaceStrong, borderWidth: 1, borderColor: colors.border, alignSelf: "flex-start" },
   label: { fontFamily: fonts.semibold },
-  count: { minWidth: 18, height: 18, paddingHorizontal: 5, borderRadius: 9, backgroundColor: colors.accent, alignItems: "center", justifyContent: "center" },
-  countText: { fontFamily: fonts.bold, fontSize: 10.5, lineHeight: 14 },
+  count: { minWidth: 18, height: 18, paddingHorizontal: 5, borderRadius: 9, backgroundColor: colors.warning, alignItems: "center", justifyContent: "center" },
+  countText: { fontFamily: fonts.bold, fontSize: 10.5, lineHeight: 14, color: "#1A1406" },
 }));

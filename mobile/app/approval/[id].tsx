@@ -3,15 +3,19 @@ import { useLocalSearchParams } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import { ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Svg, { Circle } from "react-native-svg";
 import { haptic } from "../../src/haptics";
 import { RISK } from "../../src/risk";
 import { useCompanion } from "../../src/store";
-import { radius, space, themed, useTheme } from "../../src/theme";
+import { fonts, radius, space, themed, useTheme } from "../../src/theme";
 import { toast } from "../../src/toast";
 import { Button, Card, EmptyState, goBack, Icon, IconButton, OfflineBanner, Screen, Text, useNow } from "../../src/ui";
 
 /** The PC gives every approval two minutes (tasks.rs, APPROVAL_LIFETIME_MS). */
 const LIFETIME_S = 120;
+const RING = 132;
+const RING_R = 60;
+const RING_LENGTH = 2 * Math.PI * RING_R;
 
 /** Says "Fingerabdruck" only on a phone that has a fingerprint reader. */
 function useBiometricWord(): string {
@@ -96,13 +100,31 @@ export default function ApprovalScreen() {
       </View>
       <ScrollView contentContainerStyle={styles.page} showsVerticalScrollIndicator={false}>
         <View style={styles.hero}>
-          <View style={[styles.mark, { backgroundColor: tint.bg, borderColor: tint.bg }]}>
-            <Icon name="fingerprint" size={40} color={tint.fg} />
+          {/* The time left as a ring that empties: the approval's two minutes at a glance. */}
+          <View style={styles.ring} accessible accessibilityLabel={`Noch ${left} Sekunden`}>
+            <Svg width={RING} height={RING} viewBox={`0 0 ${RING} ${RING}`} style={styles.ringSvg}>
+              <Circle cx={RING / 2} cy={RING / 2} r={RING_R} fill="none" stroke={colors.surfaceHigh} strokeWidth={5} />
+              <Circle
+                cx={RING / 2}
+                cy={RING / 2}
+                r={RING_R}
+                fill="none"
+                stroke={left < 30 ? colors.warning : tint.fg}
+                strokeWidth={5}
+                strokeLinecap="round"
+                strokeDasharray={RING_LENGTH}
+                strokeDashoffset={RING_LENGTH * (1 - Math.min(1, left / LIFETIME_S))}
+              />
+            </Svg>
+            <Text variant="title" style={styles.ringTime}>
+              {`${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`}
+            </Text>
+            <Text variant="footnote">übrig</Text>
           </View>
-          <Text variant="footnote" center>
-            NOVA möchte auf deinem PC
+          <Text variant="footnote" center style={[styles.ask, { color: tint.fg }]}>
+            NOVA fragt um Erlaubnis
           </Text>
-          <Text variant="title" center accessibilityRole="header">
+          <Text variant="display" center accessibilityRole="header" style={styles.title}>
             {request.title}
           </Text>
         </View>
@@ -130,14 +152,9 @@ export default function ApprovalScreen() {
           </Card>
         ) : null}
 
-        <View style={styles.timer}>
-          <View style={styles.track}>
-            <View style={[styles.fillBar, { width: `${Math.min(100, (left / LIFETIME_S) * 100)}%`, backgroundColor: left < 30 ? colors.warning : colors.accent }]} />
-          </View>
-          <Text variant="footnote" tone={left < 30 ? "warning" : "muted"} accessibilityLiveRegion="none">
-            Läuft in {left} Sekunden ab. Bis dahin tut NOVA nichts.
-          </Text>
-        </View>
+        <Text variant="footnote" center tone={left < 30 ? "warning" : "muted"} accessibilityLiveRegion="none">
+          Bis du antwortest, tut NOVA nichts. Ohne Antwort verfällt die Freigabe.
+        </Text>
 
         {!online && <OfflineBanner />}
         {error ? (
@@ -148,25 +165,26 @@ export default function ApprovalScreen() {
       </ScrollView>
       <View style={styles.footer}>
         <Button label={`Mit ${biometric} freigeben`} icon="fingerprint" busy={busy} disabled={!online} haptic={false} onPress={() => void confirm()} />
-        <Button label="Ablehnen" kind="danger" disabled={busy} haptic={false} onPress={refuse} />
+        <Button label="Ablehnen" kind="secondary" disabled={busy} haptic={false} onPress={refuse} />
       </View>
     </Screen>
   );
 }
 
-const useStyles = themed(({ colors }) => ({
+const useStyles = themed(() => ({
   fill: { flex: 1 },
   gone: { flex: 1, paddingHorizontal: space.page, justifyContent: "center", gap: space.lg },
   bar: { paddingHorizontal: space.page, alignItems: "flex-end" },
   page: { paddingHorizontal: space.page, paddingBottom: space.lg, gap: space.lg },
-  hero: { alignItems: "center", gap: space.sm },
-  mark: { width: 88, height: 88, borderRadius: 30, alignItems: "center", justifyContent: "center", borderWidth: 1, marginBottom: space.sm },
+  hero: { alignItems: "center", gap: space.xs },
+  ring: { width: RING, height: RING, alignItems: "center", justifyContent: "center", marginBottom: space.lg },
+  ringSvg: { position: "absolute", transform: [{ rotate: "-90deg" }] },
+  ringTime: { fontSize: 30, lineHeight: 34 },
+  ask: { fontFamily: fonts.semibold },
+  title: { fontSize: 27, lineHeight: 33, letterSpacing: -0.8 },
   card: { gap: space.sm + 2 },
   riskTop: { flexDirection: "row", alignItems: "center", gap: space.sm + 2 },
   meter: { flexDirection: "row", gap: 4 },
   meterBar: { width: 14, height: 6, borderRadius: radius.pill },
-  timer: { gap: 6 },
-  track: { height: 6, borderRadius: radius.pill, backgroundColor: colors.surfaceStrong, overflow: "hidden" },
-  fillBar: { height: 6, borderRadius: radius.pill },
   footer: { paddingHorizontal: space.page, paddingTop: space.sm, gap: space.sm + 2 },
 }));

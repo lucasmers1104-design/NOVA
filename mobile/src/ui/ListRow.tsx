@@ -5,11 +5,17 @@ import { Icon, type IconName, IconTile } from "./Icon";
 import { Press } from "./Press";
 import { Switch } from "./Switch";
 import { Text } from "./Text";
+import { GlassSheen } from "./graphics";
 
 /** A group of rows on one glass card. */
 export function ListGroup({ children }: { children: ReactNode }) {
   const styles = useStyles();
-  return <View style={styles.group}>{children}</View>;
+  return (
+    <View style={styles.group}>
+      <GlassSheen />
+      {children}
+    </View>
+  );
 }
 
 export interface ListRowProps {
@@ -60,7 +66,7 @@ export function ListRow({ icon, tint = "violet", title, subtitle, value, onPress
 }
 
 const useStyles = themed(({ colors }) => ({
-  group: { backgroundColor: colors.surface, borderColor: colors.border, borderTopColor: colors.borderTop, borderWidth: StyleSheet.hairlineWidth * 2, borderRadius: radius.xl, paddingHorizontal: space.md + 2, paddingVertical: space.xs },
+  group: { backgroundColor: colors.surface, borderColor: colors.border, borderTopColor: colors.borderTop, borderWidth: 1, borderRadius: radius.xl, paddingHorizontal: space.md + 2, paddingVertical: space.xs, overflow: "hidden" },
   row: { flexDirection: "row", alignItems: "center", gap: space.md, paddingVertical: space.md, minHeight: 58 },
   line: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   text: { flex: 1, gap: 2 },

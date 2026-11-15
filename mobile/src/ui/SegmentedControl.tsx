@@ -61,8 +61,8 @@ export function SegmentedControl<T extends string>({ options, value, onChange, l
 }
 
 const useStyles = themed(({ colors }) => ({
-  track: { flexDirection: "row", padding: PAD, borderRadius: radius.lg, backgroundColor: colors.field, borderWidth: 1, borderColor: colors.border },
-  marker: { position: "absolute", top: PAD, bottom: PAD, left: PAD, borderRadius: radius.md, backgroundColor: colors.surfaceHigh, borderWidth: 1, borderColor: colors.border, borderTopColor: colors.borderTop },
+  track: { flexDirection: "row", padding: PAD, borderRadius: radius.pill, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderTopColor: colors.borderTop },
+  marker: { position: "absolute", top: PAD, bottom: PAD, left: PAD, borderRadius: radius.pill, backgroundColor: colors.scheme === "dark" ? colors.surfaceHigh : colors.raised, borderWidth: 1, borderColor: colors.border, borderTopColor: colors.borderTop },
   option: { flex: 1, minHeight: TOUCH, flexDirection: "row", gap: 6, alignItems: "center", justifyContent: "center", paddingHorizontal: 6, paddingVertical: 6 },
   selected: { fontFamily: fonts.semibold },
 }));

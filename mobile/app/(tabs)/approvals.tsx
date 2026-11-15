@@ -15,7 +15,7 @@ function ApprovalCard({ request, now }: { request: ApprovalRequest; now: number 
   const left = Math.max(0, Math.round((request.expiresAt - now) / 1000));
   return (
     <Card
-      accent={request.risk !== "high"}
+      warning={request.risk !== "high"}
       danger={request.risk === "high"}
       label={`${request.title}. ${risk.short}. Noch ${left} Sekunden.`}
       onPress={() => router.push({ pathname: "/approval/[id]", params: { id: request.requestId } })}

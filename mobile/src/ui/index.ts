@@ -6,7 +6,7 @@ export { Badge, CountBadge, Dot } from "./Badge";
 export { Button, type ButtonProps, IconButton } from "./Button";
 export { Card, type CardProps } from "./Card";
 export { EmptyState, ErrorState, type StateAction } from "./EmptyState";
-export { Backdrop, GradientFill, Orb } from "./graphics";
+export { Backdrop, GlassSheen, GradientFill, Orb } from "./graphics";
 export { goBack, useKeyboardVisible, useNow } from "./hooks";
 export { Icon, type IconName, IconTile } from "./Icon";
 export { ListGroup, ListRow, type ListRowProps } from "./ListRow";
