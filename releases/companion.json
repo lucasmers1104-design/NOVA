@@ -1,9 +1,9 @@
 {
-  "version": "1.2.0",
-  "versionCode": 3,
+  "version": "1.3.0",
+  "versionCode": 4,
   "url": "https://raw.githubusercontent.com/lucasmers1104-design/NOVA/main/releases/NOVA-Companion.apk",
-  "sha256": "6eb020eb181edf3e05559510dfd2ba12c74a5152e9d09beaf2fcebbcefcb3466",
-  "size": 42799409,
-  "notes": "Neues Design: Liquid Glass im dunklen und ruhiges Milchglas im hellen Modus, schwebende Tab-Leiste mit Sprechen-Knopf, neuer Start, Chat und Freigaben mit Countdown-Ring. Benachrichtigungen bringen das echte App-Logo zuverlässiger auf Nova Island.",
-  "published": "2026-11-15"
+  "sha256": "d055f416a5ffa7d917843d52d583b0e2fb5d790b667fe52115d6cc853dd180f1",
+  "size": 42856609,
+  "notes": "PC-Fernsteuerung: deinen PC vom Handy aus herunterfahren, neu starten, fragen, ob er an ist, und per Wake-on-LAN starten, zu Hause und unterwegs über deinen NOVA-Relay. Im Chat öffnet „Fahr meinen PC herunter“ die Fernsteuerung. Braucht NOVA 1.12.2 am PC.",
+  "published": "2026-11-16"
 }
