@@ -1,9 +1,9 @@
 {
-  "version": "1.3.0",
-  "versionCode": 4,
+  "version": "1.3.1",
+  "versionCode": 5,
   "url": "https://raw.githubusercontent.com/lucasmers1104-design/NOVA/main/releases/NOVA-Companion.apk",
-  "sha256": "d055f416a5ffa7d917843d52d583b0e2fb5d790b667fe52115d6cc853dd180f1",
-  "size": 42856609,
-  "notes": "PC-Fernsteuerung: deinen PC vom Handy aus herunterfahren, neu starten, fragen, ob er an ist, und per Wake-on-LAN starten, zu Hause und unterwegs über deinen NOVA-Relay. Im Chat öffnet „Fahr meinen PC herunter“ die Fernsteuerung. Braucht NOVA 1.12.2 am PC.",
+  "sha256": "2a3f151c817ae1186250f15ab81d742e2fe1a95809d343cd7b7ceb9710241159",
+  "size": 42858137,
+  "notes": "Hotfix: „Status aktualisieren“ in der PC-Fernsteuerung blieb bei „Prüfe …“ hängen und ließ sich danach nicht mehr nutzen. Außerdem findet „Nach Updates suchen“ neue Versionen jetzt sofort.",
   "published": "2026-11-16"
 }
